@@ -1,0 +1,11 @@
+node_modules/
+.env
+__pycache__/
+.env
+.venv/
+.devcontainer/
+codex_config.toml
+Stage2to4/dualtrack_checkpoints/
+*.pt
+*.pth
+*.ckpt

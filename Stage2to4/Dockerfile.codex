@@ -1,0 +1,30 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    git \
+    bash \
+    nano \
+    vim \
+    python3 \
+    python3-pip \
+    python3-venv \
+    nodejs \
+    npm \
+    bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @openai/codex
+
+# ubuntu:24.04 に既存の UID=1000 ユーザーを使用する
+USER ubuntu
+WORKDIR /workspace
+
+RUN mkdir -p /home/ubuntu/.codex
+
+COPY --chown=ubuntu:ubuntu codex_config.toml /home/ubuntu/.codex/config.toml
+
+CMD ["/bin/bash"]

@@ -1,0 +1,143 @@
+0. 入力
+global_encoder_inputs: [B, N, 1, H, W]
+local_encoder_inputs : [B, N, 1, H, W]
+
+
+1. Local branch
+local_encoder_inputs
+  [B, N, 1, H, W]
+
+↓ VideoResNet用に変換
+
+  [B, 1, N, H, W]
+
+↓ video_rn18_base
+
+  [B, 512, N, H', W']
+
+↓ wrapperで戻す
+
+  [B, N, 512, H', W']
+
+↓ Spatial Self-Attention / ViT
+
+  [B, N, 64]
+
+↓ Temporal Attention
+
+  [B, N, 64]
+
+↓ Linear(64 → 512)
+
+local_features
+  [B, N, 512]
+
+
+2. Sampler
+global_encoder_inputs
+  [B, N, 1, H, W]
+
+↓ RegularGridSampler(grid_spacing=16)
+
+sparse_indices
+  [B, M]
+
+例:
+  N=32 → M=2, indices=[0,16]
+  N=64 → M=4, indices=[0,16,32,48]
+
+
+3. Global branch
+global_encoder_inputs
+  [B, N, 1, H, W]
+
+↓ sparse_indicesで抽出
+
+subsampled_global_encoder_inputs
+  [B, M, 1, H, W]
+
+sample_indices
+  [B, M]
+
+↓ video_rn18_no_temporal
+
+  [B, M, 512, H', W']
+
+↓ SpatialMeanPooling
+
+  [B, M, 512]
+
+↓ Linear projection + positional embedding + BertEncoder
+
+global_features
+  [B, M, 512]
+
+
+4. Fusion + Head
+local_features
+  [B, N, 512]
+
+global_features
+  [B, M, 512]
+
+↓ BERT-style decoder with cross-attention
+
+tracking_decoder_outputs
+  [B, N, 512]
+
+↓ Linear(512 → 6)
+
+  [B, N, 6]
+
+↓ [:, 1:, :]
+
+pred
+  [B, N-1, 6]
+
+
+具体例
+例えばdummy forwardで：
+
+B = 1
+N = 32
+C = 1
+H = W = 256
+grid_spacing = 16
+
+とすると、想定shapeは以下です。
+
+input:
+  global_encoder_inputs: [1, 32, 1, 256, 256]
+  local_encoder_inputs : [1, 32, 1, 256, 256]
+
+local branch:
+  [1, 32, 1, 256, 256]
+  → [1, 32, 512, 16, 16]
+  → [1, 32, 64]
+  → [1, 32, 512]
+
+sampler:
+  sparse_indices = [[0, 16]]
+  shape [1, 2]
+
+global branch:
+  [1, 32, 1, 256, 256]
+  → [1, 2, 1, 256, 256]
+  → [1, 2, 512, 16, 16]
+  → [1, 2, 512]
+
+fusion:
+  local_features : [1, 32, 512]
+  global_features: [1, 2, 512]
+  → [1, 32, 512]
+
+head:
+  [1, 32, 512]
+  → [1, 32, 6]
+  → [1, 31, 6]
+
+期待される最終出力は：
+
+pred.shape = [1, 31, 6]
+
+です。

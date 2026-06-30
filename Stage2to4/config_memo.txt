@@ -1,0 +1,26 @@
+Repository:
+  /mnt/data/3d_projects/DualTrack
+
+Checkpoint:
+  DUALTRACK_CHECKPOINT=/mnt/data/3d_projects/dualtrack_checkpoints/dualtrack_final.pt
+  or
+  DUALTRACK_CHECKPOINT_DIR=/mnt/data/3d_projects/dualtrack_checkpoints
+
+Config:
+  /mnt/data/3d_projects/DualTrack/configs/model/dualtrack.yaml
+
+Python:
+  3.11
+
+PyTorch:
+  torch 2.7.1+cu128
+  torch.version.cuda 12.8
+
+GPU:
+  NVIDIA GeForce RTX 5090
+
+Dependency adjustments:
+  torch / torchvision / torchaudio は先にcu128版を明示インストール
+  triton, monai, Pillow_SIMD はrequirements一括解決から除外
+  Pillow_SIMD は通常Pillowで代替
+  monaiは必要なら --no-deps で追加
