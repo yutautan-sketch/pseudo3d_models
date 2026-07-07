@@ -14,6 +14,12 @@ from stage5.utils.feature_normalization import (
     normalize_xyz,
 )
 from stage5.utils.h5_io import load_stage5_pointcloud_h5, read_path_list
+from stage5.utils.frame_windows import (
+    FrameWindow,
+    generate_frame_order_windows,
+    point_indices_for_window,
+    summarize_frame_windows,
+)
 from stage5.utils.point_sampling import PointSamplingConfig, sample_points
 
 
@@ -76,6 +82,10 @@ class Pseudo3DPointCloudDataset(Dataset):
         exclude_ignore_in_sampling: bool = False,
         positive_oversample_ratio: float = 0.0,
         frame_window_size: int | None = None,
+        window_mode: str = "none",
+        window_size_frames: int = 12,
+        window_stride_frames: int = 6,
+        include_tail_window: bool = True,
         seed: int | None = None,
         cache_data: bool = False,
     ) -> None:
@@ -86,6 +96,13 @@ class Pseudo3DPointCloudDataset(Dataset):
         self.num_points = num_points
         self.features = _parse_features(features)
         self.normalize_points = bool(normalize_points)
+        self.window_mode = str(window_mode)
+        self.window_size_frames = int(window_size_frames)
+        self.window_stride_frames = int(window_stride_frames)
+        self.include_tail_window = bool(include_tail_window)
+        if self.window_mode not in {"none", "overlap"}:
+            raise ValueError("window_mode must be one of: none, overlap")
+
         self.sampling_config = PointSamplingConfig(
             mode=sampling_mode,
             num_points=num_points,
@@ -96,9 +113,10 @@ class Pseudo3DPointCloudDataset(Dataset):
         self.seed = seed
         self.cache_data = bool(cache_data)
         self._cache: dict[int, dict[str, Any]] = {}
+        self.samples = self._build_sample_index()
 
     def __len__(self) -> int:
-        return len(self.h5_paths)
+        return len(self.samples)
 
     @property
     def num_feature_channels(self) -> int:
@@ -119,6 +137,49 @@ class Pseudo3DPointCloudDataset(Dataset):
         if self.cache_data:
             self._cache[index] = data
         return data
+
+    def _load_frame_order_only(self, h5_index: int) -> np.ndarray:
+        if self.cache_data and h5_index in self._cache:
+            return self._cache[h5_index]["frame_order"]
+        import h5py
+
+        with h5py.File(self.h5_paths[h5_index], "r") as f:
+            if "point_cloud" not in f or "frame_order" not in f["point_cloud"]:
+                raise KeyError(f"point_cloud/frame_order not found in {self.h5_paths[h5_index]}")
+            return f["point_cloud/frame_order"][:]
+
+    def _build_sample_index(self) -> list[dict[str, Any]]:
+        if self.window_mode == "none":
+            return [
+                {
+                    "h5_index": h5_index,
+                    "window": None,
+                }
+                for h5_index in range(len(self.h5_paths))
+            ]
+
+        samples: list[dict[str, Any]] = []
+        for h5_index in range(len(self.h5_paths)):
+            frame_order = self._load_frame_order_only(h5_index)
+            windows = generate_frame_order_windows(
+                frame_order,
+                window_size_frames=self.window_size_frames,
+                window_stride_frames=self.window_stride_frames,
+                include_tail_window=self.include_tail_window,
+            )
+            for window in windows:
+                point_indices = point_indices_for_window(frame_order, window)
+                if point_indices.size == 0:
+                    continue
+                samples.append(
+                    {
+                        "h5_index": h5_index,
+                        "window": window,
+                    }
+                )
+        if not samples:
+            raise ValueError("No frame windows were generated for the provided H5 paths")
+        return samples
 
     def _build_features(self, data: dict[str, Any]) -> np.ndarray:
         arrays: list[np.ndarray] = []
@@ -142,37 +203,74 @@ class Pseudo3DPointCloudDataset(Dataset):
             return np.zeros((data["points"].shape[0], 0), dtype=np.float32)
         return np.concatenate(arrays, axis=1).astype(np.float32)
 
+    def get_window_summaries(self, h5_index: int | None = None) -> list[dict[str, Any]]:
+        h5_indices = range(len(self.h5_paths)) if h5_index is None else [h5_index]
+        rows: list[dict[str, Any]] = []
+        for current_h5_index in h5_indices:
+            frame_order = self._load_frame_order_only(current_h5_index)
+            windows = generate_frame_order_windows(
+                frame_order,
+                window_size_frames=self.window_size_frames,
+                window_stride_frames=self.window_stride_frames,
+                include_tail_window=self.include_tail_window,
+            )
+            for row in summarize_frame_windows(frame_order, windows):
+                row["h5_index"] = int(current_h5_index)
+                row["h5_path"] = str(self.h5_paths[current_h5_index])
+                rows.append(row)
+        return rows
+
     def __getitem__(self, index: int) -> dict[str, Any]:
-        data = self._load(index)
+        sample_info = self.samples[index]
+        h5_index = int(sample_info["h5_index"])
+        data = self._load(h5_index)
         labels = data["point_label"].astype(np.int64)
         valid_mask = data["valid_mask"].astype(bool)
-        rng = self._rng_for_index(index)
-        sampled_indices = sample_points(
-            labels,
-            valid_mask,
-            rng=rng,
-            config=self.sampling_config,
-            frame_order=data.get("frame_order"),
-        )
+
+        window: FrameWindow | None = sample_info["window"]
+        if window is None:
+            rng = self._rng_for_index(index)
+            selected_indices = sample_points(
+                labels,
+                valid_mask,
+                rng=rng,
+                config=self.sampling_config,
+                frame_order=data.get("frame_order"),
+            )
+            window_start = int(data["frame_order"][selected_indices].min()) if selected_indices.size else -1
+            window_end = int(data["frame_order"][selected_indices].max()) if selected_indices.size else -1
+            window_id = -1
+        else:
+            selected_indices = point_indices_for_window(data["frame_order"], window)
+            window_start = int(window.start_frame)
+            window_end = int(window.end_frame)
+            window_id = int(window.window_id)
 
         points = data["points"].astype(np.float32)
         features = self._build_features(data)
         if self.normalize_points:
             points = normalize_xyz(points)
 
-        sampled_points = points[sampled_indices]
-        sampled_features = features[sampled_indices]
-        sampled_labels = labels[sampled_indices]
-        sampled_valid_mask = valid_mask[sampled_indices]
+        sampled_points = points[selected_indices]
+        sampled_features = features[selected_indices]
+        sampled_labels = labels[selected_indices]
+        sampled_valid_mask = valid_mask[selected_indices]
+        sampled_frame_order = data["frame_order"][selected_indices].astype(np.int64)
 
         return {
             "points": torch.from_numpy(sampled_points).float(),
             "features": torch.from_numpy(sampled_features).float(),
             "labels": torch.from_numpy(sampled_labels).long(),
             "valid_mask": torch.from_numpy(sampled_valid_mask).bool(),
+            "frame_order": torch.from_numpy(sampled_frame_order).long(),
+            "point_indices": torch.from_numpy(selected_indices.astype(np.int64)).long(),
+            "window_start": window_start,
+            "window_end": window_end,
             "meta": {
-                "h5_path": str(self.h5_paths[index]),
+                "h5_index": h5_index,
+                "h5_path": str(self.h5_paths[h5_index]),
+                "window_id": window_id,
                 "num_source_points": int(points.shape[0]),
-                "sampled_indices": torch.from_numpy(sampled_indices).long(),
+                "sampled_indices": torch.from_numpy(selected_indices.astype(np.int64)).long(),
             },
         }
