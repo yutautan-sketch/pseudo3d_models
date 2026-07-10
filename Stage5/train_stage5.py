@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import random
 import sys
@@ -16,7 +17,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from stage5.datasets import Pseudo3DPointCloudDataset
+from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
 from stage5.models import build_stage5_model
 from stage5.training import SegmentationMetricAccumulator, build_loss
 
@@ -200,15 +201,20 @@ def make_dataset(
     seed: int,
     cache_data: bool,
 ) -> Pseudo3DPointCloudDataset:
+    num_points = None if args.window_mode == "overlap" else args.num_points
     return Pseudo3DPointCloudDataset(
         h5_paths,
-        num_points=args.num_points,
+        num_points=num_points,
         features=parse_feature_list(args.features),
         normalize_points=not args.no_normalize_points,
         sampling_mode=args.sampling_mode,
         exclude_ignore_in_sampling=args.exclude_ignore_in_sampling,
         positive_oversample_ratio=args.positive_oversample_ratio,
         frame_window_size=args.frame_window_size,
+        window_mode=args.window_mode,
+        window_size_frames=args.window_size_frames,
+        window_stride_frames=args.window_stride_frames,
+        include_tail_window=args.include_tail_window,
         seed=seed,
         cache_data=cache_data,
     )
@@ -220,7 +226,9 @@ def make_loader(
     batch_size: int,
     shuffle: bool,
     num_workers: int,
+    window_mode: str,
 ) -> DataLoader:
+    collate_fn = pad_point_window_collate if window_mode == "overlap" else None
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -228,7 +236,42 @@ def make_loader(
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
         drop_last=False,
+        collate_fn=collate_fn,
     )
+
+
+def write_window_summary(
+    path: Path,
+    *,
+    split: str,
+    dataset: Pseudo3DPointCloudDataset,
+) -> None:
+    rows = dataset.get_window_summaries()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "split",
+        "h5_index",
+        "h5_path",
+        "window_id",
+        "start_frame",
+        "end_frame",
+        "num_points",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "split": split,
+                    "h5_index": row["h5_index"],
+                    "h5_path": row["h5_path"],
+                    "window_id": row["window_id"],
+                    "start_frame": row["start_frame"],
+                    "end_frame": row["end_frame"],
+                    "num_points": row["num_points"],
+                }
+            )
 
 
 def run_one_epoch(
@@ -297,7 +340,18 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--max_val_files must be non-negative")
     if args.sampling_mode == "frame_window" and args.frame_window_size is None:
         raise ValueError("--frame_window_size is required when --sampling_mode frame_window")
-    if args.num_points is not None and args.num_points <= 0 and args.batch_size > 1:
+    if args.window_mode not in {"none", "overlap"}:
+        raise ValueError("--window_mode must be one of: none, overlap")
+    if args.window_size_frames <= 0:
+        raise ValueError("--window_size_frames must be positive")
+    if args.window_stride_frames <= 0:
+        raise ValueError("--window_stride_frames must be positive")
+    if (
+        args.window_mode == "none"
+        and args.num_points is not None
+        and args.num_points <= 0
+        and args.batch_size > 1
+    ):
         raise ValueError("--num_points <= 0 returns variable-size samples; use --batch_size 1")
 
     class_weight = parse_class_weight(args.class_weight)
@@ -348,6 +402,7 @@ def train(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
+        window_mode=args.window_mode,
     )
     val_loader = None
     if val_dataset is not None:
@@ -356,14 +411,22 @@ def train(args: argparse.Namespace) -> None:
             batch_size=args.batch_size,
             shuffle=False,
             num_workers=args.num_workers,
+            window_mode=args.window_mode,
         )
 
     feature_dim = train_dataset.num_feature_channels
     config = build_config(args, feature_dim=feature_dim)
     config["num_train_files"] = len(train_paths)
     config["num_val_files"] = len(val_paths)
+    config["num_train_samples"] = len(train_dataset)
+    config["num_val_samples"] = len(val_dataset) if val_dataset is not None else 0
     with (output_dir / "config.json").open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+
+    if args.window_mode == "overlap":
+        write_window_summary(output_dir / "train_window_summary.csv", split="train", dataset=train_dataset)
+        if val_dataset is not None:
+            write_window_summary(output_dir / "val_window_summary.csv", split="val", dataset=val_dataset)
 
     model = build_stage5_model(
         args.model,
@@ -395,10 +458,18 @@ def train(args: argparse.Namespace) -> None:
     history: list[dict[str, Any]] = []
 
     print(f"Training Stage5 model on {device}")
+    print(f"train files: {len(train_paths)}")
     print(f"train samples: {len(train_dataset)}")
     if val_dataset is not None:
+        print(f"val files: {len(val_paths)}")
         print(f"val samples: {len(val_dataset)}")
     print(f"feature_dim: {feature_dim}")
+    if args.window_mode == "overlap":
+        print(
+            "frame windows: "
+            f"size={args.window_size_frames} stride={args.window_stride_frames} "
+            f"include_tail={args.include_tail_window}"
+        )
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_metrics = run_one_epoch(
@@ -499,6 +570,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame_window_size", type=int, default=None)
     parser.add_argument("--exclude_ignore_in_sampling", action="store_true")
     parser.add_argument("--positive_oversample_ratio", type=float, default=0.0)
+    parser.add_argument("--window_mode", default="none", choices=["none", "overlap"])
+    parser.add_argument("--window_size_frames", type=int, default=12)
+    parser.add_argument("--window_stride_frames", type=int, default=6)
+    parser.add_argument(
+        "--no_include_tail_window",
+        dest="include_tail_window",
+        action="store_false",
+        help="Disable the final shorter frame-order window in --window_mode overlap",
+    )
+    parser.set_defaults(include_tail_window=True)
     parser.add_argument("--no_normalize_points", action="store_true")
     parser.add_argument("--cache_data", action="store_true")
 

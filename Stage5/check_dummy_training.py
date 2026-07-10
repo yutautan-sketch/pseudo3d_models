@@ -99,12 +99,25 @@ def run_training(
         "cpu",
         "--seed",
         str(args.seed),
+        "--window_mode",
+        args.window_mode,
+        "--window_size_frames",
+        str(args.window_size_frames),
+        "--window_stride_frames",
+        str(args.window_stride_frames),
     ]
+    if not args.include_tail_window:
+        cmd.append("--no_include_tail_window")
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
 
-def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> None:
+def validate_training_outputs(
+    output_dir: Path,
+    *,
+    expected_epochs: int,
+    expected_window_mode: str,
+) -> None:
     config_path = output_dir / "config.json"
     metrics_path = output_dir / "metrics.jsonl"
     history_path = output_dir / "history.json"
@@ -121,6 +134,17 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> None
         raise AssertionError(f"Unexpected model in config.json: {config.get('model')}")
     if config.get("feature_dim") != 2:
         raise AssertionError(f"Unexpected feature_dim in config.json: {config.get('feature_dim')}")
+    if config.get("window_mode") != expected_window_mode:
+        raise AssertionError(f"Unexpected window_mode in config.json: {config.get('window_mode')}")
+    if expected_window_mode == "overlap":
+        for name in ["train_window_summary.csv", "val_window_summary.csv"]:
+            path = output_dir / name
+            if not path.exists():
+                raise AssertionError(f"Expected window summary not found: {path}")
+        if int(config.get("num_train_samples", 0)) <= int(config.get("num_train_files", 0)):
+            raise AssertionError(
+                "Expected overlap window training to produce more train samples than train files"
+            )
 
     records = []
     with metrics_path.open("r", encoding="utf-8") as f:
@@ -211,6 +235,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--infer_chunk_size", type=int, default=128)
+    parser.add_argument("--window_mode", default="overlap", choices=["none", "overlap"])
+    parser.add_argument("--window_size_frames", type=int, default=8)
+    parser.add_argument("--window_stride_frames", type=int, default=4)
+    parser.add_argument("--no_include_tail_window", dest="include_tail_window", action="store_false")
+    parser.set_defaults(include_tail_window=True)
     parser.add_argument("--seed", type=int, default=123)
     return parser.parse_args()
 
@@ -238,7 +267,11 @@ def main() -> None:
         output_dir=run_dir,
         args=args,
     )
-    validate_training_outputs(run_dir, expected_epochs=args.epochs)
+    validate_training_outputs(
+        run_dir,
+        expected_epochs=args.epochs,
+        expected_window_mode=args.window_mode,
+    )
 
     output_h5 = work_dir / "trained_dummy_prediction.h5"
     output_ply = work_dir / "trained_dummy_prediction.ply"
@@ -272,4 +305,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

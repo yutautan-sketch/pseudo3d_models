@@ -55,7 +55,7 @@ OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 # ------------------------------------------------------------
 MODEL_NAME="mlp_baseline"
 FEATURES="intensity,confidence"
-NUM_POINTS=131072
+NUM_POINTS=0
 BATCH_SIZE=4
 EPOCHS=10
 LR=1e-3
@@ -71,6 +71,12 @@ EXPANSION=4
 DROPOUT=0.1
 
 # Sampling knobs.
+# In WINDOW_MODE="overlap", each frame-order window is one training sample and
+# NUM_POINTS/SAMPLING_MODE are kept only for legacy non-window runs.
+WINDOW_MODE="overlap"
+WINDOW_SIZE_FRAMES=12
+WINDOW_STRIDE_FRAMES=6
+INCLUDE_TAIL_WINDOW=1
 SAMPLING_MODE="video"
 FRAME_WINDOW_SIZE=""
 POSITIVE_OVERSAMPLE_RATIO=0.0
@@ -103,7 +109,9 @@ echo "  matched files  : ${num_inputs}"
 echo "  output dir     : ${OUTPUT_DIR}"
 echo "  model          : ${MODEL_NAME}"
 echo "  epochs         : ${EPOCHS}"
-echo "  num points     : ${NUM_POINTS}"
+echo "  window mode    : ${WINDOW_MODE}"
+echo "  window frames  : size=${WINDOW_SIZE_FRAMES}, stride=${WINDOW_STRIDE_FRAMES}, include_tail=${INCLUDE_TAIL_WINDOW}"
+echo "  num points     : ${NUM_POINTS} (ignored when window mode is overlap)"
 echo "  batch size     : ${BATCH_SIZE}"
 echo "  device         : ${DEVICE}"
 echo "  val fraction   : ${VAL_FRACTION}"
@@ -128,6 +136,9 @@ cmd=(
   --device "${DEVICE}"
   --seed "${SEED}"
   --sampling_mode "${SAMPLING_MODE}"
+  --window_mode "${WINDOW_MODE}"
+  --window_size_frames "${WINDOW_SIZE_FRAMES}"
+  --window_stride_frames "${WINDOW_STRIDE_FRAMES}"
   --positive_oversample_ratio "${POSITIVE_OVERSAMPLE_RATIO}"
   --val_fraction "${VAL_FRACTION}"
   --max_train_files "${MAX_TRAIN_FILES}"
@@ -141,6 +152,10 @@ fi
 
 if [[ "${EXCLUDE_IGNORE_IN_SAMPLING}" == "1" ]]; then
   cmd+=(--exclude_ignore_in_sampling)
+fi
+
+if [[ "${INCLUDE_TAIL_WINDOW}" != "1" ]]; then
+  cmd+=(--no_include_tail_window)
 fi
 
 if [[ -n "${CLASS_WEIGHT}" ]]; then
