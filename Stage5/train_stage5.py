@@ -327,6 +327,26 @@ def build_config(args: argparse.Namespace, *, feature_dim: int) -> dict[str, Any
     return make_jsonable(config)
 
 
+def build_model_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    kwargs = {
+        "width": args.width,
+        "depth": args.depth,
+        "expansion": args.expansion,
+        "dropout": args.dropout,
+        "use_global_context": not args.no_global_context,
+    }
+    if args.model.lower() == "pointnext_s":
+        kwargs.update(
+            {
+                "pointnext_radius": args.pointnext_radius,
+                "pointnext_nsample": args.pointnext_nsample,
+                "pointnext_sa_layers": args.pointnext_sa_layers,
+                "pointnext_sa_use_res": args.pointnext_sa_use_res,
+            }
+        )
+    return kwargs
+
+
 def validate_args(args: argparse.Namespace) -> None:
     if args.val_every <= 0:
         raise ValueError("--val_every must be positive")
@@ -346,6 +366,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--window_size_frames must be positive")
     if args.window_stride_frames <= 0:
         raise ValueError("--window_stride_frames must be positive")
+    if args.pointnext_radius <= 0:
+        raise ValueError("--pointnext_radius must be positive")
+    if args.pointnext_nsample <= 0:
+        raise ValueError("--pointnext_nsample must be positive")
+    if args.pointnext_sa_layers <= 0:
+        raise ValueError("--pointnext_sa_layers must be positive")
     if (
         args.window_mode == "none"
         and args.num_points is not None
@@ -434,11 +460,7 @@ def train(args: argparse.Namespace) -> None:
         feature_dim=feature_dim,
         checkpoint=args.checkpoint,
         strict_checkpoint=args.strict_checkpoint,
-        width=args.width,
-        depth=args.depth,
-        expansion=args.expansion,
-        dropout=args.dropout,
-        use_global_context=not args.no_global_context,
+        **build_model_kwargs(args),
     ).to(device)
 
     loss_fn = build_loss(
@@ -563,6 +585,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expansion", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--no_global_context", action="store_true")
+    parser.add_argument("--pointnext_radius", type=float, default=0.1)
+    parser.add_argument("--pointnext_nsample", type=int, default=16)
+    parser.add_argument("--pointnext_sa_layers", type=int, default=2)
+    parser.add_argument(
+        "--no_pointnext_sa_use_res",
+        dest="pointnext_sa_use_res",
+        action="store_false",
+        help="Disable residual set-abstraction blocks in the PointNeXt-S wrapper",
+    )
+    parser.set_defaults(pointnext_sa_use_res=True)
 
     parser.add_argument("--features", default="intensity,confidence")
     parser.add_argument("--num_points", type=int, default=8192)

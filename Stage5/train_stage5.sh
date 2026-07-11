@@ -20,7 +20,22 @@ set -euo pipefail
 SCRIPT_DIR="/mnt/data/3d_projects/models/Stage5"
 cd "${SCRIPT_DIR}"
 
-PYTHON="python"
+PYTHON="/home/kodaira/anaconda3/envs/dualtrack311/bin/python"
+
+if [[ -z "${CONDA_PREFIX:-}" ]]; then
+  CONDA_PREFIX="$(dirname "$(dirname "${PYTHON}")")"
+fi
+
+export CUDA_HOME="${CONDA_PREFIX}"
+export TORCH_CUDA_ARCH_LIST="12.0"
+
+TORCH_LIB="$("${PYTHON}" - <<'PY'
+import torch
+from pathlib import Path
+print(Path(torch.__file__).resolve().parent / "lib")
+PY
+)"
+export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
 
 DATE="260623"
 
@@ -65,10 +80,18 @@ DEVICE="cuda"
 SEED=42
 
 # Lightweight baseline size.
+# For MODEL_NAME="pointnext_s", WIDTH/EXPANSION/DROPOUT are used by the
+# PointNeXt-S wrapper. DEPTH and global-context settings are ignored there.
 WIDTH=64
 DEPTH=6
 EXPANSION=4
 DROPOUT=0.1
+
+# PointNeXt-S knobs. Ignored by mlp_baseline.
+POINTNEXT_RADIUS=0.1
+POINTNEXT_NSAMPLE=16
+POINTNEXT_SA_LAYERS=2
+POINTNEXT_SA_USE_RES=1
 
 # Sampling knobs.
 # In WINDOW_MODE="overlap", each frame-order window is one training sample and
@@ -115,6 +138,9 @@ echo "  num points     : ${NUM_POINTS} (ignored when window mode is overlap)"
 echo "  batch size     : ${BATCH_SIZE}"
 echo "  device         : ${DEVICE}"
 echo "  val fraction   : ${VAL_FRACTION}"
+if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
+  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}"
+fi
 
 cmd=(
   "${PYTHON}" "${SCRIPT_DIR}/train_stage5.py"
@@ -132,6 +158,9 @@ cmd=(
   --depth "${DEPTH}"
   --expansion "${EXPANSION}"
   --dropout "${DROPOUT}"
+  --pointnext_radius "${POINTNEXT_RADIUS}"
+  --pointnext_nsample "${POINTNEXT_NSAMPLE}"
+  --pointnext_sa_layers "${POINTNEXT_SA_LAYERS}"
   --num_workers "${NUM_WORKERS}"
   --device "${DEVICE}"
   --seed "${SEED}"
@@ -156,6 +185,10 @@ fi
 
 if [[ "${INCLUDE_TAIL_WINDOW}" != "1" ]]; then
   cmd+=(--no_include_tail_window)
+fi
+
+if [[ "${POINTNEXT_SA_USE_RES}" != "1" ]]; then
+  cmd+=(--no_pointnext_sa_use_res)
 fi
 
 if [[ -n "${CLASS_WEIGHT}" ]]; then

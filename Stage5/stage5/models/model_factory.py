@@ -8,6 +8,7 @@ from torch import nn
 
 from .base_segmentor import BasePointSegmentor
 from .mlp_baseline_segmentor import MLPBaselineSegmentor, mlp_baseline
+from .pointnext_s_segmentor import PointNeXtSSegmentor, pointnext_s
 
 
 ModelBuilder = Callable[..., BasePointSegmentor]
@@ -15,6 +16,7 @@ ModelBuilder = Callable[..., BasePointSegmentor]
 
 _MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "mlp_baseline": mlp_baseline,
+    "pointnext_s": pointnext_s,
 }
 
 
@@ -78,6 +80,7 @@ def build_stage5_model(
 
 __all__ = [
     "MLPBaselineSegmentor",
+    "PointNeXtSSegmentor",
     "build_stage5_model",
     "list_stage5_models",
     "load_stage5_checkpoint",

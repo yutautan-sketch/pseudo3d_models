@@ -1,0 +1,26 @@
+{
+  "source_checkpoint": "/mnt/data/3d_projects/models/Stage5/external/PointNeXt/weight/s3dis-seg/checkpoint/s3dis-train-pointnext-s-ngpus1-seed1742-20220525-162639-Gz4ViiL95b6KP9MMH2ytG3_ckpt_best.pth",
+  "source_keys": 114,
+  "target_keys": 114,
+  "loaded_keys": 111,
+  "skipped_missing": 2,
+  "skipped_shape_mismatch": 1,
+  "load_result_missing_keys": 3,
+  "load_result_unexpected_keys": 0,
+  "loaded_prefix_counts": {
+    "decoder.decoder": 48,
+    "encoder.encoder": 57,
+    "head.head": 6
+  },
+  "skipped_shape_prefix_counts": {
+    "encoder.encoder": 1
+  },
+  "feature_names": "intensity,confidence",
+  "feature_dim": 2,
+  "logits_shape": [
+    2,
+    640,
+    2
+  ],
+  "loss": 0.7746858596801758
+}

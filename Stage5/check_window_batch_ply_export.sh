@@ -18,16 +18,16 @@ cd /mnt/data/3d_projects/models/Stage5
 # ------------------------------------------------------------
 # input path info
 # ------------------------------------------------------------
-DATASET_ROOT="/mnt/data/3d_projects/pseudo3d_dataset"
-DATE="260623"
-INPUT_DIR="${DATASET_ROOT}/${DATE}"
-
-MODE="grid"
-
 # Leave VIDEO empty to use the first matching H5 in INPUT_DIR.
 # Example:
 #   VIDEO="20250627_104104_9320"
-VIDEO=""
+VIDEO="20250626_124212_7300"
+
+DATASET_ROOT="/mnt/data/3d_projects/DualTrack_output/pseudo3d_visualizations"
+DATE="stage2_v1_scale10.0/${VIDEO}_ts448_oym96_corr/percentile85_area100"
+INPUT_DIR="${DATASET_ROOT}/${DATE}"
+
+MODE="foreground"
 
 if [[ -n "${VIDEO}" ]]; then
   INPUT_H5="${INPUT_DIR}/${VIDEO}_pointcloud_annotated_${MODE}.h5"

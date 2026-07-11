@@ -1,0 +1,4 @@
+split,h5_index,h5_path,window_id,start_frame,end_frame,num_points
+val,0,/mnt/data/3d_projects/models/Stage5/_dummy_pointnext_s_training_check/data/val/dummy_val_000_pointcloud_annotated_grid.h5,0,0,7,512
+val,0,/mnt/data/3d_projects/models/Stage5/_dummy_pointnext_s_training_check/data/val/dummy_val_000_pointcloud_annotated_grid.h5,1,4,11,512
+val,0,/mnt/data/3d_projects/models/Stage5/_dummy_pointnext_s_training_check/data/val/dummy_val_000_pointcloud_annotated_grid.h5,2,8,15,512
