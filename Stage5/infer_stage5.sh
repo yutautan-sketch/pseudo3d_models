@@ -62,27 +62,12 @@ VIDEO="20250626_124212_7300"
 MAX_FILES=0
 
 # ------------------------------------------------------------
-# checkpoint path info
-# ------------------------------------------------------------
-RUN_ROOT="/mnt/data/3d_projects/stage5_runs"
-MODEL="pointnext_s"
-PREFIX="w20_s10_ce_smooth00_auto_weight_lr1e3_ep200"
-EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
-CHECKPOINT_NAME="best.pt"
-CHECKPOINT="${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
-
-# ------------------------------------------------------------
-# output path info
-# ------------------------------------------------------------
-PRED_ROOT="/mnt/data/3d_projects/stage5_predictions/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
-
-# ------------------------------------------------------------
 # inference parameters
 # ------------------------------------------------------------
 MODEL_NAME="pointnext_s"
 INFERENCE_MODE="window"
-WINDOW_SIZE_FRAMES=12
-WINDOW_STRIDE_FRAMES=6
+WINDOW_SIZE_FRAMES=20
+WINDOW_STRIDE_FRAMES=10
 INCLUDE_TAIL_WINDOW=1
 CHUNK_SIZE=131072
 DEVICE="cuda"
@@ -94,6 +79,21 @@ POINTNEXT_RADIUS=0.1
 POINTNEXT_NSAMPLE=32
 POINTNEXT_SA_LAYERS=2
 POINTNEXT_SA_USE_RES=1
+
+# ------------------------------------------------------------
+# checkpoint path info
+# ------------------------------------------------------------
+RUN_ROOT="/mnt/data/3d_projects/stage5_runs"
+MODEL="pointnext_s"
+PREFIX="w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_ce_smooth00_auto_weight_lr1e3_ep200"
+EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
+CHECKPOINT_NAME="checkpoint_epoch_0150.pt"
+CHECKPOINT="${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
+
+# ------------------------------------------------------------
+# output path info
+# ------------------------------------------------------------
+PRED_ROOT="/mnt/data/3d_projects/stage5_predictions/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
 
 # Leave empty to use feature_names stored in checkpoint config.
 FEATURES_OVERRIDE=""

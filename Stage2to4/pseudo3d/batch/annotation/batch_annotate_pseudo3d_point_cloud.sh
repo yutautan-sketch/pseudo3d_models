@@ -32,9 +32,16 @@ DETAIL="percentile85_area100"
 GEOMETRY_KEY="corr"
 OUTPUT_SUFFIX="_ts448_oym96_corr"
 MODE="foreground"  # grid / foreground / dense
+SAMPLING_MODE="legacy"  # legacy / combined_v2
 H5_PATTERN="*${OUTPUT_SUFFIX}.h5"
 
-SUMMARY_CSV="${VIS_DIR}/batch_pointcloud_annotation_summary_${MODE}.csv"
+if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
+  POINT_CLOUD_TAG="${MODE}"
+else
+  POINT_CLOUD_TAG="${MODE}_${SAMPLING_MODE}"
+fi
+
+SUMMARY_CSV="${VIS_DIR}/batch_pointcloud_annotation_summary_${POINT_CLOUD_TAG}.csv"
 
 mkdir -p "${VIS_DIR}"
 
@@ -46,8 +53,8 @@ python pseudo3d/batch/annotation/batch_annotate_pseudo3d_point_cloud.py \
   --summary_csv "${SUMMARY_CSV}" \
   --video_suffix_to_strip "${OUTPUT_SUFFIX}" \
   --point_cloud_detail "${DETAIL}" \
-  --point_cloud_filename_template "{video_name}_pointcloud_${MODE}.h5" \
-  --output_filename_template "{video_name}_pointcloud_annotated_${MODE}.h5" \
+  --point_cloud_filename_template "{video_name}_pointcloud_${POINT_CLOUD_TAG}.h5" \
+  --output_filename_template "{video_name}_pointcloud_annotated_${POINT_CLOUD_TAG}.h5" \
   --geometry_key "${GEOMETRY_KEY}" \
   --label_mode contour_in_bbox \
   --bbox_ignore_margin 0 \

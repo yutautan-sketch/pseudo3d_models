@@ -33,11 +33,18 @@ VIS_DIR="${OUTPUT_ROOT}/pseudo3d_visualizations/${RUN_NAME}"
 DETAIL="percentile85_area100"
 OUTPUT_SUFFIX="_ts448_oym96_corr"
 MODE="foreground"  # grid / foreground / dense
+SAMPLING_MODE="legacy"  # legacy / combined_v2
+
+if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
+  POINT_CLOUD_TAG="${MODE}"
+else
+  POINT_CLOUD_TAG="${MODE}_${SAMPLING_MODE}"
+fi
 
 PSEUDO3D_H5="${H5_DIR}/${VIDEO}${OUTPUT_SUFFIX}.h5"
 POINT_CLOUD_DIR="${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}"
-POINT_CLOUD_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_${MODE}.h5"
-OUTPUT_ANNOTATED_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotated_${MODE}.h5"
+POINT_CLOUD_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_${POINT_CLOUD_TAG}.h5"
+OUTPUT_ANNOTATED_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotated_${POINT_CLOUD_TAG}.h5"
 
 mkdir -p "${POINT_CLOUD_DIR}"
 

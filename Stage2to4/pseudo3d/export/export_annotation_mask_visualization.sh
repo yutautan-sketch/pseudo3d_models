@@ -28,11 +28,19 @@ VIS_DIR="${OUTPUT_ROOT}/pseudo3d_visualizations/${RUN_NAME}"
 DETAIL="percentile85_area100"
 OUTPUT_SUFFIX="_ts448_oym96_corr"
 MODE="foreground"  # grid / foreground / dense
+SAMPLING_MODE="legacy"  # legacy / combined_v2
+DRAW_POINT_CLOUD_SAMPLES="1"  # 1 / 0
+
+if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
+  POINT_CLOUD_TAG="${MODE}"
+else
+  POINT_CLOUD_TAG="${MODE}_${SAMPLING_MODE}"
+fi
 
 PSEUDO3D_H5="${H5_DIR}/${VIDEO}${OUTPUT_SUFFIX}.h5"
 POINT_CLOUD_DIR="${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}_corr"
-POINT_CLOUD_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_${MODE}.h5"
-OUTPUT_OBJ="${POINT_CLOUD_DIR}/${VIDEO}_annotation_mask_debug_${MODE}.obj"
+POINT_CLOUD_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_${POINT_CLOUD_TAG}.h5"
+OUTPUT_OBJ="${POINT_CLOUD_DIR}/${VIDEO}_annotation_mask_debug_${POINT_CLOUD_TAG}.obj"
 
 mkdir -p "${POINT_CLOUD_DIR}"
 
@@ -43,7 +51,7 @@ python pseudo3d/export/export_annotation_mask_visualization.py \
   --video_name "${VIDEO}" \
   --output_obj "${OUTPUT_OBJ}" \
   --geometry_key corr \
-  --texture_dir_name "annotation_mask_textures_${MODE}" \
+  --texture_dir_name "annotation_mask_textures_${POINT_CLOUD_TAG}" \
   --xml_frame_id_source frame_index \
   --xml_frame_number_offsets 1 \
   --contour_preset "${DETAIL}" \
@@ -62,4 +70,5 @@ python pseudo3d/export/export_annotation_mask_visualization.py \
   --contour_color 0,255,255 \
   --fallback_contour_color 0,255,96 \
   --bbox_thickness 2 \
-  --contour_thickness 2
+  --contour_thickness 2 \
+  $(if [[ "${DRAW_POINT_CLOUD_SAMPLES}" == "1" ]]; then echo "--draw_point_cloud_samples"; fi)

@@ -16,11 +16,19 @@ VIS_DIR="${OUTPUT_ROOT}/pseudo3d_visualizations/${RUN_NAME}"
 DETAIL="percentile85_area100"
 GEOMETRY_KEY="corr"
 MODE="foreground"  # grid / foreground / dense
+SAMPLING_MODE="legacy"  # legacy / combined_v2
+COLOR_MODE="annotation_source"  # annotation / source / annotation_source
+
+if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
+  POINT_CLOUD_TAG="${MODE}"
+else
+  POINT_CLOUD_TAG="${MODE}_${SAMPLING_MODE}"
+fi
 
 # annotated h5 files are expected as:
-#   ${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}_${GEOMETRY_KEY}/${VIDEO}_pointcloud_annotated_${MODE}.h5
-H5_PATTERN="*_pointcloud_annotated_${MODE}.h5"
-SUMMARY_CSV="${VIS_DIR}/batch_annotated_point_cloud_ply_summary_${MODE}.csv"
+#   .../${VIDEO}_pointcloud_annotated_${POINT_CLOUD_TAG}.h5
+H5_PATTERN="*_pointcloud_annotated_${POINT_CLOUD_TAG}.h5"
+SUMMARY_CSV="${VIS_DIR}/batch_annotated_point_cloud_ply_summary_${POINT_CLOUD_TAG}.csv"
 
 mkdir -p "${VIS_DIR}"
 
@@ -30,7 +38,12 @@ python pseudo3d/batch/export/batch_export_annotated_point_cloud_ply.py \
   --recursive \
   --summary_csv "${SUMMARY_CSV}" \
   --background_mode dim \
+  --color_mode "${COLOR_MODE}" \
   --femur_color 255,64,32 \
+  --global_color 255,255,255 \
+  --local_percentile_color 64,200,255 \
+  --tophat_color 255,200,64 \
+  --context_grid_color 120,120,120 \
   --background_alpha 85 \
   --ignore_alpha 35 \
   --include_annotation_markers \

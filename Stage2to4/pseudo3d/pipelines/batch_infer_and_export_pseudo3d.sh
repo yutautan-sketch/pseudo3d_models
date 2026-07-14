@@ -51,7 +51,7 @@ python pseudo3d/inference/batch_infer_video_to_pseudo3d_h5.py \
   --local_crop_offset_x 0 \
   --connect_slices \
   --tracking_correction_preset stage2_v1 \
-  --tracking_progress_axis_scale 1.0 \
+  --tracking_progress_axis_scale 2.5 \
   --skip_existing \
   --continue_on_error
 

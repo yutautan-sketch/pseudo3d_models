@@ -122,21 +122,26 @@ def make_sampling_config_from_args(args: argparse.Namespace) -> PointSamplingCon
     else:
         raise ValueError(f"Unknown sampling_mode: {args.sampling_mode}")
 
-    include_context_grid = (
-        cfg.include_context_grid
-        if args.include_context_grid is None
-        else bool(args.include_context_grid)
-    )
-    enable_local_percentile = (
-        cfg.enable_local_percentile
-        if args.enable_local_percentile is None
-        else bool(args.enable_local_percentile)
-    )
-    enable_tophat = (
-        cfg.enable_tophat
-        if args.enable_tophat is None
-        else bool(args.enable_tophat)
-    )
+    if args.sampling_mode == "legacy":
+        include_context_grid = False
+        enable_local_percentile = False
+        enable_tophat = False
+    else:
+        include_context_grid = (
+            cfg.include_context_grid
+            if args.include_context_grid is None
+            else bool(args.include_context_grid)
+        )
+        enable_local_percentile = (
+            cfg.enable_local_percentile
+            if args.enable_local_percentile is None
+            else bool(args.enable_local_percentile)
+        )
+        enable_tophat = (
+            cfg.enable_tophat
+            if args.enable_tophat is None
+            else bool(args.enable_tophat)
+        )
 
     return PointSamplingConfig(
         sampling_mode=args.sampling_mode,

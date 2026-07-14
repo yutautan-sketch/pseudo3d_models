@@ -23,11 +23,19 @@ VIS_DIR="${OUTPUT_ROOT}/pseudo3d_visualizations/${RUN_NAME}"
 DETAIL="percentile85_area100"
 OUTPUT_SUFFIX="_ts448_oym96_corr"
 MODE="foreground"  # grid / foreground / dense
+SAMPLING_MODE="legacy"  # legacy / combined_v2
+COLOR_MODE="annotation_source"  # annotation / source / annotation_source
+
+if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
+  POINT_CLOUD_TAG="${MODE}"
+else
+  POINT_CLOUD_TAG="${MODE}_${SAMPLING_MODE}"
+fi
 
 POINT_CLOUD_DIR="${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}"
-ANNOTATED_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotated_${MODE}.h5"
-OUTPUT_PLY="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotated_${MODE}.ply"
-ANNOTATION_ONLY_OUTPUT_PLY="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotation_only_${MODE}.ply"
+ANNOTATED_H5="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotated_${POINT_CLOUD_TAG}.h5"
+OUTPUT_PLY="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotated_${POINT_CLOUD_TAG}.ply"
+ANNOTATION_ONLY_OUTPUT_PLY="${POINT_CLOUD_DIR}/${VIDEO}_pointcloud_annotation_only_${POINT_CLOUD_TAG}.ply"
 
 mkdir -p "${POINT_CLOUD_DIR}"
 
@@ -36,7 +44,12 @@ python pseudo3d/export/export_annotated_point_cloud_ply.py \
   --output_ply "${OUTPUT_PLY}" \
   --annotation_only_output_ply "${ANNOTATION_ONLY_OUTPUT_PLY}" \
   --background_mode dim \
+  --color_mode "${COLOR_MODE}" \
   --femur_color 255,64,32 \
+  --global_color 255,255,255 \
+  --local_percentile_color 64,200,255 \
+  --tophat_color 255,200,64 \
+  --context_grid_color 120,120,120 \
   --background_alpha 85 \
   --ignore_alpha 35 \
   --include_annotation_markers \
