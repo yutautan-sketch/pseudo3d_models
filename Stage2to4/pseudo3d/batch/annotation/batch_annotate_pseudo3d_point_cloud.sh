@@ -10,7 +10,7 @@ cd /mnt/data/3d_projects/models/Stage2to4
 # input path info
 # ------------------------------------------------------------
 INPUT="/mnt/data/Data_hbl"
-VOC_XML_ROOT="${INPUT}/predirectory_for_coco_annotation_leg/251128/251128/"
+VOC_XML_ROOT="${INPUT}/predirectory_for_coco_annotation_leg/260630/260630_pseudo3d/"
 
 # VOC XML layout expected by annotate_pseudo3d_point_cloud.py:
 #   ${VOC_XML_ROOT}/${VIDEO}/annotations_renamed/${VIDEO}_${frame_number:05d}.xml
@@ -24,14 +24,14 @@ VOC_XML_ROOT="${INPUT}/predirectory_for_coco_annotation_leg/251128/251128/"
 # pseudo3D / point-cloud path info
 # ------------------------------------------------------------
 OUTPUT_ROOT="/mnt/data/3d_projects/pseudo3d_dataset"
-RUN_NAME="stage2_v1_scale10.0"
+RUN_NAME="260711"
 H5_DIR="${OUTPUT_ROOT}/pseudo3d_outputs/${RUN_NAME}"
 VIS_DIR="${OUTPUT_ROOT}/pseudo3d_visualizations/${RUN_NAME}"
 
-DETAIL="percentile90_area100"
+DETAIL="percentile85_area100"
 GEOMETRY_KEY="corr"
 OUTPUT_SUFFIX="_ts448_oym96_corr"
-MODE="grid"  # grid / foreground / dense
+MODE="foreground"  # grid / foreground / dense
 H5_PATTERN="*${OUTPUT_SUFFIX}.h5"
 
 SUMMARY_CSV="${VIS_DIR}/batch_pointcloud_annotation_summary_${MODE}.csv"
@@ -53,8 +53,8 @@ python pseudo3d/batch/annotation/batch_annotate_pseudo3d_point_cloud.py \
   --bbox_ignore_margin 0 \
   --xml_frame_id_source frame_index \
   --xml_frame_number_offsets 1 \
-  --contour_preset percentile90_area100 \
-  --contour_percentile 90 \
+  --contour_preset percentile85_area100 \
+  --contour_percentile 85 \
   --contour_min_component_area 100 \
   --contour_min_area 20 \
   --contour_min_alpha 1 \

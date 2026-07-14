@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import h5py
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -29,7 +30,107 @@ def parse_feature_list(value: str) -> tuple[str, ...]:
 def parse_class_weight(value: str | None) -> list[float] | None:
     if value is None or value.strip() == "":
         return None
+    if is_auto_class_weight(value):
+        return None
     return [float(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def is_auto_class_weight(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"auto", "pointnext_auto"}
+
+
+def compute_class_counts_from_h5(
+    h5_paths: Iterable[Path],
+    *,
+    num_classes: int,
+    ignore_index: int,
+) -> np.ndarray:
+    counts = np.zeros((int(num_classes),), dtype=np.int64)
+    for h5_path in h5_paths:
+        with h5py.File(h5_path, "r") as f:
+            if "annotation" not in f:
+                raise KeyError(f"'annotation' group not found in {h5_path}")
+            annotation = f["annotation"]
+            if "point_label" not in annotation:
+                raise KeyError(f"annotation/point_label not found in {h5_path}")
+            labels = annotation["point_label"][:].astype(np.int64)
+            if "valid_mask" in annotation:
+                valid_mask = annotation["valid_mask"][:].astype(bool)
+            else:
+                valid_mask = np.ones_like(labels, dtype=bool)
+
+        if labels.shape != valid_mask.shape:
+            raise ValueError(
+                f"annotation length mismatch in {h5_path}: "
+                f"point_label={labels.shape}, valid_mask={valid_mask.shape}"
+            )
+
+        mask = valid_mask & (labels != int(ignore_index))
+        selected = labels[mask]
+        if selected.size == 0:
+            continue
+        invalid = selected[(selected < 0) | (selected >= int(num_classes))]
+        if invalid.size > 0:
+            unique_invalid = sorted(set(int(item) for item in invalid.tolist()))
+            raise ValueError(
+                f"Found label(s) outside [0, {num_classes - 1}] in {h5_path}: {unique_invalid}"
+            )
+        counts += np.bincount(selected, minlength=int(num_classes))[: int(num_classes)]
+    return counts
+
+
+def pointnext_class_weights_from_counts(
+    counts: np.ndarray,
+    *,
+    epsilon: float = 0.02,
+    normalize: bool = True,
+) -> list[float]:
+    total = int(counts.sum())
+    if total <= 0:
+        raise ValueError("Cannot compute class weights because no valid labeled points were found")
+    frequency = counts.astype(np.float64) / float(total)
+    weights = 1.0 / (frequency + float(epsilon))
+    if normalize:
+        weights = weights * len(weights) / weights.sum()
+    return weights.astype(np.float32).tolist()
+
+
+def resolve_class_weight(
+    args: argparse.Namespace,
+    train_paths: Iterable[Path],
+) -> tuple[list[float] | None, dict[str, Any]]:
+    requested = args.class_weight
+    if not is_auto_class_weight(requested):
+        manual_weight = parse_class_weight(requested)
+        return manual_weight, {
+            "mode": "manual" if manual_weight is not None else "none",
+            "requested": requested,
+            "counts": None,
+            "epsilon": None,
+            "normalize": None,
+            "resolved": manual_weight,
+        }
+
+    counts = compute_class_counts_from_h5(
+        train_paths,
+        num_classes=args.num_classes,
+        ignore_index=args.ignore_index,
+    )
+    resolved = pointnext_class_weights_from_counts(
+        counts,
+        epsilon=args.auto_class_weight_epsilon,
+        normalize=args.normalize_auto_class_weight,
+    )
+    return resolved, {
+        "mode": "auto",
+        "requested": requested,
+        "counts": [int(item) for item in counts.tolist()],
+        "epsilon": float(args.auto_class_weight_epsilon),
+        "normalize": bool(args.normalize_auto_class_weight),
+        "resolved": resolved,
+    }
 
 
 def collect_h5_paths_from_dir(
@@ -175,8 +276,8 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     epoch: int,
     config: dict[str, Any],
-    train_metrics: dict[str, float],
-    val_metrics: dict[str, float] | None,
+    train_metrics: dict[str, Any],
+    val_metrics: dict[str, Any] | None,
     best_score: float,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,6 +375,201 @@ def write_window_summary(
             )
 
 
+class TrainingDebugAccumulator:
+    """Collect epoch-level diagnostics without changing the training objective."""
+
+    def __init__(self, *, ignore_index: int = -1, positive_label: int = 1) -> None:
+        self.ignore_index = int(ignore_index)
+        self.positive_label = int(positive_label)
+        self.total_points = 0
+        self.valid_points = 0
+        self.ignore_points = 0
+        self.unpadded_points = 0
+        self.padded_points = 0
+        self.num_samples = 0
+        self.empty_valid_samples = 0
+        self.label_background = 0
+        self.label_positive = 0
+        self.pred_background = 0
+        self.pred_positive = 0
+        self.tp = 0
+        self.fp = 0
+        self.tn = 0
+        self.fn = 0
+        self.valid_points_per_sample: list[int] = []
+        self.num_points_per_sample: list[int] = []
+        self.logit_background_sum = 0.0
+        self.logit_positive_sum = 0.0
+        self.prob_positive_sum = 0.0
+        self.prob_positive_on_gt_background_sum = 0.0
+        self.prob_positive_on_gt_positive_sum = 0.0
+        self.logit_valid_count = 0
+        self.gt_background_count_for_prob = 0
+        self.gt_positive_count_for_prob = 0
+
+    @staticmethod
+    def _ratio(numerator: float, denominator: float) -> float:
+        if denominator <= 0:
+            return 0.0
+        return float(numerator) / float(denominator)
+
+    @torch.no_grad()
+    def update(self, output: dict[str, torch.Tensor], batch: dict[str, Any]) -> None:
+        logits = output["logits"].detach()
+        labels = batch["labels"].detach()
+        valid_mask = batch.get("valid_mask")
+        if valid_mask is None:
+            valid_mask = torch.ones_like(labels, dtype=torch.bool)
+        else:
+            valid_mask = valid_mask.detach().bool()
+
+        metric_mask = valid_mask & (labels != self.ignore_index)
+        predictions = torch.argmax(logits, dim=-1)
+
+        total = int(labels.numel())
+        valid = int(metric_mask.sum().item())
+        self.total_points += total
+        self.valid_points += valid
+        self.ignore_points += total - valid
+
+        if "num_points" in batch:
+            num_points = batch["num_points"].detach().long()
+        else:
+            num_points = torch.full(
+                (labels.shape[0],),
+                labels.shape[1],
+                dtype=torch.long,
+                device=labels.device,
+            )
+        unpadded = int(num_points.sum().item())
+        self.unpadded_points += unpadded
+        self.padded_points += max(0, total - unpadded)
+        self.num_samples += int(labels.shape[0])
+        self.num_points_per_sample.extend(int(item) for item in num_points.detach().cpu().tolist())
+
+        per_sample_valid = metric_mask.sum(dim=1).detach().cpu().tolist()
+        self.valid_points_per_sample.extend(int(item) for item in per_sample_valid)
+        self.empty_valid_samples += sum(1 for item in per_sample_valid if int(item) == 0)
+
+        if valid == 0:
+            return
+
+        valid_labels = labels[metric_mask]
+        valid_predictions = predictions[metric_mask]
+        positive_label = int(self.positive_label)
+        background_label = 0
+
+        label_positive_mask = valid_labels == positive_label
+        label_background_mask = valid_labels == background_label
+        pred_positive_mask = valid_predictions == positive_label
+        pred_background_mask = valid_predictions == background_label
+
+        self.label_positive += int(label_positive_mask.sum().item())
+        self.label_background += int(label_background_mask.sum().item())
+        self.pred_positive += int(pred_positive_mask.sum().item())
+        self.pred_background += int(pred_background_mask.sum().item())
+        self.tp += int((pred_positive_mask & label_positive_mask).sum().item())
+        self.fp += int((pred_positive_mask & label_background_mask).sum().item())
+        self.tn += int((pred_background_mask & label_background_mask).sum().item())
+        self.fn += int((pred_background_mask & label_positive_mask).sum().item())
+
+        valid_logits = logits[metric_mask]
+        if valid_logits.shape[-1] >= 2:
+            probabilities = torch.softmax(valid_logits.float(), dim=-1)
+            prob_positive = probabilities[:, positive_label]
+            self.logit_background_sum += float(valid_logits[:, background_label].float().sum().item())
+            self.logit_positive_sum += float(valid_logits[:, positive_label].float().sum().item())
+            self.prob_positive_sum += float(prob_positive.sum().item())
+            self.logit_valid_count += int(valid_logits.shape[0])
+
+            if label_background_mask.any():
+                self.prob_positive_on_gt_background_sum += float(
+                    prob_positive[label_background_mask].sum().item()
+                )
+                self.gt_background_count_for_prob += int(label_background_mask.sum().item())
+            if label_positive_mask.any():
+                self.prob_positive_on_gt_positive_sum += float(
+                    prob_positive[label_positive_mask].sum().item()
+                )
+                self.gt_positive_count_for_prob += int(label_positive_mask.sum().item())
+
+    def compute(self) -> dict[str, float]:
+        valid_array = np.asarray(self.valid_points_per_sample, dtype=np.float64)
+        points_array = np.asarray(self.num_points_per_sample, dtype=np.float64)
+        if valid_array.size == 0:
+            valid_array = np.asarray([0.0], dtype=np.float64)
+        if points_array.size == 0:
+            points_array = np.asarray([0.0], dtype=np.float64)
+
+        return {
+            "debug_total_point_count": float(self.total_points),
+            "debug_valid_point_count": float(self.valid_points),
+            "debug_ignore_point_count": float(self.ignore_points),
+            "debug_ignore_ratio": self._ratio(self.ignore_points, self.total_points),
+            "debug_unpadded_point_count": float(self.unpadded_points),
+            "debug_padded_point_count": float(self.padded_points),
+            "debug_padding_ratio": self._ratio(self.padded_points, self.total_points),
+            "debug_num_samples": float(self.num_samples),
+            "debug_empty_valid_sample_count": float(self.empty_valid_samples),
+            "debug_empty_valid_sample_ratio": self._ratio(self.empty_valid_samples, self.num_samples),
+            "debug_min_valid_points_per_sample": float(valid_array.min()),
+            "debug_mean_valid_points_per_sample": float(valid_array.mean()),
+            "debug_max_valid_points_per_sample": float(valid_array.max()),
+            "debug_min_num_points_per_sample": float(points_array.min()),
+            "debug_mean_num_points_per_sample": float(points_array.mean()),
+            "debug_max_num_points_per_sample": float(points_array.max()),
+            "debug_label_background_count": float(self.label_background),
+            "debug_label_positive_count": float(self.label_positive),
+            "debug_label_positive_ratio": self._ratio(self.label_positive, self.valid_points),
+            "debug_pred_background_count": float(self.pred_background),
+            "debug_pred_positive_count": float(self.pred_positive),
+            "debug_pred_positive_ratio": self._ratio(self.pred_positive, self.valid_points),
+            "debug_tp": float(self.tp),
+            "debug_fp": float(self.fp),
+            "debug_tn": float(self.tn),
+            "debug_fn": float(self.fn),
+            "debug_mean_logit_background": self._ratio(self.logit_background_sum, self.logit_valid_count),
+            "debug_mean_logit_positive": self._ratio(self.logit_positive_sum, self.logit_valid_count),
+            "debug_mean_logit_margin_positive_minus_background": self._ratio(
+                self.logit_positive_sum - self.logit_background_sum,
+                self.logit_valid_count,
+            ),
+            "debug_mean_prob_positive": self._ratio(self.prob_positive_sum, self.logit_valid_count),
+            "debug_mean_prob_positive_on_gt_background": self._ratio(
+                self.prob_positive_on_gt_background_sum,
+                self.gt_background_count_for_prob,
+            ),
+            "debug_mean_prob_positive_on_gt_positive": self._ratio(
+                self.prob_positive_on_gt_positive_sum,
+                self.gt_positive_count_for_prob,
+            ),
+        }
+
+
+def add_class_weight_debug(
+    metrics: dict[str, Any],
+    *,
+    class_weight_info: dict[str, Any] | None,
+    label_smoothing: float,
+) -> None:
+    if class_weight_info is None:
+        return
+    resolved = class_weight_info.get("resolved")
+    counts = class_weight_info.get("counts")
+    metrics["debug_class_weight_mode"] = class_weight_info.get("mode")
+    metrics["debug_class_weight"] = resolved
+    metrics["debug_class_counts"] = counts
+    metrics["debug_auto_class_weight_epsilon"] = class_weight_info.get("epsilon")
+    metrics["debug_auto_class_weight_normalize"] = class_weight_info.get("normalize")
+    metrics["debug_label_smoothing"] = float(label_smoothing)
+    if isinstance(resolved, list):
+        for index, value in enumerate(resolved):
+            metrics[f"debug_class_weight_{index}"] = float(value)
+    if isinstance(counts, list):
+        for index, value in enumerate(counts):
+            metrics[f"debug_class_count_{index}"] = float(value)
+
+
 def run_one_epoch(
     *,
     model: torch.nn.Module,
@@ -284,10 +580,14 @@ def run_one_epoch(
     epoch: int,
     desc: str,
     grad_clip_norm: float | None = None,
-) -> tuple[float, dict[str, float]]:
+    ignore_index: int = -1,
+    class_weight_info: dict[str, Any] | None = None,
+    label_smoothing: float = 0.0,
+) -> tuple[float, dict[str, Any]]:
     is_train = optimizer is not None
     model.train(is_train)
-    metric_acc = SegmentationMetricAccumulator(device=device)
+    metric_acc = SegmentationMetricAccumulator(device=device, ignore_index=ignore_index)
+    debug_acc = TrainingDebugAccumulator(ignore_index=ignore_index)
     total_loss = 0.0
     total_batches = 0
 
@@ -309,21 +609,34 @@ def run_one_epoch(
                 optimizer.step()
 
         metric_acc.update(output, batch)
+        debug_acc.update(output, batch)
         total_loss += float(loss.detach().item())
         total_batches += 1
         iterator.set_postfix(loss=total_loss / max(total_batches, 1))
 
     metrics = metric_acc.compute()
+    metrics.update(debug_acc.compute())
+    add_class_weight_debug(
+        metrics,
+        class_weight_info=class_weight_info,
+        label_smoothing=label_smoothing,
+    )
     avg_loss = total_loss / max(total_batches, 1)
     metrics["loss"] = avg_loss
     return avg_loss, metrics
 
 
-def build_config(args: argparse.Namespace, *, feature_dim: int) -> dict[str, Any]:
+def build_config(
+    args: argparse.Namespace,
+    *,
+    feature_dim: int,
+    class_weight_info: dict[str, Any],
+) -> dict[str, Any]:
     config = vars(args).copy()
     config["feature_names"] = parse_feature_list(args.features)
     config["feature_dim"] = int(feature_dim)
-    config["class_weight"] = parse_class_weight(args.class_weight)
+    config["class_weight"] = class_weight_info["resolved"]
+    config["class_weight_info"] = class_weight_info
     return make_jsonable(config)
 
 
@@ -372,6 +685,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pointnext_nsample must be positive")
     if args.pointnext_sa_layers <= 0:
         raise ValueError("--pointnext_sa_layers must be positive")
+    if args.save_every < 0:
+        raise ValueError("--save_every must be non-negative")
     if (
         args.window_mode == "none"
         and args.num_points is not None
@@ -379,6 +694,11 @@ def validate_args(args: argparse.Namespace) -> None:
         and args.batch_size > 1
     ):
         raise ValueError("--num_points <= 0 returns variable-size samples; use --batch_size 1")
+
+    if is_auto_class_weight(args.class_weight):
+        if args.auto_class_weight_epsilon <= 0:
+            raise ValueError("--auto_class_weight_epsilon must be positive")
+        return
 
     class_weight = parse_class_weight(args.class_weight)
     if class_weight is not None and len(class_weight) != args.num_classes:
@@ -440,8 +760,10 @@ def train(args: argparse.Namespace) -> None:
             window_mode=args.window_mode,
         )
 
+    class_weight, class_weight_info = resolve_class_weight(args, train_paths)
+
     feature_dim = train_dataset.num_feature_channels
-    config = build_config(args, feature_dim=feature_dim)
+    config = build_config(args, feature_dim=feature_dim, class_weight_info=class_weight_info)
     config["num_train_files"] = len(train_paths)
     config["num_val_files"] = len(val_paths)
     config["num_train_samples"] = len(train_dataset)
@@ -466,7 +788,7 @@ def train(args: argparse.Namespace) -> None:
     loss_fn = build_loss(
         args.loss,
         ignore_index=args.ignore_index,
-        class_weight=parse_class_weight(args.class_weight),
+        class_weight=class_weight,
         label_smoothing=args.label_smoothing,
     ).to(device)
 
@@ -486,6 +808,10 @@ def train(args: argparse.Namespace) -> None:
         print(f"val files: {len(val_paths)}")
         print(f"val samples: {len(val_dataset)}")
     print(f"feature_dim: {feature_dim}")
+    if class_weight is not None:
+        print(f"class weight: {class_weight}")
+        if class_weight_info["mode"] == "auto":
+            print(f"class counts: {class_weight_info['counts']}")
     if args.window_mode == "overlap":
         print(
             "frame windows: "
@@ -503,6 +829,9 @@ def train(args: argparse.Namespace) -> None:
             epoch=epoch,
             desc="train",
             grad_clip_norm=args.grad_clip_norm,
+            ignore_index=args.ignore_index,
+            class_weight_info=class_weight_info,
+            label_smoothing=args.label_smoothing,
         )
 
         val_metrics = None
@@ -517,6 +846,9 @@ def train(args: argparse.Namespace) -> None:
                     device=device,
                     epoch=epoch,
                     desc="val",
+                    ignore_index=args.ignore_index,
+                    class_weight_info=class_weight_info,
+                    label_smoothing=args.label_smoothing,
                 )
             score = val_metrics.get(args.best_metric, -val_metrics["loss"])
 
@@ -543,6 +875,17 @@ def train(args: argparse.Namespace) -> None:
             best_score = score
             save_checkpoint(
                 output_dir / "best.pt",
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                config=config,
+                train_metrics=train_metrics,
+                val_metrics=val_metrics,
+                best_score=best_score,
+            )
+        if args.save_every > 0 and epoch % args.save_every == 0:
+            save_checkpoint(
+                output_dir / f"checkpoint_epoch_{epoch:04d}.pt",
                 model=model,
                 optimizer=optimizer,
                 epoch=epoch,
@@ -617,7 +960,19 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--loss", default="cross_entropy", choices=["cross_entropy", "ce"])
     parser.add_argument("--ignore_index", type=int, default=-1)
-    parser.add_argument("--class_weight", default=None, help="Comma-separated class weights, e.g. '1.0,4.0'")
+    parser.add_argument(
+        "--class_weight",
+        default=None,
+        help="Comma-separated class weights, e.g. '1.0,4.0', or 'auto' for PointNeXt-style frequency weights",
+    )
+    parser.add_argument("--auto_class_weight_epsilon", type=float, default=0.02)
+    parser.add_argument(
+        "--no_normalize_auto_class_weight",
+        dest="normalize_auto_class_weight",
+        action="store_false",
+        help="Disable PointNeXt-style normalization of auto class weights to mean 1",
+    )
+    parser.set_defaults(normalize_auto_class_weight=True)
     parser.add_argument("--label_smoothing", type=float, default=0.0)
 
     parser.add_argument("--batch_size", type=int, default=4)
@@ -628,6 +983,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--val_every", type=int, default=1)
     parser.add_argument("--best_metric", default="iou_femur")
+    parser.add_argument("--save_every", type=int, default=0, help="Save checkpoint_epoch_XXXX.pt every N epochs; 0 disables periodic checkpoints")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
 

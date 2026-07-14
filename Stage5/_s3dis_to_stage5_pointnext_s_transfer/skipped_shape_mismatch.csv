@@ -1,2 +1,0 @@
-source_key,target_key,reason,source_shape,target_shape
-encoder.encoder.0.0.convs.0.0.weight,pointnext.encoder.encoder.0.0.convs.0.0.weight,shape_mismatch,"(32, 4, 1)","(32, 2, 1)"

@@ -11,23 +11,23 @@ cd /mnt/data/3d_projects/models/Stage2to4
 # ------------------------------------------------------------
 INPUT="/mnt/data/Data_hbl"
 SUB_DIR="example_videos/for_anlyze/"
-VIDEO="20250627_104104_9320"
+VIDEO="20250624_144848_7340_01"
 
 # VOC XML layout expected by export_annotation_mask_visualization.py:
 #   ${VOC_XML_ROOT}/${VIDEO}/annotations/${VIDEO}_${frame_number:05d}.xml
-VOC_XML_ROOT="${INPUT}/predirectory_for_coco_annotation_leg/260101_検証用/260101_val/"
+VOC_XML_ROOT="${INPUT}/predirectory_for_coco_annotation_leg/260630/260630_pseudo3d/"
 
 # ------------------------------------------------------------
 # output path info
 # ------------------------------------------------------------
-OUTPUT_ROOT="/mnt/data/3d_projects/DualTrack_output"
-RUN_NAME="stage2_v1_scale10.0"
+OUTPUT_ROOT="/mnt/data/3d_projects/pseudo3d_dataset"
+RUN_NAME="260711"
 H5_DIR="${OUTPUT_ROOT}/pseudo3d_outputs/${RUN_NAME}"
 VIS_DIR="${OUTPUT_ROOT}/pseudo3d_visualizations/${RUN_NAME}"
 
-DETAIL="percentile90_area100"
+DETAIL="percentile85_area100"
 OUTPUT_SUFFIX="_ts448_oym96_corr"
-MODE="grid"  # grid / foreground / dense
+MODE="foreground"  # grid / foreground / dense
 
 PSEUDO3D_H5="${H5_DIR}/${VIDEO}${OUTPUT_SUFFIX}.h5"
 POINT_CLOUD_DIR="${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}_corr"
@@ -46,8 +46,8 @@ python pseudo3d/export/export_annotation_mask_visualization.py \
   --texture_dir_name "annotation_mask_textures_${MODE}" \
   --xml_frame_id_source frame_index \
   --xml_frame_number_offsets 1 \
-  --contour_preset percentile90_area100 \
-  --contour_percentile 90 \
+  --contour_preset "${DETAIL}" \
+  --contour_percentile 85 \
   --contour_min_component_area 100 \
   --contour_min_area 20 \
   --contour_min_alpha 1 \

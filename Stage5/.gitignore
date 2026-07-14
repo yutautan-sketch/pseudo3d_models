@@ -1,0 +1,10 @@
+__pycache__/
+*/__pycache__/
+work_dirs/
+external/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.ply
+

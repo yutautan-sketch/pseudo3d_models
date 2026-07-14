@@ -14,7 +14,7 @@ LABEL_FEMUR = 1
 def _safe_divide(numerator: torch.Tensor, denominator: torch.Tensor) -> torch.Tensor:
     return torch.where(
         denominator > 0,
-        numerator.float() / denominator.float().clamp_min(1),
+        numerator.float() / denominator.float(),
         torch.zeros_like(numerator, dtype=torch.float32),
     )
 

@@ -47,3 +47,25 @@ def write_probability_ply(
                 f"{point[0]:.6f} {point[1]:.6f} {point[2]:.6f} "
                 f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
             )
+
+
+def write_selected_probability_ply(
+    path: str | Path,
+    points: np.ndarray,
+    probability: np.ndarray,
+    selected_mask: np.ndarray,
+) -> int:
+    """Write only selected points as a probability-colored PLY."""
+    points = np.asarray(points, dtype=np.float32)
+    probability = np.asarray(probability, dtype=np.float32)
+    selected_mask = np.asarray(selected_mask, dtype=bool)
+    if selected_mask.ndim != 1 or selected_mask.shape[0] != points.shape[0]:
+        raise ValueError(
+            f"selected_mask must have shape [N], got {selected_mask.shape} "
+            f"for {points.shape[0]} points"
+        )
+
+    selected_points = points[selected_mask]
+    selected_probability = probability[selected_mask]
+    write_probability_ply(path, selected_points, selected_probability)
+    return int(selected_points.shape[0])

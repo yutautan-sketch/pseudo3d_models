@@ -37,7 +37,8 @@ PY
 )"
 export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
 
-DATE="260623"
+DATE="260711"
+EX_DATE="260714"
 
 # ------------------------------------------------------------
 # input path info
@@ -48,48 +49,59 @@ DATASET_ROOT="/mnt/data/3d_projects/pseudo3d_dataset"
 #   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
 INPUT_DIR="${DATASET_ROOT}/${DATE}"
 
-MODE="grid"
+MODE="foreground"
 H5_PATTERN="*_annotated_${MODE}.h5"
 
 # Optional quick subset. 0 means all files.
 MAX_TRAIN_FILES=0
 
 # Optional validation split from INPUT_DIR. 0.0 means use all files for train.
-VAL_FRACTION=0.0
+VAL_FRACTION=0.1
 MAX_VAL_FILES=0
 
 # ------------------------------------------------------------
 # output path info
 # ------------------------------------------------------------
-OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs"
-EXPERIMENT_NAME="mlp_baseline_${DATE}_smoke"
+OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
+PREFIX="w20_s10_ce_smooth00_auto_weight_lr1e3_ep200"
+EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 
 # ------------------------------------------------------------
 # Model / training parameters.
 # ------------------------------------------------------------
-MODEL_NAME="mlp_baseline"
+MODEL_NAME="pointnext_s"
 FEATURES="intensity,confidence"
 NUM_POINTS=0
-BATCH_SIZE=4
-EPOCHS=10
+BATCH_SIZE=32
+EPOCHS=200
+
+# Conservative Stage5 fine-tuning LR. PointNeXt S3DIS uses 1e-2, but Stage5
+# starts from weak labels and smaller batches, so keep 1e-3 for the smoke run.
 LR=1e-3
 WEIGHT_DECAY=1e-4
 NUM_WORKERS=4
 DEVICE="cuda"
 SEED=42
+GRAD_CLIP_NORM=10
+SAVE_EVERY=10
 
 # Lightweight baseline size.
 # For MODEL_NAME="pointnext_s", WIDTH/EXPANSION/DROPOUT are used by the
 # PointNeXt-S wrapper. DEPTH and global-context settings are ignored there.
-WIDTH=64
+WIDTH=32
 DEPTH=6
 EXPANSION=4
-DROPOUT=0.1
+DROPOUT=0.0
+
+# Optional Stage5 checkpoint initialization.
+# Leave empty to train from scratch.
+INIT_CHECKPOINT="/mnt/data/3d_projects/models/Stage5/work_dirs/_s3dis_to_stage5_pointnext_s_transfer/stage5_pointnext_s_s3dis_partial_init.pt"
+STRICT_CHECKPOINT=1
 
 # PointNeXt-S knobs. Ignored by mlp_baseline.
 POINTNEXT_RADIUS=0.1
-POINTNEXT_NSAMPLE=16
+POINTNEXT_NSAMPLE=32
 POINTNEXT_SA_LAYERS=2
 POINTNEXT_SA_USE_RES=1
 
@@ -97,8 +109,8 @@ POINTNEXT_SA_USE_RES=1
 # In WINDOW_MODE="overlap", each frame-order window is one training sample and
 # NUM_POINTS/SAMPLING_MODE are kept only for legacy non-window runs.
 WINDOW_MODE="overlap"
-WINDOW_SIZE_FRAMES=12
-WINDOW_STRIDE_FRAMES=6
+WINDOW_SIZE_FRAMES=20
+WINDOW_STRIDE_FRAMES=10
 INCLUDE_TAIL_WINDOW=1
 SAMPLING_MODE="video"
 FRAME_WINDOW_SIZE=""
@@ -106,7 +118,13 @@ POSITIVE_OVERSAMPLE_RATIO=0.0
 EXCLUDE_IGNORE_IN_SAMPLING=0
 
 # Loss knobs.
-CLASS_WEIGHT=""
+# CLASS_WEIGHT:
+#   ""       : no class weight
+#   "auto"   : PointNeXt-style 1 / (class_frequency + epsilon), normalized to mean 1
+#   "1,4"    : manual class weights
+CLASS_WEIGHT="auto"
+AUTO_CLASS_WEIGHT_EPSILON=0.02
+NORMALIZE_AUTO_CLASS_WEIGHT=1
 LABEL_SMOOTHING=0.0
 
 if [[ ! -d "${INPUT_DIR}" ]]; then
@@ -136,8 +154,17 @@ echo "  window mode    : ${WINDOW_MODE}"
 echo "  window frames  : size=${WINDOW_SIZE_FRAMES}, stride=${WINDOW_STRIDE_FRAMES}, include_tail=${INCLUDE_TAIL_WINDOW}"
 echo "  num points     : ${NUM_POINTS} (ignored when window mode is overlap)"
 echo "  batch size     : ${BATCH_SIZE}"
+echo "  lr/weight decay: ${LR}/${WEIGHT_DECAY}"
+echo "  grad clip norm : ${GRAD_CLIP_NORM:-none}"
+echo "  save every     : ${SAVE_EVERY}"
 echo "  device         : ${DEVICE}"
 echo "  val fraction   : ${VAL_FRACTION}"
+echo "  class weight   : ${CLASS_WEIGHT:-none}"
+echo "  label smoothing: ${LABEL_SMOOTHING}"
+echo "  init checkpoint: ${INIT_CHECKPOINT:-none}"
+if [[ "${CLASS_WEIGHT}" == "auto" || "${CLASS_WEIGHT}" == "pointnext_auto" ]]; then
+  echo "  auto cls weight: epsilon=${AUTO_CLASS_WEIGHT_EPSILON}, normalize=${NORMALIZE_AUTO_CLASS_WEIGHT}"
+fi
 if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
   echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}"
 fi
@@ -164,6 +191,8 @@ cmd=(
   --num_workers "${NUM_WORKERS}"
   --device "${DEVICE}"
   --seed "${SEED}"
+  --grad_clip_norm "${GRAD_CLIP_NORM}"
+  --save_every "${SAVE_EVERY}"
   --sampling_mode "${SAMPLING_MODE}"
   --window_mode "${WINDOW_MODE}"
   --window_size_frames "${WINDOW_SIZE_FRAMES}"
@@ -172,8 +201,21 @@ cmd=(
   --val_fraction "${VAL_FRACTION}"
   --max_train_files "${MAX_TRAIN_FILES}"
   --max_val_files "${MAX_VAL_FILES}"
+  --auto_class_weight_epsilon "${AUTO_CLASS_WEIGHT_EPSILON}"
   --label_smoothing "${LABEL_SMOOTHING}"
 )
+
+if [[ -n "${INIT_CHECKPOINT}" ]]; then
+  if [[ ! -f "${INIT_CHECKPOINT}" ]]; then
+    echo "Initial checkpoint not found: ${INIT_CHECKPOINT}" >&2
+    exit 1
+  fi
+  cmd+=(--checkpoint "${INIT_CHECKPOINT}")
+fi
+
+if [[ "${STRICT_CHECKPOINT}" == "1" ]]; then
+  cmd+=(--strict_checkpoint)
+fi
 
 if [[ -n "${FRAME_WINDOW_SIZE}" ]]; then
   cmd+=(--frame_window_size "${FRAME_WINDOW_SIZE}")
@@ -193,6 +235,10 @@ fi
 
 if [[ -n "${CLASS_WEIGHT}" ]]; then
   cmd+=(--class_weight "${CLASS_WEIGHT}")
+fi
+
+if [[ "${NORMALIZE_AUTO_CLASS_WEIGHT}" != "1" ]]; then
+  cmd+=(--no_normalize_auto_class_weight)
 fi
 
 "${cmd[@]}"

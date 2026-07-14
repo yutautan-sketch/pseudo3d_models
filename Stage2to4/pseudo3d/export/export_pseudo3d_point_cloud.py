@@ -16,6 +16,19 @@ from src.utils.alpha_texture_processing import (
     image_to_uint8_gray,
     make_texture_image,
 )
+from src.utils.pseudo3d_sampling import (
+    SOURCE_CONTEXT_GRID,
+    SOURCE_GLOBAL,
+    SOURCE_LOCAL_PERCENTILE,
+    SOURCE_TOPHAT,
+    PointSamplingConfig,
+    build_global_evidence_mask,
+    build_sampling_confidence,
+    build_sampling_source_flags,
+    selected_pixel_arrays,
+    summarize_per_frame_counts,
+    summarize_source_flags,
+)
 
 
 def make_texture_config_from_args(args: argparse.Namespace) -> AlphaTextureConfig:
@@ -96,6 +109,53 @@ def make_texture_config_from_args(args: argparse.Namespace) -> AlphaTextureConfi
         cfg.white_foreground = True
 
     return cfg
+
+
+def make_sampling_config_from_args(args: argparse.Namespace) -> PointSamplingConfig:
+    """
+    Build PointSamplingConfig from command-line arguments.
+    """
+    if args.sampling_mode == "combined_v2":
+        cfg = PointSamplingConfig.combined_v2_defaults()
+    elif args.sampling_mode == "legacy":
+        cfg = PointSamplingConfig(sampling_mode="legacy")
+    else:
+        raise ValueError(f"Unknown sampling_mode: {args.sampling_mode}")
+
+    include_context_grid = (
+        cfg.include_context_grid
+        if args.include_context_grid is None
+        else bool(args.include_context_grid)
+    )
+    enable_local_percentile = (
+        cfg.enable_local_percentile
+        if args.enable_local_percentile is None
+        else bool(args.enable_local_percentile)
+    )
+    enable_tophat = (
+        cfg.enable_tophat
+        if args.enable_tophat is None
+        else bool(args.enable_tophat)
+    )
+
+    return PointSamplingConfig(
+        sampling_mode=args.sampling_mode,
+        include_context_grid=include_context_grid,
+        context_grid_stride=args.context_grid_stride,
+        context_grid_phase=args.context_grid_phase,
+        enable_local_percentile=enable_local_percentile,
+        local_window_size=args.local_window_size,
+        local_percentile=args.local_percentile,
+        local_min_contrast=args.local_min_contrast,
+        enable_tophat=enable_tophat,
+        tophat_kernel_size=args.tophat_kernel_size,
+        tophat_percentile=args.tophat_percentile,
+        tophat_min_response=args.tophat_min_response,
+        tophat_morph_shape=args.tophat_morph_shape,
+        local_source_confidence=args.local_source_confidence,
+        tophat_source_confidence=args.tophat_source_confidence,
+        context_source_confidence=args.context_source_confidence,
+    )
 
 
 def load_point_cloud_inputs(input_h5: Path, *, geometry_key: str) -> dict[str, Any]:
@@ -253,6 +313,7 @@ def build_frame_point_cloud(
     min_intensity: int,
     original_foreground_mode: str,
     point_mode: str,
+    sampling_config: PointSamplingConfig | None,
     sample_stride: int,
     max_points_per_frame: int,
     random_seed: int,
@@ -262,6 +323,14 @@ def build_frame_point_cloud(
     """
     if sample_stride < 1:
         raise ValueError(f"sample_stride must be >= 1, got {sample_stride}")
+    if sampling_config is None:
+        sampling_config = PointSamplingConfig(sampling_mode="legacy")
+    if sampling_config.sampling_mode == "combined_v2" and point_mode != "foreground":
+        raise ValueError(
+            "sampling_mode='combined_v2' currently requires "
+            "--point_mode foreground. Use context_grid options inside combined_v2 "
+            "instead of point_mode=grid/dense."
+        )
 
     n = int(local_images.shape[0])
     if pred_tracking.shape[0] != n:
@@ -284,15 +353,64 @@ def build_frame_point_cloud(
     all_frame_order = []
     all_pixel_xy = []
     all_confidence = []
+    all_source_type = []
+    all_source_flags = []
+    all_sampling_confidence = []
 
     per_frame_counts = np.zeros(n, dtype=np.int64)
+    per_frame_global_counts = np.zeros(n, dtype=np.int64)
+    per_frame_local_percentile_counts = np.zeros(n, dtype=np.int64)
+    per_frame_tophat_counts = np.zeros(n, dtype=np.int64)
+    per_frame_context_grid_counts = np.zeros(n, dtype=np.int64)
+    per_frame_context_only_counts = np.zeros(n, dtype=np.int64)
+    per_frame_evidence_counts = np.zeros(n, dtype=np.int64)
+    per_frame_overlap_counts = np.zeros(n, dtype=np.int64)
 
     for frame_order in range(n):
         image = local_images[frame_order]
         gray = image_to_uint8_gray(image)
         texture = make_texture_image(image, texture_config)
 
-        if point_mode == "foreground":
+        sampling_confidence_values = None
+        source_type_values = None
+        source_flags_values = None
+
+        if sampling_config.sampling_mode == "combined_v2":
+            global_mask, alpha_map = build_global_evidence_mask(
+                image,
+                texture,
+                min_alpha=min_alpha,
+                min_intensity=min_intensity,
+                original_foreground_mode=original_foreground_mode,
+                sample_stride=sample_stride,
+            )
+            sampling = build_sampling_source_flags(
+                image,
+                global_mask,
+                sampling_config,
+            )
+            sampling_confidence_map = build_sampling_confidence(
+                sampling["source_flags"],
+                global_confidence=alpha_map.astype(np.float32) / 255.0,
+                local_confidence=sampling_config.local_source_confidence,
+                tophat_confidence=sampling_config.tophat_source_confidence,
+                context_confidence=sampling_config.context_source_confidence,
+            )
+            selected = selected_pixel_arrays(
+                sampling["source_flags"],
+                sampling_confidence=sampling_confidence_map,
+            )
+            xs = selected["xs"]
+            ys = selected["ys"]
+            source_type_values = selected["source_type"]
+            source_flags_values = selected["source_flags"]
+            sampling_confidence_values = selected["sampling_confidence"]
+
+            yi = ys.astype(np.int64)
+            xi = xs.astype(np.int64)
+            alpha_values = alpha_map[yi, xi]
+
+        elif point_mode == "foreground":
             xs, ys, alpha_values = _choose_foreground_pixels(
                 image,
                 texture,
@@ -324,6 +442,22 @@ def build_frame_point_cloud(
         if xs.size == 0:
             continue
 
+        if source_flags_values is None:
+            if point_mode == "foreground":
+                source_flags_values = np.full(xs.shape, SOURCE_GLOBAL, dtype=np.uint16)
+            else:
+                source_flags_values = np.full(
+                    xs.shape,
+                    SOURCE_CONTEXT_GRID,
+                    dtype=np.uint16,
+                )
+        if source_type_values is None:
+            # Keep the existing legacy source_type value while source_flags carries
+            # the new explicit source information.
+            source_type_values = np.zeros(xs.shape, dtype=np.uint8)
+        if sampling_confidence_values is None:
+            sampling_confidence_values = alpha_values.astype(np.float32) / 255.0
+
         keep = _subsample_indices(
             xs.size,
             max_points=max_points_per_frame,
@@ -332,6 +466,9 @@ def build_frame_point_cloud(
         xs = xs[keep]
         ys = ys[keep]
         alpha_values = alpha_values[keep]
+        source_type_values = source_type_values[keep]
+        source_flags_values = source_flags_values[keep]
+        sampling_confidence_values = sampling_confidence_values[keep]
 
         points = project_frame_points_to_world(
             xs=xs,
@@ -347,6 +484,22 @@ def build_frame_point_cloud(
 
         count = int(points.shape[0])
         per_frame_counts[frame_order] = count
+        frame_stats = summarize_source_flags(source_flags_values)
+        per_frame_global_counts[frame_order] = int(
+            frame_stats["global_evidence_points"]
+        )
+        per_frame_local_percentile_counts[frame_order] = int(
+            frame_stats["local_percentile_points"]
+        )
+        per_frame_tophat_counts[frame_order] = int(frame_stats["tophat_points"])
+        per_frame_context_grid_counts[frame_order] = int(
+            frame_stats["context_grid_points"]
+        )
+        per_frame_context_only_counts[frame_order] = int(
+            frame_stats["context_only_points"]
+        )
+        per_frame_evidence_counts[frame_order] = int(frame_stats["evidence_points"])
+        per_frame_overlap_counts[frame_order] = int(frame_stats["overlap_points"])
 
         all_points.append(points)
         all_intensity.append(intensity)
@@ -357,6 +510,9 @@ def build_frame_point_cloud(
         all_frame_order.append(np.full(count, frame_order, dtype=np.int32))
         all_pixel_xy.append(np.stack([xs, ys], axis=1).astype(np.float32))
         all_confidence.append(confidence)
+        all_source_type.append(source_type_values.astype(np.uint8))
+        all_source_flags.append(source_flags_values.astype(np.uint16))
+        all_sampling_confidence.append(sampling_confidence_values.astype(np.float32))
 
     if not all_points:
         return {
@@ -368,7 +524,16 @@ def build_frame_point_cloud(
             "pixel_xy": np.zeros((0, 2), dtype=np.float32),
             "confidence": np.zeros((0,), dtype=np.float32),
             "source_type": np.zeros((0,), dtype=np.uint8),
+            "source_flags": np.zeros((0,), dtype=np.uint16),
+            "sampling_confidence": np.zeros((0,), dtype=np.float32),
             "per_frame_counts": per_frame_counts,
+            "per_frame_global_counts": per_frame_global_counts,
+            "per_frame_local_percentile_counts": per_frame_local_percentile_counts,
+            "per_frame_tophat_counts": per_frame_tophat_counts,
+            "per_frame_context_grid_counts": per_frame_context_grid_counts,
+            "per_frame_context_only_counts": per_frame_context_only_counts,
+            "per_frame_evidence_counts": per_frame_evidence_counts,
+            "per_frame_overlap_counts": per_frame_overlap_counts,
         }
 
     points = np.concatenate(all_points, axis=0)
@@ -378,6 +543,9 @@ def build_frame_point_cloud(
     frame_order = np.concatenate(all_frame_order, axis=0)
     pixel_xy = np.concatenate(all_pixel_xy, axis=0)
     confidence = np.concatenate(all_confidence, axis=0)
+    source_type = np.concatenate(all_source_type, axis=0)
+    source_flags = np.concatenate(all_source_flags, axis=0)
+    sampling_confidence = np.concatenate(all_sampling_confidence, axis=0)
 
     return {
         "points": points,
@@ -387,8 +555,17 @@ def build_frame_point_cloud(
         "frame_order": frame_order,
         "pixel_xy": pixel_xy,
         "confidence": confidence,
-        "source_type": np.zeros(points.shape[0], dtype=np.uint8),
+        "source_type": source_type,
+        "source_flags": source_flags,
+        "sampling_confidence": sampling_confidence,
         "per_frame_counts": per_frame_counts,
+        "per_frame_global_counts": per_frame_global_counts,
+        "per_frame_local_percentile_counts": per_frame_local_percentile_counts,
+        "per_frame_tophat_counts": per_frame_tophat_counts,
+        "per_frame_context_grid_counts": per_frame_context_grid_counts,
+        "per_frame_context_only_counts": per_frame_context_only_counts,
+        "per_frame_evidence_counts": per_frame_evidence_counts,
+        "per_frame_overlap_counts": per_frame_overlap_counts,
     }
 
 
@@ -482,8 +659,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Export frame-plane pseudo-3D point cloud from a pseudo-3D h5. "
-            "This implements Step 1 only: each frame's alpha/foreground pixels "
-            "are projected onto the selected prior/corr geometry."
+            "Each selected local-frame pixel is projected onto the selected "
+            "prior/corr geometry. Use sampling_mode=combined_v2 to merge "
+            "global evidence with BBox-independent context/local/top-hat sampling."
         )
     )
 
@@ -540,6 +718,67 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--random_seed", type=int, default=0)
 
     parser.add_argument(
+        "--sampling_mode",
+        type=str,
+        default="legacy",
+        choices=["legacy", "combined_v2"],
+        help=(
+            "2D pixel sampling strategy. legacy preserves the existing point_mode "
+            "behavior. combined_v2 merges global foreground evidence with "
+            "BBox-independent context grid, local percentile, and top-hat evidence."
+        ),
+    )
+    parser.add_argument(
+        "--include_context_grid",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Enable whole-image low-density context grid. Defaults to enabled "
+            "for combined_v2 and disabled for legacy."
+        ),
+    )
+    parser.add_argument("--context_grid_stride", type=int, default=4)
+    parser.add_argument(
+        "--context_grid_phase",
+        type=str,
+        default="origin",
+        choices=["origin", "centered", "dual"],
+    )
+    parser.add_argument(
+        "--enable_local_percentile",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Enable local percentile evidence. Defaults to enabled for "
+            "combined_v2 and disabled for legacy."
+        ),
+    )
+    parser.add_argument("--local_window_size", type=int, default=41)
+    parser.add_argument("--local_percentile", type=float, default=80.0)
+    parser.add_argument("--local_min_contrast", type=float, default=4.0)
+    parser.add_argument(
+        "--enable_tophat",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Enable white top-hat evidence. Defaults to enabled for combined_v2 "
+            "and disabled for legacy."
+        ),
+    )
+    parser.add_argument("--tophat_kernel_size", type=int, default=21)
+    parser.add_argument("--tophat_percentile", type=float, default=85.0)
+    parser.add_argument("--tophat_min_response", type=float, default=2.0)
+    parser.add_argument(
+        "--tophat_morph_shape",
+        type=str,
+        default="ellipse",
+        choices=["rect", "ellipse", "cross"],
+    )
+    parser.add_argument("--local_source_confidence", type=float, default=0.7)
+    parser.add_argument("--tophat_source_confidence", type=float, default=0.7)
+    parser.add_argument("--context_source_confidence", type=float, default=0.0)
+
+    parser.add_argument(
         "--texture_style",
         type=str,
         default=None,
@@ -585,6 +824,7 @@ def main():
 
     data = load_point_cloud_inputs(args.input_h5, geometry_key=args.geometry_key)
     texture_config = make_texture_config_from_args(args)
+    sampling_config = make_sampling_config_from_args(args)
 
     point_cloud = build_frame_point_cloud(
         local_images=data["local_encoder_images"],
@@ -596,18 +836,37 @@ def main():
         min_intensity=args.min_intensity,
         original_foreground_mode=args.original_foreground_mode,
         point_mode=args.point_mode,
+        sampling_config=sampling_config,
         sample_stride=args.sample_stride,
         max_points_per_frame=args.max_points_per_frame,
         random_seed=args.random_seed,
     )
 
     counts = point_cloud["per_frame_counts"]
+    source_stats = summarize_source_flags(point_cloud["source_flags"])
+    count_stats = summarize_per_frame_counts(counts)
     meta = {
         "source_h5": str(args.input_h5),
         "geometry_key": args.geometry_key,
         "tracking_key": data["tracking_key"],
         "preset": args.preset,
         "point_mode": args.point_mode,
+        "sampling_mode": sampling_config.sampling_mode,
+        "include_context_grid": sampling_config.include_context_grid,
+        "context_grid_stride": sampling_config.context_grid_stride,
+        "context_grid_phase": sampling_config.context_grid_phase,
+        "enable_local_percentile": sampling_config.enable_local_percentile,
+        "local_window_size": sampling_config.local_window_size,
+        "local_percentile": sampling_config.local_percentile,
+        "local_min_contrast": sampling_config.local_min_contrast,
+        "enable_tophat": sampling_config.enable_tophat,
+        "tophat_kernel_size": sampling_config.tophat_kernel_size,
+        "tophat_percentile": sampling_config.tophat_percentile,
+        "tophat_min_response": sampling_config.tophat_min_response,
+        "tophat_morph_shape": sampling_config.tophat_morph_shape,
+        "local_source_confidence": sampling_config.local_source_confidence,
+        "tophat_source_confidence": sampling_config.tophat_source_confidence,
+        "context_source_confidence": sampling_config.context_source_confidence,
         "texture_style": texture_config.texture_style,
         "texture_denoise": texture_config.denoise,
         "texture_denoise_ksize": texture_config.denoise_ksize,
@@ -622,10 +881,17 @@ def main():
         "random_seed": int(args.random_seed),
         "num_frames": int(counts.shape[0]),
         "num_points": int(point_cloud["points"].shape[0]),
-        "points_per_frame_min": int(counts.min()) if counts.size else 0,
-        "points_per_frame_max": int(counts.max()) if counts.size else 0,
-        "points_per_frame_mean": float(counts.mean()) if counts.size else 0.0,
+        **count_stats,
+        **source_stats,
         "source_type_frame": 0,
+        "source_type_global": 1,
+        "source_type_local_percentile": 2,
+        "source_type_tophat": 3,
+        "source_type_context_grid": 4,
+        "source_flags_global": int(SOURCE_GLOBAL),
+        "source_flags_local_percentile": int(SOURCE_LOCAL_PERCENTILE),
+        "source_flags_tophat": int(SOURCE_TOPHAT),
+        "source_flags_context_grid": int(SOURCE_CONTEXT_GRID),
     }
 
     print("Pseudo-3D frame point cloud:")
@@ -634,11 +900,21 @@ def main():
         "geometry_key",
         "preset",
         "point_mode",
+        "sampling_mode",
         "num_frames",
         "num_points",
         "points_per_frame_min",
+        "points_per_frame_median",
         "points_per_frame_max",
         "points_per_frame_mean",
+        "global_evidence_points",
+        "local_percentile_points",
+        "tophat_points",
+        "context_grid_points",
+        "context_only_points",
+        "evidence_points",
+        "overlap_points",
+        "legacy_point_count_multiplier",
     ]:
         print(f"  {key}: {meta[key]}")
 

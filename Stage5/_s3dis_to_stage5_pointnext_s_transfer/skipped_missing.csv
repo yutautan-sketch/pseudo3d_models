@@ -1,3 +1,0 @@
-source_key,target_key,reason,source_shape,target_shape
-head.head.2.0.weight,pointnext.head.head.2.0.weight,missing_target_key,"(13, 32, 1)",
-head.head.2.0.bias,pointnext.head.head.2.0.bias,missing_target_key,"(13,)",

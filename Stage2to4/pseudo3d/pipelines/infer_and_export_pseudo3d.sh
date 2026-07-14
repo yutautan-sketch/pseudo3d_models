@@ -17,7 +17,7 @@ export DUALTRACK_CHECKPOINT="${DUALTRACK_CHECKPOINT:-${DUALTRACK_CHECKPOINT_DIR}
 # ------------------------------------------------------------
 INPUT="/mnt/data/Data_hbl"
 SUB_DIR="example_videos/"
-VIDEO="20250710_111443_594_03"
+VIDEO="20250626_124212_7300"
 
 # ------------------------------------------------------------
 # output path info
@@ -33,11 +33,11 @@ OUTPUT_SUFFIX="_ts448_oym96_corr"
 
 INPUT_VIDEO="${INPUT}/${SUB_DIR}/${VIDEO}.mp4"
 OUTPUT_H5="${H5_DIR}/${VIDEO}${OUTPUT_SUFFIX}.h5"
-OUTPUT_OBJ="${VIS_DIR}/${VIDEO}/${DETAIL}${DETAIL_SUFFIX}/${VIDEO}_textured.obj"
-DEBUG_OBJ="${VIS_DIR}/${VIDEO}/${DETAIL}${DETAIL_SUFFIX}/${VIDEO}_tracking_debug.obj"
+OUTPUT_OBJ="${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}${DETAIL_SUFFIX}/${VIDEO}_textured.obj"
+DEBUG_OBJ="${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}${DETAIL_SUFFIX}/${VIDEO}_tracking_debug.obj"
 
 mkdir -p "${H5_DIR}"
-mkdir -p "${VIS_DIR}/${VIDEO}/${DETAIL}${DETAIL_SUFFIX}"
+mkdir -p "${VIS_DIR}/${VIDEO}${OUTPUT_SUFFIX}/${DETAIL}${DETAIL_SUFFIX}"
 
 # ------------------------------------------------------------
 # Step 1: MP4 -> pseudo3D h5

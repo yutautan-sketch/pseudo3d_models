@@ -24,7 +24,8 @@ from stage5.utils.feature_normalization import (
     normalize_xyz,
 )
 from stage5.utils.h5_io import copy_h5_group, load_pointcloud_for_inference
-from stage5.utils.visualization_export import write_probability_ply
+from stage5.utils.frame_windows import generate_frame_order_windows, point_indices_for_window
+from stage5.utils.visualization_export import write_probability_ply, write_selected_probability_ply
 
 
 DEFAULT_FEATURES = ("intensity", "confidence")
@@ -87,8 +88,9 @@ def resolve_model_kwargs(args: argparse.Namespace, config: dict[str, Any], featu
         else:
             use_global_context = not bool(config.get("no_global_context", False))
 
-    return {
-        "name": value("model", "mlp_baseline"),
+    model_name = value("model", "mlp_baseline")
+    kwargs = {
+        "name": model_name,
         "num_classes": int(value("num_classes", 2)),
         "feature_dim": int(feature_dim),
         "width": int(value("width", 64)),
@@ -97,6 +99,52 @@ def resolve_model_kwargs(args: argparse.Namespace, config: dict[str, Any], featu
         "dropout": float(value("dropout", 0.1)),
         "use_global_context": bool(use_global_context),
     }
+    if str(model_name).lower() == "pointnext_s":
+        kwargs.update(
+            {
+                "pointnext_radius": float(value("pointnext_radius", config.get("radius", 0.1))),
+                "pointnext_nsample": int(value("pointnext_nsample", config.get("nsample", 16))),
+                "pointnext_sa_layers": int(
+                    value("pointnext_sa_layers", config.get("sa_layers", 2))
+                ),
+                "pointnext_sa_use_res": bool(
+                    value("pointnext_sa_use_res", config.get("sa_use_res", True))
+                ),
+            }
+        )
+    return kwargs
+
+
+def resolve_inference_mode(args: argparse.Namespace, config: dict[str, Any], model_name: str) -> str:
+    if args.inference_mode != "auto":
+        return args.inference_mode
+    if str(model_name).lower() == "pointnext_s":
+        return "window"
+    if config.get("window_mode") == "overlap":
+        return "window"
+    return "chunk"
+
+
+def resolve_window_settings(args: argparse.Namespace, config: dict[str, Any]) -> tuple[int, int, bool]:
+    window_size_frames = (
+        args.window_size_frames
+        if args.window_size_frames is not None
+        else int(config.get("window_size_frames", 12))
+    )
+    window_stride_frames = (
+        args.window_stride_frames
+        if args.window_stride_frames is not None
+        else int(config.get("window_stride_frames", 6))
+    )
+    include_tail_window = args.include_tail_window
+    if include_tail_window is None:
+        include_tail_window = bool(config.get("include_tail_window", True))
+
+    if window_size_frames <= 0:
+        raise ValueError("--window_size_frames must be positive")
+    if window_stride_frames <= 0:
+        raise ValueError("--window_stride_frames must be positive")
+    return int(window_size_frames), int(window_stride_frames), bool(include_tail_window)
 
 
 def predict_all_points(
@@ -139,13 +187,95 @@ def predict_all_points(
     return logits_out, prob_femur, pred_label
 
 
+def predict_frame_windows(
+    *,
+    model: torch.nn.Module,
+    points: np.ndarray,
+    features: np.ndarray,
+    frame_order: np.ndarray,
+    window_size_frames: int,
+    window_stride_frames: int,
+    include_tail_window: bool,
+    device: torch.device,
+    num_classes: int,
+    save_logits: bool,
+) -> tuple[np.ndarray | None, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    windows = generate_frame_order_windows(
+        frame_order,
+        window_size_frames=window_size_frames,
+        window_stride_frames=window_stride_frames,
+        include_tail_window=include_tail_window,
+    )
+    if not windows:
+        raise ValueError("No frame_order windows were generated for inference")
+
+    num_points = points.shape[0]
+    prob_sum = np.zeros((num_points, num_classes), dtype=np.float64)
+    logits_sum = np.zeros((num_points, num_classes), dtype=np.float64) if save_logits else None
+    vote_count = np.zeros((num_points,), dtype=np.int32)
+
+    model.eval()
+    with torch.no_grad():
+        for window in tqdm(windows, desc="infer windows", leave=False):
+            indices = point_indices_for_window(frame_order, window)
+            if indices.size == 0:
+                continue
+            batch = {
+                "points": torch.from_numpy(points[indices][None]).float().to(device),
+                "features": torch.from_numpy(features[indices][None]).float().to(device),
+            }
+            output = model(batch)
+            logits = output["logits"][0]
+            prob = torch.softmax(logits, dim=-1)
+
+            prob_sum[indices] += prob.detach().cpu().numpy().astype(np.float64)
+            if logits_sum is not None:
+                logits_sum[indices] += logits.detach().cpu().numpy().astype(np.float64)
+            vote_count[indices] += 1
+
+    missing = vote_count == 0
+    if np.any(missing):
+        missing_count = int(np.sum(missing))
+        raise RuntimeError(f"{missing_count} point(s) received no window prediction")
+
+    denominator = vote_count[:, None].astype(np.float64)
+    prob_class = (prob_sum / denominator).astype(np.float32)
+    logits_out = None
+    if logits_sum is not None:
+        logits_out = (logits_sum / denominator).astype(np.float32)
+    prob_femur = prob_class[:, 1].astype(np.float32)
+    pred_label = np.argmax(prob_class, axis=1).astype(np.uint8)
+
+    window_summary = np.array(
+        [
+            (
+                int(window.window_id),
+                int(window.start_frame),
+                int(window.end_frame),
+                int(point_indices_for_window(frame_order, window).size),
+            )
+            for window in windows
+        ],
+        dtype=[
+            ("window_id", "i4"),
+            ("start_frame", "i4"),
+            ("end_frame", "i4"),
+            ("num_points", "i8"),
+        ],
+    )
+    return logits_out, prob_class, prob_femur, pred_label, vote_count, window_summary
+
+
 def write_output_h5(
     *,
     input_h5: Path,
     output_h5: Path,
-    logits: np.ndarray,
+    logits: np.ndarray | None,
+    prob_class: np.ndarray,
     prob_femur: np.ndarray,
     pred_label: np.ndarray,
+    vote_count: np.ndarray | None,
+    window_summary: np.ndarray | None,
     config: dict[str, Any],
     copy_input: bool,
     save_logits: bool,
@@ -168,11 +298,16 @@ def write_output_h5(
                 copy_h5_group(src, dst, "measurement")
 
         pred_group = dst.create_group("prediction")
-        if save_logits:
+        if save_logits and logits is not None:
             pred_group.create_dataset("logits", data=logits, compression="gzip")
+        pred_group.create_dataset("prob_class", data=prob_class, compression="gzip")
         pred_group.create_dataset("prob_femur", data=prob_femur, compression="gzip")
         pred_group.create_dataset("pred_label", data=pred_label, compression="gzip")
-        pred_group.attrs["num_classes"] = int(logits.shape[1])
+        if vote_count is not None:
+            pred_group.create_dataset("vote_count", data=vote_count, compression="gzip")
+        if window_summary is not None:
+            pred_group.create_dataset("window_summary", data=window_summary, compression="gzip")
+        pred_group.attrs["num_classes"] = int(prob_class.shape[1])
         pred_group.attrs["positive_class_index"] = 1
         pred_group.attrs["config_json"] = json.dumps(config, ensure_ascii=False)
 
@@ -198,6 +333,11 @@ def infer(args: argparse.Namespace) -> None:
 
     model_kwargs = resolve_model_kwargs(args, config, feature_dim)
     model_name = model_kwargs.pop("name")
+    inference_mode = resolve_inference_mode(args, config, model_name)
+    window_size_frames, window_stride_frames, include_tail_window = resolve_window_settings(
+        args,
+        config,
+    )
     model = build_stage5_model(
         model_name,
         checkpoint=None,
@@ -215,26 +355,53 @@ def infer(args: argparse.Namespace) -> None:
         "features": feature_names,
         "feature_dim": feature_dim,
         "normalize_points": bool(normalize_points),
+        "inference_mode": inference_mode,
         "chunk_size": int(args.chunk_size),
         "save_logits": not args.no_save_logits,
+        "window_size_frames": int(window_size_frames),
+        "window_stride_frames": int(window_stride_frames),
+        "include_tail_window": bool(include_tail_window),
+        "aggregation": "mean_probability",
         "model": {"name": model_name, **model_kwargs},
     }
 
-    logits, prob_femur, pred_label = predict_all_points(
-        model=model,
-        points=points,
-        features=features,
-        chunk_size=args.chunk_size,
-        device=device,
-        num_classes=int(model.num_classes),
-    )
+    if inference_mode == "chunk":
+        logits, prob_femur, pred_label = predict_all_points(
+            model=model,
+            points=points,
+            features=features,
+            chunk_size=args.chunk_size,
+            device=device,
+            num_classes=int(model.num_classes),
+        )
+        prob_class = torch.softmax(torch.from_numpy(logits), dim=-1).numpy().astype(np.float32)
+        vote_count = None
+        window_summary = None
+    elif inference_mode == "window":
+        logits, prob_class, prob_femur, pred_label, vote_count, window_summary = predict_frame_windows(
+            model=model,
+            points=points,
+            features=features,
+            frame_order=data["frame_order"],
+            window_size_frames=window_size_frames,
+            window_stride_frames=window_stride_frames,
+            include_tail_window=include_tail_window,
+            device=device,
+            num_classes=int(model.num_classes),
+            save_logits=not args.no_save_logits,
+        )
+    else:
+        raise ValueError(f"Unsupported inference_mode: {inference_mode}")
 
     write_output_h5(
         input_h5=Path(args.input_h5),
         output_h5=Path(args.output_h5),
         logits=logits,
+        prob_class=prob_class,
         prob_femur=prob_femur,
         pred_label=pred_label,
+        vote_count=vote_count,
+        window_summary=window_summary,
         config=inference_config,
         copy_input=not args.no_copy_input,
         save_logits=not args.no_save_logits,
@@ -243,9 +410,21 @@ def infer(args: argparse.Namespace) -> None:
     if args.output_ply is not None:
         write_probability_ply(args.output_ply, raw_points, prob_femur)
 
+    if args.output_positive_ply is not None:
+        selected_count = write_selected_probability_ply(
+            args.output_positive_ply,
+            raw_points,
+            prob_femur,
+            pred_label == 1,
+        )
+    else:
+        selected_count = None
+
     print(f"wrote predictions: {args.output_h5}")
     if args.output_ply is not None:
         print(f"wrote PLY: {args.output_ply}")
+    if args.output_positive_ply is not None:
+        print(f"wrote positive-only PLY: {args.output_positive_ply} ({selected_count} points)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -254,8 +433,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True, help="Stage5 checkpoint .pt")
     parser.add_argument("--output_h5", required=True, help="Output H5 with prediction group")
     parser.add_argument("--output_ply", default=None, help="Optional probability-colored PLY output")
+    parser.add_argument(
+        "--output_positive_ply",
+        default=None,
+        help="Optional PLY containing only points with predicted positive/femur label",
+    )
 
     parser.add_argument("--features", default=None, help="Override comma-separated features from checkpoint config")
+    parser.add_argument(
+        "--inference_mode",
+        choices=["auto", "window", "chunk"],
+        default="auto",
+        help="auto uses window inference for pointnext_s and chunk inference otherwise",
+    )
     parser.add_argument("--chunk_size", type=int, default=65536)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--strict_checkpoint", action="store_true")
@@ -273,6 +463,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=None)
     parser.add_argument("--use_global_context", action="store_true", default=None)
     parser.add_argument("--no_global_context", dest="use_global_context", action="store_false")
+    parser.add_argument("--pointnext_radius", type=float, default=None)
+    parser.add_argument("--pointnext_nsample", type=int, default=None)
+    parser.add_argument("--pointnext_sa_layers", type=int, default=None)
+    parser.add_argument("--pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_true", default=None)
+    parser.add_argument("--no_pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_false")
+    parser.add_argument("--window_size_frames", type=int, default=None)
+    parser.add_argument("--window_stride_frames", type=int, default=None)
+    parser.add_argument("--include_tail_window", dest="include_tail_window", action="store_true", default=None)
+    parser.add_argument("--no_include_tail_window", dest="include_tail_window", action="store_false")
 
     return parser.parse_args()
 
