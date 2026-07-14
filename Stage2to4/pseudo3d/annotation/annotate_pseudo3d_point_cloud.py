@@ -20,11 +20,30 @@ from src.utils.alpha_texture_processing import (
     image_to_uint8_gray,
     make_texture_image,
 )
+from src.utils.pseudo3d_sampling import (
+    SOURCE_CONTEXT_GRID,
+    SOURCE_GLOBAL,
+    SOURCE_LOCAL_PERCENTILE,
+    SOURCE_TOPHAT,
+)
 
 
 LABEL_IGNORE = -1
 LABEL_BACKGROUND = 0
 LABEL_FEMUR_CANDIDATE = 1
+
+OPTIONAL_POINT_CLOUD_DATASETS = [
+    "source_flags",
+    "sampling_confidence",
+    "per_frame_counts",
+    "per_frame_global_counts",
+    "per_frame_local_percentile_counts",
+    "per_frame_tophat_counts",
+    "per_frame_context_grid_counts",
+    "per_frame_context_only_counts",
+    "per_frame_evidence_counts",
+    "per_frame_overlap_counts",
+]
 
 
 @dataclass(frozen=True)
@@ -83,9 +102,69 @@ def load_point_cloud_h5(path: Path) -> tuple[dict[str, np.ndarray], dict[str, An
             if key not in group:
                 raise KeyError(f"Required point_cloud/{key} not found in {path}")
         point_cloud = {key: group[key][:] for key in required}
-        if "per_frame_counts" in group:
-            point_cloud["per_frame_counts"] = group["per_frame_counts"][:]
+        for key in OPTIONAL_POINT_CLOUD_DATASETS:
+            if key in group:
+                point_cloud[key] = group[key][:]
         attrs = dict(group.attrs)
+
+    point_cloud, attrs = ensure_point_cloud_sampling_fields(point_cloud, attrs)
+    return point_cloud, attrs
+
+
+def ensure_point_cloud_sampling_fields(
+    point_cloud: dict[str, np.ndarray],
+    attrs: dict[str, Any],
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """
+    Preserve combined_v2 sampling fields and add compatibility fields for old H5s.
+    """
+    point_cloud = dict(point_cloud)
+    attrs = dict(attrs)
+
+    num_points = int(point_cloud["points"].shape[0])
+    point_mode = _attr_to_str(attrs.get("point_mode"), "foreground")
+
+    if "source_flags" not in point_cloud:
+        if point_mode == "foreground":
+            fallback_flag = SOURCE_GLOBAL
+        else:
+            fallback_flag = SOURCE_CONTEXT_GRID
+        point_cloud["source_flags"] = np.full(
+            (num_points,),
+            fallback_flag,
+            dtype=np.uint16,
+        )
+        attrs["source_flags_inferred"] = True
+        attrs["source_flags_inferred_reason"] = (
+            "source_flags missing in input point_cloud h5; inferred from point_mode"
+        )
+    else:
+        point_cloud["source_flags"] = point_cloud["source_flags"].astype(np.uint16)
+        attrs["source_flags_inferred"] = False
+
+    if "sampling_confidence" not in point_cloud:
+        point_cloud["sampling_confidence"] = point_cloud["confidence"].astype(np.float32)
+        attrs["sampling_confidence_inferred"] = True
+        attrs["sampling_confidence_inferred_reason"] = (
+            "sampling_confidence missing in input point_cloud h5; copied confidence"
+        )
+    else:
+        point_cloud["sampling_confidence"] = point_cloud["sampling_confidence"].astype(
+            np.float32
+        )
+        attrs["sampling_confidence_inferred"] = False
+
+    if point_cloud["source_flags"].shape[0] != num_points:
+        raise ValueError(
+            "point_cloud/source_flags length does not match points: "
+            f"source_flags={point_cloud['source_flags'].shape[0]}, points={num_points}"
+        )
+    if point_cloud["sampling_confidence"].shape[0] != num_points:
+        raise ValueError(
+            "point_cloud/sampling_confidence length does not match points: "
+            "sampling_confidence="
+            f"{point_cloud['sampling_confidence'].shape[0]}, points={num_points}"
+        )
 
     return point_cloud, attrs
 
@@ -1046,6 +1125,49 @@ def make_empty_measurement() -> dict[str, Any]:
     }
 
 
+def summarize_labels_by_source(
+    *,
+    point_cloud: dict[str, np.ndarray],
+    point_label: np.ndarray,
+    valid_mask: np.ndarray,
+) -> dict[str, int]:
+    flags = point_cloud["source_flags"].astype(np.uint16)
+    labels = point_label.astype(np.int8)
+    valid = valid_mask.astype(bool)
+
+    source_defs = {
+        "global": SOURCE_GLOBAL,
+        "local_percentile": SOURCE_LOCAL_PERCENTILE,
+        "tophat": SOURCE_TOPHAT,
+        "context_grid": SOURCE_CONTEXT_GRID,
+    }
+    summary: dict[str, int] = {}
+    for name, flag in source_defs.items():
+        source_mask = (flags & flag) != 0
+        summary[f"num_{name}_points"] = int(source_mask.sum())
+        summary[f"num_{name}_valid_points"] = int((source_mask & valid).sum())
+        summary[f"num_{name}_ignore_points"] = int(
+            (source_mask & (labels == LABEL_IGNORE)).sum()
+        )
+        summary[f"num_{name}_background_points"] = int(
+            (source_mask & (labels == LABEL_BACKGROUND)).sum()
+        )
+        summary[f"num_{name}_femur_candidate_points"] = int(
+            (source_mask & (labels == LABEL_FEMUR_CANDIDATE)).sum()
+        )
+
+    evidence_mask = (
+        (flags & (SOURCE_GLOBAL | SOURCE_LOCAL_PERCENTILE | SOURCE_TOPHAT)) != 0
+    )
+    context_only_mask = ((flags & SOURCE_CONTEXT_GRID) != 0) & ~evidence_mask
+    summary["num_evidence_points"] = int(evidence_mask.sum())
+    summary["num_context_only_points"] = int(context_only_mask.sum())
+    summary["num_context_only_femur_candidate_points"] = int(
+        (context_only_mask & (labels == LABEL_FEMUR_CANDIDATE)).sum()
+    )
+    return summary
+
+
 def save_annotated_h5(
     output_h5: Path,
     *,
@@ -1325,6 +1447,11 @@ def main() -> None:
     )
     num_labeled_points = int(np.sum(point_label == LABEL_FEMUR_CANDIDATE))
     num_fallback_used = int(frame_annotation["fallback_used"].astype(bool).sum())
+    source_label_stats = summarize_labels_by_source(
+        point_cloud=point_cloud,
+        point_label=point_label,
+        valid_mask=valid_mask,
+    )
     meta = {
         "source_point_cloud_h5": str(args.point_cloud_h5),
         "source_pseudo3d_h5": str(args.pseudo3d_h5),
@@ -1333,6 +1460,22 @@ def main() -> None:
         "geometry_key": args.geometry_key,
         "tracking_key": pseudo3d["tracking_key"],
         "point_cloud_point_mode": point_mode,
+        "point_cloud_sampling_mode": _attr_to_str(
+            point_cloud_attrs.get("sampling_mode"),
+            "legacy",
+        ),
+        "point_cloud_has_source_flags": not bool(
+            point_cloud_attrs.get("source_flags_inferred", False)
+        ),
+        "point_cloud_has_sampling_confidence": not bool(
+            point_cloud_attrs.get("sampling_confidence_inferred", False)
+        ),
+        "source_flags_inferred": bool(
+            point_cloud_attrs.get("source_flags_inferred", False)
+        ),
+        "sampling_confidence_inferred": bool(
+            point_cloud_attrs.get("sampling_confidence_inferred", False)
+        ),
         "label_mode": args.label_mode,
         "bbox_ignore_margin": float(args.bbox_ignore_margin),
         "bbox_inside_non_contour_label": args.bbox_inside_non_contour_label,
@@ -1364,6 +1507,7 @@ def main() -> None:
         "num_valid_contour_frames": num_valid_contour_frames,
         "num_fallback_used": num_fallback_used,
         "num_labeled_points": num_labeled_points,
+        **source_label_stats,
         "label_source": (
             "VOC BBox weak annotation; largest filled contour in bbox after "
             "binarization is projected to point labels"
@@ -1378,6 +1522,10 @@ def main() -> None:
     print(f"  num_valid_contour_frames: {num_valid_contour_frames}")
     print(f"  num_fallback_used       : {num_fallback_used}")
     print(f"  num_labeled_points      : {num_labeled_points}")
+    print(
+        "  num_context_only_labeled: "
+        f"{source_label_stats['num_context_only_femur_candidate_points']}"
+    )
 
     save_annotated_h5(
         args.output_h5,

@@ -66,9 +66,9 @@ MAX_FILES=0
 # ------------------------------------------------------------
 RUN_ROOT="/mnt/data/3d_projects/stage5_runs"
 MODEL="pointnext_s"
-PREFIX="w12_s6_ce_smooth00_auto_weight_lr1e3_ep200"
+PREFIX="w20_s10_ce_smooth00_auto_weight_lr1e3_ep200"
 EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
-CHECKPOINT_NAME="checkpoint_epoch_0180.pt"
+CHECKPOINT_NAME="best.pt"
 CHECKPOINT="${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
 
 # ------------------------------------------------------------

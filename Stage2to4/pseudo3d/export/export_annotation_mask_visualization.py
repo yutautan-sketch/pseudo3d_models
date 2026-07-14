@@ -23,6 +23,12 @@ from pseudo3d.annotation.annotate_pseudo3d_point_cloud import (
 )
 
 
+SOURCE_GLOBAL = 1 << 0
+SOURCE_LOCAL_PERCENTILE = 1 << 1
+SOURCE_TOPHAT = 1 << 2
+SOURCE_CONTEXT_GRID = 1 << 3
+
+
 def load_pseudo3d_for_annotation_visualization(
     input_h5: Path,
     *,
@@ -135,6 +141,102 @@ def _draw_mask_contours(
         cv2.drawContours(rgb, contours, -1, color, int(thickness))
 
 
+def _blend_circle(
+    rgb: np.ndarray,
+    *,
+    center_xy: tuple[int, int],
+    radius: int,
+    color: tuple[int, int, int],
+    alpha: float,
+) -> None:
+    h, w = rgb.shape[:2]
+    cx, cy = center_xy
+    radius = max(0, int(radius))
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    color_arr = np.asarray(color, dtype=np.float32)
+
+    left = max(0, cx - radius)
+    right = min(w - 1, cx + radius)
+    top = max(0, cy - radius)
+    bottom = min(h - 1, cy + radius)
+    if right < left or bottom < top:
+        return
+
+    patch = rgb[top : bottom + 1, left : right + 1]
+    if radius <= 0:
+        mask = np.ones(patch.shape[:2], dtype=bool)
+    else:
+        yy, xx = np.ogrid[top : bottom + 1, left : right + 1]
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius**2
+
+    blended = (1.0 - alpha) * patch[mask].astype(np.float32) + alpha * color_arr
+    patch[mask] = np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def _source_color_from_flags(
+    flags: int,
+    *,
+    global_color: tuple[int, int, int],
+    local_percentile_color: tuple[int, int, int],
+    tophat_color: tuple[int, int, int],
+    context_grid_color: tuple[int, int, int],
+) -> tuple[int, int, int]:
+    if flags & SOURCE_GLOBAL:
+        return global_color
+    if flags & SOURCE_LOCAL_PERCENTILE:
+        return local_percentile_color
+    if flags & SOURCE_TOPHAT:
+        return tophat_color
+    if flags & SOURCE_CONTEXT_GRID:
+        return context_grid_color
+    return (180, 180, 180)
+
+
+def _draw_point_cloud_samples(
+    rgb: np.ndarray,
+    *,
+    point_cloud: dict[str, np.ndarray],
+    frame_order: int,
+    radius: int,
+    alpha: float,
+    global_color: tuple[int, int, int],
+    local_percentile_color: tuple[int, int, int],
+    tophat_color: tuple[int, int, int],
+    context_grid_color: tuple[int, int, int],
+) -> int:
+    if "pixel_xy" not in point_cloud:
+        return 0
+    frame_mask = point_cloud["frame_order"].astype(np.int32) == int(frame_order)
+    if not np.any(frame_mask):
+        return 0
+
+    h, w = rgb.shape[:2]
+    xy = np.rint(point_cloud["pixel_xy"][frame_mask]).astype(np.int64)
+    xy[:, 0] = np.clip(xy[:, 0], 0, w - 1)
+    xy[:, 1] = np.clip(xy[:, 1], 0, h - 1)
+    if "source_flags" in point_cloud:
+        flags = point_cloud["source_flags"][frame_mask].astype(np.uint16)
+    else:
+        flags = np.zeros(xy.shape[0], dtype=np.uint16)
+
+    for (x, y), flag in zip(xy, flags, strict=True):
+        color = _source_color_from_flags(
+            int(flag),
+            global_color=global_color,
+            local_percentile_color=local_percentile_color,
+            tophat_color=tophat_color,
+            context_grid_color=context_grid_color,
+        )
+        _blend_circle(
+            rgb,
+            center_xy=(int(x), int(y)),
+            radius=radius,
+            color=color,
+            alpha=alpha,
+        )
+    return int(xy.shape[0])
+
+
 def make_overlay_textures(
     *,
     pseudo3d: dict[str, Any],
@@ -154,6 +256,13 @@ def make_overlay_textures(
     enable_contour_fallback: bool = False,
     fallback_percentiles: list[float] | None = None,
     fallback_min_positive_points: int = 5,
+    draw_point_cloud_samples: bool = False,
+    sample_point_radius: int = 1,
+    sample_point_alpha: float = 0.75,
+    global_sample_color: tuple[int, int, int] = (255, 255, 255),
+    local_percentile_sample_color: tuple[int, int, int] = (64, 200, 255),
+    tophat_sample_color: tuple[int, int, int] = (255, 200, 64),
+    context_grid_sample_color: tuple[int, int, int] = (120, 120, 120),
 ) -> tuple[np.ndarray, dict[str, int]]:
     local_images = pseudo3d["local_encoder_images"]
     n = int(local_images.shape[0])
@@ -177,6 +286,7 @@ def make_overlay_textures(
             for item in items
         )
     )
+    stats["num_drawn_point_samples"] = 0
 
     for frame_order in range(n):
         gray = image_to_uint8_gray(local_images[frame_order])
@@ -189,6 +299,19 @@ def make_overlay_textures(
                 union_mask,
                 color=mask_color,
                 alpha=mask_alpha,
+            )
+
+        if draw_point_cloud_samples and point_cloud is not None:
+            stats["num_drawn_point_samples"] += _draw_point_cloud_samples(
+                rgb,
+                point_cloud=point_cloud,
+                frame_order=frame_order,
+                radius=sample_point_radius,
+                alpha=sample_point_alpha,
+                global_color=global_sample_color,
+                local_percentile_color=local_percentile_sample_color,
+                tophat_color=tophat_sample_color,
+                context_grid_color=context_grid_sample_color,
             )
 
         for item in results_by_order.get(frame_order, []):
@@ -409,6 +532,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--bbox_thickness", type=int, default=2)
     parser.add_argument("--contour_thickness", type=int, default=2)
+    parser.add_argument(
+        "--draw_point_cloud_samples",
+        action="store_true",
+        help=(
+            "Draw point_cloud pixel samples on the frame textures, colored by "
+            "source_flags. Requires --point_cloud_h5."
+        ),
+    )
+    parser.add_argument("--sample_point_radius", type=int, default=1)
+    parser.add_argument("--sample_point_alpha", type=float, default=0.75)
+    parser.add_argument("--global_sample_color", type=str, default="255,255,255")
+    parser.add_argument(
+        "--local_percentile_sample_color",
+        type=str,
+        default="64,200,255",
+    )
+    parser.add_argument("--tophat_sample_color", type=str, default="255,200,64")
+    parser.add_argument("--context_grid_sample_color", type=str, default="120,120,120")
     return parser
 
 
@@ -422,9 +563,11 @@ def main() -> None:
     )
     point_cloud = None
     point_mode = "foreground"
+    sampling_mode = "legacy"
     if args.point_cloud_h5 is not None:
         point_cloud, point_cloud_attrs = load_point_cloud_h5(args.point_cloud_h5)
         point_mode = _attr_to_str(point_cloud_attrs.get("point_mode"), "foreground")
+        sampling_mode = _attr_to_str(point_cloud_attrs.get("sampling_mode"), "legacy")
 
     enable_contour_fallback = bool(args.enable_contour_fallback)
     if args.fallback_only_non_foreground_point_cloud and point_mode == "foreground":
@@ -434,6 +577,10 @@ def main() -> None:
             "--point_cloud_h5 is required when contour fallback is enabled, "
             "because fallback success is judged by positive point count."
         )
+    if args.draw_point_cloud_samples and point_cloud is None:
+        raise ValueError("--point_cloud_h5 is required with --draw_point_cloud_samples")
+    if args.sample_point_radius < 0:
+        raise ValueError("--sample_point_radius must be >= 0")
 
     local_images = pseudo3d["local_encoder_images"]
     local_shape_hw = tuple(image_to_uint8_gray(local_images[0]).shape)
@@ -477,6 +624,13 @@ def main() -> None:
         enable_contour_fallback=enable_contour_fallback,
         fallback_percentiles=_parse_float_list(args.fallback_percentiles),
         fallback_min_positive_points=args.fallback_min_positive_points,
+        draw_point_cloud_samples=args.draw_point_cloud_samples,
+        sample_point_radius=args.sample_point_radius,
+        sample_point_alpha=args.sample_point_alpha,
+        global_sample_color=parse_color(args.global_sample_color),
+        local_percentile_sample_color=parse_color(args.local_percentile_sample_color),
+        tophat_sample_color=parse_color(args.tophat_sample_color),
+        context_grid_sample_color=parse_color(args.context_grid_sample_color),
     )
 
     export_textured_frame_obj(
@@ -493,6 +647,8 @@ def main() -> None:
     print(f"  contour_preset: {args.contour_preset}")
     print(f"  point_cloud_h5: {args.point_cloud_h5}")
     print(f"  point_cloud_point_mode: {point_mode}")
+    print(f"  point_cloud_sampling_mode: {sampling_mode}")
+    print(f"  draw_point_cloud_samples: {args.draw_point_cloud_samples}")
     print(f"  enable_contour_fallback: {enable_contour_fallback}")
     print(f"  fallback_percentiles: {args.fallback_percentiles}")
     print(f"  fallback_min_positive_points: {args.fallback_min_positive_points}")

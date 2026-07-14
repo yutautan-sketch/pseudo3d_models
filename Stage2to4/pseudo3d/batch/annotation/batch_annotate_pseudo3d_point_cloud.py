@@ -25,6 +25,7 @@ from pseudo3d.annotation.annotate_pseudo3d_point_cloud import (
     make_contour_texture_config_from_args,
     make_empty_measurement,
     save_annotated_h5,
+    summarize_labels_by_source,
     xml_bbox_to_local,
 )
 from src.utils.alpha_texture_processing import image_to_uint8_gray
@@ -296,6 +297,11 @@ def annotate_one(
     )
     num_labeled_points = int(np.sum(point_label == LABEL_FEMUR_CANDIDATE))
     num_fallback_used = int(frame_annotation["fallback_used"].astype(bool).sum())
+    source_label_stats = summarize_labels_by_source(
+        point_cloud=point_cloud,
+        point_label=point_label,
+        valid_mask=valid_mask,
+    )
 
     meta = {
         "source_point_cloud_h5": str(point_cloud_h5),
@@ -305,6 +311,22 @@ def annotate_one(
         "geometry_key": args.geometry_key,
         "tracking_key": pseudo3d["tracking_key"],
         "point_cloud_point_mode": point_mode,
+        "point_cloud_sampling_mode": _attr_to_str(
+            point_cloud_attrs.get("sampling_mode"),
+            "legacy",
+        ),
+        "point_cloud_has_source_flags": not bool(
+            point_cloud_attrs.get("source_flags_inferred", False)
+        ),
+        "point_cloud_has_sampling_confidence": not bool(
+            point_cloud_attrs.get("sampling_confidence_inferred", False)
+        ),
+        "source_flags_inferred": bool(
+            point_cloud_attrs.get("source_flags_inferred", False)
+        ),
+        "sampling_confidence_inferred": bool(
+            point_cloud_attrs.get("sampling_confidence_inferred", False)
+        ),
         "label_mode": args.label_mode,
         "bbox_ignore_margin": float(args.bbox_ignore_margin),
         "bbox_inside_non_contour_label": args.bbox_inside_non_contour_label,
@@ -336,6 +358,7 @@ def annotate_one(
         "num_valid_contour_frames": num_valid_contour_frames,
         "num_fallback_used": num_fallback_used,
         "num_labeled_points": num_labeled_points,
+        **source_label_stats,
         "batch_source": "batch_annotate_pseudo3d_point_cloud.py",
         "label_source": (
             "VOC BBox weak annotation; largest filled contour in bbox after "
@@ -366,6 +389,28 @@ def annotate_one(
         "num_valid_contour_frames": num_valid_contour_frames,
         "num_fallback_used": num_fallback_used,
         "num_labeled_points": num_labeled_points,
+        "point_cloud_sampling_mode": _attr_to_str(
+            point_cloud_attrs.get("sampling_mode"),
+            "legacy",
+        ),
+        "source_flags_inferred": bool(
+            point_cloud_attrs.get("source_flags_inferred", False)
+        ),
+        "num_global_femur_candidate_points": source_label_stats[
+            "num_global_femur_candidate_points"
+        ],
+        "num_local_percentile_femur_candidate_points": source_label_stats[
+            "num_local_percentile_femur_candidate_points"
+        ],
+        "num_tophat_femur_candidate_points": source_label_stats[
+            "num_tophat_femur_candidate_points"
+        ],
+        "num_context_grid_femur_candidate_points": source_label_stats[
+            "num_context_grid_femur_candidate_points"
+        ],
+        "num_context_only_femur_candidate_points": source_label_stats[
+            "num_context_only_femur_candidate_points"
+        ],
     }
 
 
@@ -385,6 +430,13 @@ def write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "num_valid_contour_frames",
         "num_fallback_used",
         "num_labeled_points",
+        "point_cloud_sampling_mode",
+        "source_flags_inferred",
+        "num_global_femur_candidate_points",
+        "num_local_percentile_femur_candidate_points",
+        "num_tophat_femur_candidate_points",
+        "num_context_grid_femur_candidate_points",
+        "num_context_only_femur_candidate_points",
         "error",
     ]
     with path.open("w", newline="") as f:
@@ -582,7 +634,9 @@ def main() -> None:
                 "Annotated: "
                 f"bbox={result['num_voc_bboxes']}, "
                 f"valid_contours={result['num_valid_contours']}, "
-                f"labeled_points={result['num_labeled_points']}"
+                f"labeled_points={result['num_labeled_points']}, "
+                "context_only_labeled="
+                f"{result['num_context_only_femur_candidate_points']}"
             )
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"

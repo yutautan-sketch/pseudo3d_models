@@ -209,6 +209,10 @@ def export_one(
 ) -> dict[str, Any]:
     data = load_annotated_h5(input_h5)
     femur_color = parse_color(args.femur_color)
+    global_color = parse_color(args.global_color)
+    local_percentile_color = parse_color(args.local_percentile_color)
+    tophat_color = parse_color(args.tophat_color)
+    context_grid_color = parse_color(args.context_grid_color)
     measurement_color = parse_color(args.measurement_color)
     frame_endpoint_color = parse_color(args.frame_endpoint_color)
     annotation_marker_color = parse_color(args.annotation_marker_color)
@@ -219,7 +223,13 @@ def export_one(
         alpha=data["alpha"],
         labels=data["point_label"],
         valid_mask=data["valid_mask"],
+        source_flags=data["source_flags"],
         femur_color=femur_color,
+        global_color=global_color,
+        local_percentile_color=local_percentile_color,
+        tophat_color=tophat_color,
+        context_grid_color=context_grid_color,
+        color_mode=args.color_mode,
         background_mode=args.background_mode,
         background_alpha=args.background_alpha,
         ignore_alpha=args.ignore_alpha,
@@ -254,7 +264,13 @@ def export_one(
             alpha=data["alpha"],
             labels=data["point_label"],
             valid_mask=data["valid_mask"],
+            source_flags=data["source_flags"],
             femur_color=femur_color,
+            global_color=global_color,
+            local_percentile_color=local_percentile_color,
+            tophat_color=tophat_color,
+            context_grid_color=context_grid_color,
+            color_mode=args.color_mode,
             background_mode="hidden",
             background_alpha=args.background_alpha,
             ignore_alpha=args.ignore_alpha,
@@ -379,6 +395,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--label_values", type=str, default="1")
     parser.add_argument("--femur_color", type=str, default="255,64,32")
+    parser.add_argument(
+        "--color_mode",
+        type=str,
+        default="annotation",
+        choices=["annotation", "source", "annotation_source"],
+    )
+    parser.add_argument("--global_color", type=str, default="255,255,255")
+    parser.add_argument("--local_percentile_color", type=str, default="64,200,255")
+    parser.add_argument("--tophat_color", type=str, default="255,200,64")
+    parser.add_argument("--context_grid_color", type=str, default="120,120,120")
     parser.add_argument("--background_alpha", type=int, default=90)
     parser.add_argument("--ignore_alpha", type=int, default=35)
     parser.add_argument("--include_measurement_endpoint", action="store_true")
@@ -422,6 +448,7 @@ def main() -> None:
     print(f"Found annotated h5 files: {len(items)}")
     print(f"Output root             : {args.output_root or 'same as input parent'}")
     print(f"Background mode         : {args.background_mode}")
+    print(f"Color mode              : {args.color_mode}")
     print(f"Annotation-only output  : {not args.no_annotation_only_output}")
 
     rows: list[dict[str, Any]] = []

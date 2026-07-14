@@ -9,13 +9,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-
 LABEL_IGNORE = -1
 LABEL_BACKGROUND = 0
 LABEL_FEMUR_CANDIDATE = 1
 LABEL_FRAME_ENDPOINT = 2
 LABEL_MEASUREMENT_ENDPOINT = 3
 LABEL_ANNOTATION_MARKER = 4
+SOURCE_GLOBAL = 1 << 0
+SOURCE_LOCAL_PERCENTILE = 1 << 1
+SOURCE_TOPHAT = 1 << 2
+SOURCE_CONTEXT_GRID = 1 << 3
 np: Any = None
 
 
@@ -86,6 +89,18 @@ def load_annotated_h5(path: Path) -> dict[str, Any]:
             data["pixel_xy"] = pc["pixel_xy"][:].astype(np.float32)
         if "source_type" in pc:
             data["source_type"] = pc["source_type"][:].astype(np.uint8)
+        if "source_flags" in pc:
+            data["source_flags"] = pc["source_flags"][:].astype(np.uint16)
+        else:
+            data["source_flags"] = np.zeros(data["points"].shape[0], dtype=np.uint16)
+        if "sampling_confidence" in pc:
+            data["sampling_confidence"] = pc["sampling_confidence"][:].astype(
+                np.float32
+            )
+        else:
+            data["sampling_confidence"] = data["confidence"].astype(np.float32)
+        if "source_type" not in data:
+            data["source_type"] = source_type_from_flags(data["source_flags"])
 
         if "frame_annotation" in f:
             frame_group = f["frame_annotation"]
@@ -122,13 +137,30 @@ def load_annotated_h5(path: Path) -> dict[str, Any]:
     return data
 
 
+def source_type_from_flags(source_flags: Any) -> Any:
+    np_mod = ensure_numpy()
+    flags = np_mod.asarray(source_flags, dtype=np_mod.uint16)
+    source_type = np_mod.zeros(flags.shape, dtype=np_mod.uint8)
+    source_type[(flags & SOURCE_CONTEXT_GRID) != 0] = 4
+    source_type[(flags & SOURCE_TOPHAT) != 0] = 3
+    source_type[(flags & SOURCE_LOCAL_PERCENTILE) != 0] = 2
+    source_type[(flags & SOURCE_GLOBAL) != 0] = 1
+    return source_type
+
+
 def make_point_colors(
     *,
     intensity: np.ndarray,
     alpha: np.ndarray,
     labels: np.ndarray,
     valid_mask: np.ndarray,
+    source_flags: np.ndarray,
     femur_color: tuple[int, int, int],
+    global_color: tuple[int, int, int],
+    local_percentile_color: tuple[int, int, int],
+    tophat_color: tuple[int, int, int],
+    context_grid_color: tuple[int, int, int],
+    color_mode: str,
     background_mode: str,
     background_alpha: int,
     ignore_alpha: int,
@@ -147,12 +179,36 @@ def make_point_colors(
     else:
         raise ValueError(f"Unknown background_mode: {background_mode}")
 
+    if color_mode in {"source", "annotation_source"}:
+        flags = source_flags.astype(np.uint16)
+        source_colors = colors.copy()
+        source_colors[(flags & SOURCE_CONTEXT_GRID) != 0] = np.asarray(
+            context_grid_color,
+            dtype=np.uint8,
+        )
+        source_colors[(flags & SOURCE_TOPHAT) != 0] = np.asarray(
+            tophat_color,
+            dtype=np.uint8,
+        )
+        source_colors[(flags & SOURCE_LOCAL_PERCENTILE) != 0] = np.asarray(
+            local_percentile_color,
+            dtype=np.uint8,
+        )
+        source_colors[(flags & SOURCE_GLOBAL) != 0] = np.asarray(
+            global_color,
+            dtype=np.uint8,
+        )
+        colors = source_colors
+    elif color_mode != "annotation":
+        raise ValueError(f"Unknown color_mode: {color_mode}")
+
     ignore = labels == LABEL_IGNORE
     colors[ignore] = (60, 60, 60)
     out_alpha[ignore] = np.uint8(ignore_alpha)
 
     annotated = valid_mask & (labels == LABEL_FEMUR_CANDIDATE)
-    colors[annotated] = np.asarray(femur_color, dtype=np.uint8)
+    if color_mode in {"annotation", "annotation_source"}:
+        colors[annotated] = np.asarray(femur_color, dtype=np.uint8)
     out_alpha[annotated] = np.uint8(255)
 
     return colors.astype(np.uint8), out_alpha
@@ -177,6 +233,32 @@ def select_annotation_points(data: dict[str, Any]) -> np.ndarray:
     return valid_mask & (labels == LABEL_FEMUR_CANDIDATE)
 
 
+def summarize_source_labels(data: dict[str, Any]) -> dict[str, int]:
+    flags = data["source_flags"].astype(np.uint16)
+    labels = data["point_label"].astype(np.int8)
+    valid = data["valid_mask"].astype(bool)
+    sources = {
+        "global": SOURCE_GLOBAL,
+        "local_percentile": SOURCE_LOCAL_PERCENTILE,
+        "tophat": SOURCE_TOPHAT,
+        "context_grid": SOURCE_CONTEXT_GRID,
+    }
+    summary: dict[str, int] = {}
+    for name, flag in sources.items():
+        source_mask = (flags & flag) != 0
+        summary[f"{name}_points"] = int(source_mask.sum())
+        summary[f"{name}_femur"] = int(
+            (source_mask & valid & (labels == LABEL_FEMUR_CANDIDATE)).sum()
+        )
+    evidence = (flags & (SOURCE_GLOBAL | SOURCE_LOCAL_PERCENTILE | SOURCE_TOPHAT)) != 0
+    context_only = ((flags & SOURCE_CONTEXT_GRID) != 0) & ~evidence
+    summary["context_only_points"] = int(context_only.sum())
+    summary["context_only_femur"] = int(
+        (context_only & valid & (labels == LABEL_FEMUR_CANDIDATE)).sum()
+    )
+    return summary
+
+
 def build_endpoint_vertices_and_edges(
     data: dict[str, Any],
     *,
@@ -185,7 +267,7 @@ def build_endpoint_vertices_and_edges(
     include_frame_endpoints: bool,
     measurement_color: tuple[int, int, int],
     frame_endpoint_color: tuple[int, int, int],
-) -> tuple[list[tuple[float, float, float, int, int, int, int, int, int, float]], list[tuple[int, int, int, int, int, int, int]]]:
+) -> tuple[list[tuple[Any, ...]], list[tuple[int, int, int, int, int, int, int]]]:
     vertices = []
     edges = []
 
@@ -214,6 +296,9 @@ def build_endpoint_vertices_and_edges(
                     255,
                     int(label),
                     int(frame_order),
+                    float(confidence),
+                    0,
+                    0,
                     float(confidence),
                 )
             )
@@ -260,7 +345,7 @@ def build_annotation_marker_vertices_and_edges(
     marker_size: float,
     marker_stride: int,
     max_markers: int,
-) -> tuple[list[tuple[float, float, float, int, int, int, int, int, int, float]], list[tuple[int, int, int, int, int, int, int]]]:
+) -> tuple[list[tuple[Any, ...]], list[tuple[int, int, int, int, int, int, int]]]:
     labels = data["point_label"]
     valid_mask = data["valid_mask"]
     annotated_idx = np.flatnonzero(valid_mask & (labels == LABEL_FEMUR_CANDIDATE))
@@ -309,6 +394,9 @@ def build_annotation_marker_vertices_and_edges(
                     LABEL_ANNOTATION_MARKER,
                     int(frame_order[int(point_idx)]),
                     float(confidence[int(point_idx)]),
+                    0,
+                    0,
+                    float(confidence[int(point_idx)]),
                 )
             )
         for a, b in edge_pairs:
@@ -351,6 +439,9 @@ def save_ply(
     labels = data["point_label"][keep]
     frame_order = data["frame_order"][keep]
     confidence = data["confidence"][keep]
+    source_flags = data["source_flags"][keep]
+    source_type = data["source_type"][keep]
+    sampling_confidence = data["sampling_confidence"][keep]
     colors = colors[keep]
     out_alpha = out_alpha[keep]
 
@@ -391,6 +482,9 @@ def save_ply(
         f.write("property int label\n")
         f.write("property int frame_order\n")
         f.write("property float confidence\n")
+        f.write("property int source_flags\n")
+        f.write("property int source_type\n")
+        f.write("property float sampling_confidence\n")
         if edges:
             f.write(f"element edge {len(edges)}\n")
             f.write("property int vertex1\n")
@@ -402,33 +496,39 @@ def save_ply(
             f.write("property int label\n")
         f.write("end_header\n")
 
-        for p, rgb, a, label, order, conf in zip(
+        for p, rgb, a, label, order, conf, flags, src_type, samp_conf in zip(
             points,
             colors,
             out_alpha,
             labels,
             frame_order,
             confidence,
+            source_flags,
+            source_type,
+            sampling_confidence,
             strict=True,
         ):
             f.write(
                 f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f} "
                 f"{int(rgb[0])} {int(rgb[1])} {int(rgb[2])} {int(a)} "
-                f"{int(label)} {int(order)} {float(conf):.6f}\n"
+                f"{int(label)} {int(order)} {float(conf):.6f} "
+                f"{int(flags)} {int(src_type)} {float(samp_conf):.6f}\n"
             )
 
         for vertex in endpoint_vertices:
             f.write(
                 f"{vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f} "
                 f"{vertex[3]} {vertex[4]} {vertex[5]} {vertex[6]} "
-                f"{vertex[7]} {vertex[8]} {vertex[9]:.6f}\n"
+                f"{vertex[7]} {vertex[8]} {vertex[9]:.6f} "
+                f"{vertex[10]} {vertex[11]} {vertex[12]:.6f}\n"
             )
 
         for vertex in marker_vertices:
             f.write(
                 f"{vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f} "
                 f"{vertex[3]} {vertex[4]} {vertex[5]} {vertex[6]} "
-                f"{vertex[7]} {vertex[8]} {vertex[9]:.6f}\n"
+                f"{vertex[7]} {vertex[8]} {vertex[9]:.6f} "
+                f"{vertex[10]} {vertex[11]} {vertex[12]:.6f}\n"
             )
 
         for edge in edges:
@@ -482,6 +582,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="255,64,32",
         help="RGB color for point_label=1 femur candidate points.",
     )
+    parser.add_argument(
+        "--color_mode",
+        type=str,
+        default="annotation",
+        choices=["annotation", "source", "annotation_source"],
+        help=(
+            "annotation: label color only. source: color points by sampling "
+            "source_flags. annotation_source: source colors with femur candidates "
+            "overlaid by femur_color."
+        ),
+    )
+    parser.add_argument("--global_color", type=str, default="255,255,255")
+    parser.add_argument("--local_percentile_color", type=str, default="64,200,255")
+    parser.add_argument("--tophat_color", type=str, default="255,200,64")
+    parser.add_argument("--context_grid_color", type=str, default="120,120,120")
     parser.add_argument(
         "--background_alpha",
         type=int,
@@ -586,6 +701,10 @@ def main() -> None:
     ensure_numpy()
     data = load_annotated_h5(args.input_h5)
     femur_color = parse_color(args.femur_color)
+    global_color = parse_color(args.global_color)
+    local_percentile_color = parse_color(args.local_percentile_color)
+    tophat_color = parse_color(args.tophat_color)
+    context_grid_color = parse_color(args.context_grid_color)
     measurement_color = parse_color(args.measurement_color)
     frame_endpoint_color = parse_color(args.frame_endpoint_color)
     annotation_marker_color = parse_color(args.annotation_marker_color)
@@ -596,7 +715,13 @@ def main() -> None:
         alpha=data["alpha"],
         labels=data["point_label"],
         valid_mask=data["valid_mask"],
+        source_flags=data["source_flags"],
         femur_color=femur_color,
+        global_color=global_color,
+        local_percentile_color=local_percentile_color,
+        tophat_color=tophat_color,
+        context_grid_color=context_grid_color,
+        color_mode=args.color_mode,
         background_mode=args.background_mode,
         background_alpha=args.background_alpha,
         ignore_alpha=args.ignore_alpha,
@@ -631,7 +756,13 @@ def main() -> None:
             alpha=data["alpha"],
             labels=data["point_label"],
             valid_mask=data["valid_mask"],
+            source_flags=data["source_flags"],
             femur_color=femur_color,
+            global_color=global_color,
+            local_percentile_color=local_percentile_color,
+            tophat_color=tophat_color,
+            context_grid_color=context_grid_color,
+            color_mode=args.color_mode,
             background_mode="hidden",
             background_alpha=args.background_alpha,
             ignore_alpha=args.ignore_alpha,
@@ -673,6 +804,33 @@ def main() -> None:
     print(f"  ignore_points     : {int(np.sum(labels == LABEL_IGNORE))}")
     if num_valid_contours is not None:
         print(f"  valid_contours    : {num_valid_contours}")
+    source_summary = summarize_source_labels(data)
+    print(f"  color_mode        : {args.color_mode}")
+    print(
+        "  source_global     : "
+        f"{source_summary['global_points']} "
+        f"(femur={source_summary['global_femur']})"
+    )
+    print(
+        "  source_local_pct  : "
+        f"{source_summary['local_percentile_points']} "
+        f"(femur={source_summary['local_percentile_femur']})"
+    )
+    print(
+        "  source_tophat     : "
+        f"{source_summary['tophat_points']} "
+        f"(femur={source_summary['tophat_femur']})"
+    )
+    print(
+        "  source_context    : "
+        f"{source_summary['context_grid_points']} "
+        f"(femur={source_summary['context_grid_femur']})"
+    )
+    print(
+        "  context_only      : "
+        f"{source_summary['context_only_points']} "
+        f"(femur={source_summary['context_only_femur']})"
+    )
     if args.include_annotation_markers:
         marker_source = int(np.sum(data["valid_mask"] & (labels == LABEL_FEMUR_CANDIDATE)))
         marker_count = max(0, (marker_source + max(1, args.annotation_marker_stride) - 1) // max(1, args.annotation_marker_stride))
