@@ -565,3 +565,311 @@ def build_sampling_source_flags(
 * 未解決事項や追加依存関係
 
 今回はStep 1〜3の実装までとし、VOC BBoxを用いたparameter sweepや最終パラメータ決定はまだ行わないでください。
+
+---
+
+# Phase 7: Stage 4実装確認・実データ受け入れ確認
+
+## 1. Phase 7の位置づけ
+
+Phase 1〜6で追加したBBox非依存sampling実装について、synthetic test、CLI、H5 schema、annotation、PLY、可視化、batch処理までの整合性を確認してください。
+
+Phase 7は実装の確認段階です。新しいsampling方式の最終パラメータ決定や、VOC BBoxを用いた大規模parameter sweepはまだ行いません。ただし、少数の実データと既存annotationを読み取り専用の評価対象として使用し、後続sweepへ進める状態かを判定することは含みます。BBoxや教師ラベルをsampling mask生成へ入力してはいけません。
+
+今回確認する実装範囲は以下です。
+
+* Phase 1〜2: `src/utils/pseudo3d_sampling.py` とpoint cloud生成処理へのStep 1〜3統合
+* Phase 3: `check_pseudo3d_sampling_synthetic.py` によるsynthetic確認
+* Phase 4〜5: annotation H5、annotated PLY、annotation mask visualizationへの新schema伝播とsource別表示
+* Phase 6: single/batch CLI、shell script、pipeline間の引数・ファイル名・summary伝播
+
+## 2. Phase 7の原則
+
+* 最初に現状を検査し、問題が見つかった場合だけ最小限の修正を行う
+* `legacy` の既存挙動を基準として維持する
+* `combined_v2` は `foreground` point modeでのみ確認する
+* samplingは `local_encoder_images` 上で、輝度閾値によるpixel破棄より前に行われることを確認する
+* sampling mask生成関数へVOC BBox、教師label、annotation maskを渡さない
+* 同一frame・同一pixelは一意の点とし、複数sourceは `source_flags` のbit ORで表す
+* `confidence` の既存意味を変えず、新sampling由来の値は `sampling_confidence` で扱う
+* 暫定パラメータの性能を最終結論として扱わない
+* 実データが利用できない環境では、その項目を失敗扱いにせず「未実施」として、必要な実行コマンドと入力条件を残す
+
+## 3. 対象ファイル
+
+最低限、以下を相互に照合してください。
+
+* `src/utils/pseudo3d_sampling.py`
+* `pseudo3d/export/export_pseudo3d_point_cloud.py`
+* `pseudo3d/batch/export/batch_export_pseudo3d_point_cloud.py`
+* `check_pseudo3d_sampling_synthetic.py`
+* `pseudo3d/annotation/annotate_pseudo3d_point_cloud.py`
+* `pseudo3d/batch/annotation/batch_annotate_pseudo3d_point_cloud.py`
+* `pseudo3d/export/export_annotated_point_cloud_ply.py`
+* `pseudo3d/batch/export/batch_export_annotated_point_cloud_ply.py`
+* `pseudo3d/export/export_annotation_mask_visualization.py`
+* 関連するsingle/batch/pipelineの `.sh`
+* `scripts/utils/collect_annotated_pseudo3d_h5.py` と関連shell script
+* Stage 5側でannotated H5を読むdataset、inference、visualization処理
+
+## 4. 環境と静的確認
+
+以下を確認してください。
+
+1. `numpy`、`opencv-python`、`scipy`、`h5py` 等の既存依存でimportできる
+2. `scipy.ndimage.percentile_filter` と `median_filter` がrequirements/実行環境と整合する
+3. 対象Pythonファイルがcompile/importできる
+4. CLIの `--help` がsingle/batchとも正常に表示される
+5. shell scriptからPython CLIへ存在しない引数を渡していない
+6. singleとbatchでsampling configのdefaultおよびoverride結果が一致する
+7. `legacy` は追加オプションを指定してもStep 1〜3を有効にしない
+8. `combined_v2` のdefaultは現在の暫定値を使用し、各BooleanOptionalActionで明示的に無効化できる
+
+入力値validationも確認してください。
+
+* strideは1以上
+* local window sizeとtop-hat kernel sizeは正の奇数
+* phaseとmorph shapeは定義済みchoicesのみ
+* image/global mask/confidence mapのshape不一致は明示的に失敗する
+* `combined_v2` と `point_mode=grid|dense` の不正な組み合わせは明示的に失敗する
+
+## 5. Synthetic test
+
+既存の `check_pseudo3d_sampling_synthetic.py` を実行し、少なくとも以下を確認してください。
+
+1. Base Grid
+
+   * origin、centered、dualの点数とoffsetが正しい
+   * dualは重複を含まずunionになる
+   * strideが画像サイズを割り切らない場合やstride=1でも正しい
+
+2. Local Percentile
+
+   * 一様暗画像は `local_min_contrast` により空maskになる
+   * 局所的に明るい点、短い棒、円形領域を拾える
+   * debug指定時だけthreshold/median/contrast mapを返す
+   * 境界付近でも出力shapeとdtypeが維持される
+
+3. Top-hat
+
+   * responseが全て0なら空maskになる
+   * percentileはpositive responseだけで計算される
+   * 点状、円形、短い棒状構造を拾い、線状性を必須にしない
+   * rect、ellipse、crossが実行できる
+   * debug mapのresponse、opened、thresholdが妥当である
+
+4. Source merge
+
+   * 複数sourceに該当するpixelは1点だけ生成される
+   * bit 0〜3が正しくORされる
+   * `source_type` の代表source優先順位がglobal、local、top-hat、contextの順になる
+   * context-only、evidence、overlapの統計が手計算と一致する
+
+5. Confidence
+
+   * globalは既存alpha由来、local/top-hatは暫定値、context-onlyは0.0
+   * 複数sourceでは最大値になる
+   * `confidence` と `sampling_confidence` が混同されない
+
+6. Projection
+
+   * legacyとcombined_v2のpixel座標が同じ `pixel_to_image` とtracking geometryで3D投影される
+   * frame index、frame order、pixel_xy、全point-level配列の長さが一致する
+   * `max_points_per_frame` 適用後もsource flagsと統計が実際の保存点に対応する
+
+既存テストに不足する境界条件があれば追加してください。random subsamplingを確認する場合はseedを固定し、deterministicであることも確認してください。
+
+## 6. Legacy互換性確認
+
+同じpseudo3d入力、geometry、texture設定、stride、seedを使い、変更前相当のlegacy出力と現行 `--sampling_mode legacy` を比較してください。
+
+最低限比較する項目:
+
+* point数とframe別point数
+* `points`、`pixel_xy`、`frame_index`、`frame_order`
+* `intensity`、`rgb`、`alpha`、`confidence`
+* tracking/geometry関連metadata
+* annotation結果のlabel、BBox内外判定、frame対応
+* PLYの点数と既存property
+
+浮動小数点は適切なtoleranceで比較し、それ以外は完全一致を原則としてください。新規fieldが追加されること自体は許容します。
+
+legacy出力の新規fieldについては以下を確認してください。
+
+* foreground点の `source_flags` はglobal bit
+* grid/dense点の `source_flags` はcontext bit
+* 既存互換のためlegacy `source_type` は従来値を維持してよい
+* `sampling_confidence` は既存alpha/confidenceと整合する
+
+## 7. combined_v2の実データsmoke test
+
+代表的な少数動画を選び、同一入力からlegacyとcombined_v2を出力してください。可能なら以下を含めます。
+
+* 従来zero-positive frameが発生した動画
+* 暗いframeを含む動画
+* 通常輝度の動画
+* frame数または画像サイズが異なる動画
+
+暫定設定:
+
+```bash
+python pseudo3d/export/export_pseudo3d_point_cloud.py \
+  --input_h5 INPUT_PSEUDO3D_H5 \
+  --geometry_key corr \
+  --preset percentile85_area100 \
+  --output_h5 OUTPUT_POINTCLOUD_H5 \
+  --output_ply OUTPUT_POINTCLOUD_PLY \
+  --point_mode foreground \
+  --sample_stride 1 \
+  --sampling_mode combined_v2 \
+  --include_context_grid \
+  --context_grid_stride 4 \
+  --context_grid_phase origin \
+  --enable_local_percentile \
+  --local_window_size 41 \
+  --local_percentile 80 \
+  --local_min_contrast 4 \
+  --enable_tophat \
+  --tophat_kernel_size 21 \
+  --tophat_percentile 85 \
+  --tophat_min_response 2 \
+  --tophat_morph_shape ellipse
+```
+
+各出力で以下を確認してください。
+
+* 全frameの処理が完了する
+* context gridにより、global evidenceが空のframeでも選択点が存在する
+* `pixel_xy` が画像範囲内で、同一frame内に重複座標がない
+* source別point数の和と総point数を混同していない
+* point count multiplierが保存後の一意点数に基づく
+* frame別配列の長さがnum_frames、point別配列の長さがnum_points
+* NaN/Infがpoints、confidence、sampling confidenceに存在しない
+* point数とメモリ・処理時間の増加が運用不能な規模でない
+
+## 8. H5 schema・metadata確認
+
+point cloud H5で以下を確認してください。
+
+Point-level dataset:
+
+* `source_flags [K] uint16`
+* `sampling_confidence [K] float32`
+* `source_type [K]`
+* 既存のpoints/rgb/intensity/alpha/frame/pixel/confidence datasets
+
+Frame-level dataset:
+
+* `per_frame_counts`
+* `per_frame_global_counts`
+* `per_frame_local_percentile_counts`
+* `per_frame_tophat_counts`
+* `per_frame_context_grid_counts`
+* `per_frame_context_only_counts`
+* `per_frame_evidence_counts`
+* `per_frame_overlap_counts`
+
+Metadata:
+
+* sampling modeと全sampling parameter
+* source flagのbit定義
+* total/source別/context-only/evidence/overlap統計
+* points per frameのmin/mean/median/max
+* legacy point count multiplier
+
+dataset shape、dtype、metadata値、実データから再計算した統計が一致することを確認してください。特に `max_points_per_frame` 後の統計であることを確認してください。
+
+## 9. Annotation・収集・Stage 5伝播確認
+
+新しいpoint cloud H5をannotation処理へ渡し、以下を確認してください。
+
+* `source_flags`、`sampling_confidence`、frame-level count datasetsがannotated H5へ欠落せず伝播する
+* 古いH5に新fieldがない場合はfallbackが働き、その事実と理由がmetadataへ記録される
+* fallbackで推定した値を、実際に保存されていた値として誤表示しない
+* point数とpoint orderがannotation前後で維持される
+* batch annotation summaryへsampling modeとfallback有無が出る
+* collect処理後も新datasetとmetadataが維持される
+* Stage 5 datasetが未知の追加datasetで壊れず、既存feature/label読込が同じである
+* 必要ならStage 5から `source_flags` と `sampling_confidence` を参照できるが、今回それを学習特徴へ強制追加しない
+
+annotation評価では、教師をsampling条件に使わず、結果の測定だけに使用してください。少なくとも参考値として以下をlegacyとcombined_v2で比較し、Phase 8以降のsweep基盤が必要なことを確認します。
+
+* zero-positive frame数
+* positive点が新たに存在するようになったframe数
+* BBox内point数
+* source別のBBox内point数
+* 総point数とpoint count multiplier
+
+この少数例の結果だけでパラメータを変更・確定しないでください。
+
+## 10. PLY・可視化確認
+
+通常PLY、annotated PLY、annotation mask visualizationを出力し、以下を確認してください。
+
+* PLY headerのproperty数・型・vertex数がbodyと一致する
+* `source_flags` と `sampling_confidence` がPLYへ出力される
+* legacy H5のfallbackでもPLY exportが失敗しない
+* source表示でglobal、local percentile、top-hat、context-only、複数sourceが識別できる
+* annotation source表示でpositive/negativeとsourceの関係を確認できる
+* point sizeや描画順による見かけだけで重複点があると誤判定しない
+* frame visualization上のpixel位置とpoint cloudの `pixel_xy` が一致する
+* context gridのphase/strideが視覚的にもCLI指定と一致する
+
+少なくとも1つのlegacy出力、1つのcombined_v2出力、1つの古いschemaからのfallback出力を確認してください。
+
+## 11. Batch・shell・pipeline確認
+
+single exportとbatch exportへ同じ設定を与え、同一動画のH5内容と統計が一致することを確認してください。
+
+* `sampling_mode` を出力ファイル名/tagへ含め、legacyを誤って上書きしない
+* `--skip_existing` が異なるsampling modeのファイルを取り違えない
+* summary CSVにsampling mode、source別統計、frame統計、失敗理由が出る
+* shell変数がsingle/batch/annotation/PLY/visualizationへ一貫して伝播する
+* batchは1件の失敗時に指定どおり停止または継続する
+* pipeline defaultが意図せず既存legacy運用をcombined_v2へ変更していない
+
+## 12. 合格基準
+
+以下を全て満たせば、Phase 7を合格としてください。
+
+* synthetic testと追加した境界testが全て成功する
+* 対象Pythonファイルのcompile/importとCLI helpが成功する
+* legacyの既存point選択・投影・annotation結果に意図しない差分がない
+* combined_v2で4 sourceが設定どおり動作し、重複pixelが生成されない
+* source flags、confidence、全統計が保存内容からの再計算と一致する
+* point cloudからannotation、collect、Stage 5、PLY、可視化までschemaが伝播する
+* singleとbatchで同じ入力・設定の結果が一致する
+* 実データsmoke testで例外、NaN/Inf、shape不整合、明らかな座標ずれがない
+* sampling mask生成がBBox/教師非依存である
+* 未実施項目、性能上の懸念、既知の制約が明示されている
+
+## 13. Phase 7完了時の報告形式
+
+以下を報告してください。
+
+1. 実行環境と使用commit
+2. 実行したコマンド一覧
+3. synthetic/static/legacy/combined_v2/schema/annotation/PLY/batchの各結果
+4. 実データに使用した動画と選定理由
+5. legacy対combined_v2のpoint数・frame統計・参考annotation指標
+6. source別件数とoverlap/context-only件数
+7. 変更したファイルと修正理由
+8. 合格、不合格、未実施の項目一覧
+9. Phase 8以降へ持ち越す事項
+
+Phase 7で不具合を修正した場合は、修正前に再現testを追加し、修正後に関連するsingle/batch/end-to-end確認を再実行してください。
+
+## 14. Phase 7の対象外
+
+以下はPhase 7では実装しません。
+
+* 全データを対象としたparameter sweep
+* 最終sampling parameterの決定
+* BBox Rescue sampling
+* frame-level fallback sampling
+* line/vesselness/elongation条件
+* source confidenceの学習的calibration
+* Stage 5モデル構造やlossへのsource情報の本格統合
+* BBoxまたは教師labelに依存する本番sampling
+
+これらはPhase 7の確認結果を受けた後続Phaseで別途設計してください。
