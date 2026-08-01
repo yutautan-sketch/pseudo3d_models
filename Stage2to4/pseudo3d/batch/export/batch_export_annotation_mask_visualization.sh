@@ -6,12 +6,13 @@ REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
 
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711}"
 SAMPLING_RUN_NAME="${SAMPLING_RUN_NAME:-global_local_l75_w31_c12_area15}"
-RUN_NAME="${RUN_NAME:-${SAMPLING_RUN_NAME}_bboxrank_v2}"
+TEACHER_RUN_NAME="${TEACHER_RUN_NAME:-bboxrank_v2_nobbox_bg}"
+RUN_NAME="${RUN_NAME:-${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
 RUN_ROOT="${RUN_ROOT:-${DATASET_ROOT}/${RUN_NAME}}"
 ANNOTATED_DIR="${ANNOTATED_DIR:-${RUN_ROOT}/annotated}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${RUN_ROOT}/annotation_textures}"
 
-POINT_CLOUD_TAG="${POINT_CLOUD_TAG:-foreground_combined_v2_${SAMPLING_RUN_NAME}_bboxrank_v2}"
+POINT_CLOUD_TAG="${POINT_CLOUD_TAG:-foreground_combined_v2_${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
 ANNOTATED_PATTERN="${ANNOTATED_PATTERN:-*_pointcloud_annotated_${POINT_CLOUD_TAG}.h5}"
 SUMMARY_CSV="${SUMMARY_CSV:-${OUTPUT_ROOT}/summary.csv}"
 

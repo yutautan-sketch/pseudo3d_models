@@ -827,15 +827,27 @@ source-priority tie break=none
 
 `20250403_114201_376`の目視確認後、v2再annotation pipelineは260711の
 enabled 182件を既定とし、入力manifest、annotated出力、collected出力のそれぞれで
-182件を強制確認する構成に移行した。Stage 5の`train_stage5.sh`も次を既定入力とする。
+182件を強制確認する構成に移行した。その後、Stage 5用ラベル境界の確定に伴い、
+`train_stage5.sh`は次の再生成版を既定入力とする。
 
 ```text
 /mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
-global_local_l75_w31_c12_area15_bboxrank_v2/collected
+global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg/collected
 ```
 
 Stage 5開始前に全H5の`label_mode=bbox_ranked_global_local`、
-`ranked_teacher_schema=stage4_bbox_ranked_teacher_v2`、video nameの一意性をpreflightする。
+`ranked_teacher_schema=stage4_bbox_ranked_teacher_v2`、`no_bbox_label=0`、
+`bbox_inside_non_contour_label=ignore`、video nameの一意性をpreflightする。
+
+Stage 5開始前の最終目視用として、既存point-cloud H5から次のPLYを全182件生成する。
+
+```text
+global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg/
+  pointcloud_foreground/             # raw grayscale PLY
+  pointcloud_annotated_foreground/   # BBox-ranked label/source colored PLY
+```
+
+raw/annotated H5と生成後の両PLYはそれぞれ182件を強制検証する。
 
 ## 9. 現時点の暫定判断
 
@@ -893,6 +905,22 @@ Stage 5開始前に全H5の`label_mode=bbox_ranked_global_local`、
 7. Phase B context調査は初回学習後に再開するか判断
 8. 継続する場合、full evidence候補およびcontextを段階的に追加
 
+## 10.1 Stage 5入力用ラベル方針
+
+Stage 5へ渡す全182件の再生成版では、ラベル境界を次のように固定する。
+
+| 点の位置 | ラベル | 理由 |
+|---|---:|---|
+| BBoxが存在しないフレーム | background (0) | 明示的な非対象フレームとして負例学習に使用 |
+| BBox内かつ選択contour内 | positive (1) | BBox-ranked teacherが選んだ大腿骨候補 |
+| BBox内かつ選択contour外 | ignore (-1) | BBox内の未抽出領域を誤って背景学習しないため |
+| BBoxありフレームのBBox外 | background (0) | 対象BBox外の点 |
+
+旧`bboxrank_v2`出力は上書きせず、再生成版を
+`global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg`として分離する。
+Stage 5の既定入力もこの版へ切り替え、H5属性に加えてBBoxなしフレームの
+全点が実際にbackgroundであることを訓練前preflightで検査する。
+
 ## 11. 関連ファイル
 
 ### 評価基盤
@@ -906,9 +934,12 @@ pseudo3d/analysis/build_stage4_sampling_manifest.py
 pseudo3d/analysis/select_stage4_sampling_screening_subset.py
 pseudo3d/pipelines/build_stage4_global_local_ablation_dataset.sh
 pseudo3d/pipelines/build_stage4_bbox_ranked_annotations.sh
+pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
 pseudo3d/batch/export/batch_export_annotation_mask_visualization.sh
+pseudo3d/batch/export/batch_export_point_cloud_ply.py
 check_stage4_bbox_ranked_teacher.py
 check_stage4_bbox_ranked_realdata.py
+check_stage4_bbox_ranked_label_policy.py
 ```
 
 ### Config
@@ -947,3 +978,5 @@ stage4_sampling_parameter_sweep/260711
 | 2026-08-01 | global保存を廃し、global/local輪郭候補をBBox中心距離と面積十分性で同列選択するlocal-aware teacher方針に更新。 |
 | 2026-08-01 | `bbox_ranked_global_local` teacher v2、H5選択メタデータ、source別輪郭色分け、既存point-cloud再利用pipeline、synthetic checkを実装。 |
 | 2026-08-01 | v2の目視確認完了を受け、260711の182件全件buildを強制する件数検証とStage 5 trainingのv2専用入力preflightを追加。 |
+| 2026-08-01 | Stage 5前の全件目視用にraw/annotated PLYを既存H5から各182件生成・件数検証するバッチpipelineを追加。 |
+| 2026-08-01 | Stage 5入力ラベルを`BBoxなし=background`、`BBox内contour外=ignore`へ固定。旧版を保持したまま`bboxrank_v2_nobbox_bg`として182件を再生成するpipelineと訓練前実データ検査を追加。 |

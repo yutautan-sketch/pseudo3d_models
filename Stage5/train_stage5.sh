@@ -46,7 +46,7 @@ EX_DATE="${EX_DATE:-260801}"
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
 
 STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
-STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v2}"
+STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v2_nobbox_bg}"
 STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
 INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
 
@@ -65,7 +65,7 @@ MAX_VAL_FILES=0
 # output path info
 # ------------------------------------------------------------
 OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
-PREFIX="w20_s10_bboxrankv2_glocal_ce_smooth00_auto_weight_lr1e3_ep200"
+PREFIX="w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep150_bs8"
 EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 
@@ -75,8 +75,8 @@ OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 MODEL_NAME="pointnext_s"
 FEATURES="intensity,confidence"
 NUM_POINTS=0
-BATCH_SIZE=32
-EPOCHS=200
+BATCH_SIZE=8
+EPOCHS=150
 
 # Conservative Stage5 fine-tuning LR. PointNeXt S3DIS uses 1e-2, but Stage5
 # starts from weak labels and smaller batches, so keep 1e-3 for the smoke run.
@@ -111,8 +111,8 @@ POINTNEXT_SA_USE_RES=1
 # In WINDOW_MODE="overlap", each frame-order window is one training sample and
 # NUM_POINTS/SAMPLING_MODE are kept only for legacy non-window runs.
 WINDOW_MODE="overlap"
-WINDOW_SIZE_FRAMES=20
-WINDOW_STRIDE_FRAMES=10
+WINDOW_SIZE_FRAMES=16
+WINDOW_STRIDE_FRAMES=8
 INCLUDE_TAIL_WINDOW=1
 SAMPLING_MODE="video"
 FRAME_WINDOW_SIZE=""
@@ -156,6 +156,7 @@ import sys
 from pathlib import Path
 
 import h5py
+import numpy as np
 
 input_dir = Path(sys.argv[1])
 pattern = sys.argv[2]
@@ -165,17 +166,62 @@ if len(paths) != expected:
     raise SystemExit(f"H5 preflight count mismatch: {len(paths)} != {expected}")
 
 videos = set()
+no_bbox_frames = 0
+no_bbox_points = 0
 for path in paths:
     with h5py.File(path, "r") as handle:
         label_mode = str(handle.attrs.get("label_mode", ""))
         teacher_schema = str(handle.attrs.get("ranked_teacher_schema", ""))
         video_name = str(handle.attrs.get("video_name", ""))
+        no_bbox_label = int(handle.attrs.get("no_bbox_label", -999))
+        bbox_non_contour = str(
+            handle.attrs.get("bbox_inside_non_contour_label", "")
+        )
         if label_mode != "bbox_ranked_global_local":
             raise SystemExit(f"Unexpected label_mode in {path}: {label_mode}")
         if teacher_schema != "stage4_bbox_ranked_teacher_v2":
             raise SystemExit(
                 f"Unexpected ranked_teacher_schema in {path}: {teacher_schema}"
             )
+        if no_bbox_label != 0:
+            raise SystemExit(
+                f"Unexpected no_bbox_label in {path}: {no_bbox_label} (expected 0)"
+            )
+        if bbox_non_contour != "ignore":
+            raise SystemExit(
+                "Unexpected bbox_inside_non_contour_label in "
+                f"{path}: {bbox_non_contour!r} (expected 'ignore')"
+            )
+        required = (
+            "point_cloud/frame_order",
+            "annotation/point_label",
+            "frame_annotation/frame_order",
+        )
+        missing = [name for name in required if name not in handle]
+        if missing:
+            raise SystemExit(f"Missing label-policy datasets in {path}: {missing}")
+
+        frame_order = handle["point_cloud/frame_order"][:]
+        point_label = handle["annotation/point_label"][:]
+        bbox_frame_order = np.unique(handle["frame_annotation/frame_order"][:])
+        if frame_order.shape != point_label.shape:
+            raise SystemExit(
+                f"frame_order/point_label shape mismatch in {path}: "
+                f"{frame_order.shape} != {point_label.shape}"
+            )
+        no_bbox_mask = ~np.isin(frame_order, bbox_frame_order)
+        invalid_labels = np.unique(point_label[no_bbox_mask])
+        if invalid_labels.size and not np.array_equal(
+            invalid_labels, np.asarray([0], dtype=invalid_labels.dtype)
+        ):
+            raise SystemExit(
+                "No-BBox frames contain non-background labels in "
+                f"{path}: labels={invalid_labels.tolist()}"
+            )
+        no_bbox_frames += int(
+            np.setdiff1d(np.unique(frame_order), bbox_frame_order).size
+        )
+        no_bbox_points += int(no_bbox_mask.sum())
         if not video_name:
             raise SystemExit(f"Missing video_name in {path}")
         if video_name in videos:
@@ -183,7 +229,8 @@ for path in paths:
         videos.add(video_name)
 print(
     "Stage 5 BBox-ranked input preflight passed: "
-    f"files={len(paths)}, videos={len(videos)}"
+    f"files={len(paths)}, videos={len(videos)}, "
+    f"no_bbox_frames={no_bbox_frames}, no_bbox_background_points={no_bbox_points}"
 )
 PY
 
@@ -194,6 +241,7 @@ echo "  input dir      : ${INPUT_DIR}"
 echo "  h5 pattern     : ${H5_PATTERN}"
 echo "  matched files  : ${num_inputs}"
 echo "  teacher        : stage4_bbox_ranked_teacher_v2"
+echo "  label policy   : no-BBox=background, BBox non-contour=ignore"
 echo "  output dir     : ${OUTPUT_DIR}"
 echo "  model          : ${MODEL_NAME}"
 echo "  epochs         : ${EPOCHS}"

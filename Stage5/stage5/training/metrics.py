@@ -82,23 +82,35 @@ class BinarySegmentationCounts:
         accuracy = _safe_divide(self.tp + self.tn, self.valid)
         precision = _safe_divide(self.tp, self.tp + self.fp)
         recall = _safe_divide(self.tp, self.tp + self.fn)
+        false_positive_rate = _safe_divide(self.fp, self.fp + self.tn)
+        false_negative_rate = _safe_divide(self.fn, self.fn + self.tp)
         f1 = _safe_divide(2 * precision * recall, precision + recall)
         iou_femur = _safe_divide(self.tp, self.tp + self.fp + self.fn)
         iou_background = _safe_divide(self.tn, self.tn + self.fp + self.fn)
         mean_iou = (iou_femur + iou_background) * 0.5
         valid_ratio = _safe_divide(self.valid, self.total)
         positive_ratio = _safe_divide(self.positive, self.valid)
+        predicted_positive = self.tp + self.fp
+        predicted_background = self.tn + self.fn
 
         return {
             "accuracy": float(accuracy.item()),
             "precision": float(precision.item()),
             "recall": float(recall.item()),
+            "false_positive_rate": float(false_positive_rate.item()),
+            "false_negative_rate": float(false_negative_rate.item()),
             "f1": float(f1.item()),
             "iou_femur": float(iou_femur.item()),
             "iou_background": float(iou_background.item()),
             "mean_iou": float(mean_iou.item()),
             "valid_ratio": float(valid_ratio.item()),
             "positive_ratio": float(positive_ratio.item()),
+            "true_positive_count": float(self.tp.item()),
+            "false_positive_count": float(self.fp.item()),
+            "true_negative_count": float(self.tn.item()),
+            "false_negative_count": float(self.fn.item()),
+            "predicted_positive_count": float(predicted_positive.item()),
+            "predicted_background_count": float(predicted_background.item()),
             "valid_point_count": float(self.valid.item()),
             "total_point_count": float(self.total.item()),
         }

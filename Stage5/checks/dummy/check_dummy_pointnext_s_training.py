@@ -170,6 +170,16 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
                 raise AssertionError(f"{split} metrics do not contain loss")
             if not math.isfinite(float(metrics["loss"])):
                 raise AssertionError(f"{split} loss is not finite: {metrics['loss']}")
+            for key in (
+                "true_positive_count",
+                "false_positive_count",
+                "true_negative_count",
+                "false_negative_count",
+                "false_positive_rate",
+                "false_negative_rate",
+            ):
+                if key not in metrics:
+                    raise AssertionError(f"{split} metrics do not contain {key}")
 
     return config
 

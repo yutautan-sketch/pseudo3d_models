@@ -11,16 +11,17 @@ SOURCE_MANIFEST="${SOURCE_MANIFEST:-${DATASET_ROOT}/stage4_sampling_parameter_sw
 VOC_XML_ROOT="${VOC_XML_ROOT:-/mnt/data/Data_hbl/predirectory_for_coco_annotation_leg/260630/260630_pseudo3d}"
 
 SAMPLING_RUN_NAME="${SAMPLING_RUN_NAME:-global_local_l75_w31_c12_area15}"
+TEACHER_RUN_NAME="${TEACHER_RUN_NAME:-bboxrank_v2_nobbox_bg}"
 SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SAMPLING_RUN_NAME}}"
 POINT_CLOUD_ROOT="${POINT_CLOUD_ROOT:-${SOURCE_RUN_ROOT}/point_cloud}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SAMPLING_RUN_NAME}_bboxrank_v2}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
 ANNOTATED_ROOT="${OUTPUT_ROOT}/annotated"
 COLLECTED_ROOT="${OUTPUT_ROOT}/collected"
 LOG_ROOT="${OUTPUT_ROOT}/logs"
 
 POINT_CLOUD_TAG="foreground_combined_v2_${SAMPLING_RUN_NAME}"
 RAW_H5_TEMPLATE="{video_name}_pointcloud_${POINT_CLOUD_TAG}.h5"
-ANNOTATED_TAG="${POINT_CLOUD_TAG}_bboxrank_v2"
+ANNOTATED_TAG="${POINT_CLOUD_TAG}_${TEACHER_RUN_NAME}"
 ANNOTATED_H5_TEMPLATE="{video_name}_pointcloud_annotated_${ANNOTATED_TAG}.h5"
 ANNOTATED_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.h5"
 
@@ -139,6 +140,8 @@ echo "  output root     : ${OUTPUT_ROOT}"
 echo "  skip existing   : ${SKIP_EXISTING}"
 echo "  enabled videos  : ${manifest_enabled_count}"
 echo "  require full    : ${REQUIRE_FULL_DATASET}"
+echo "  no-BBox label   : background (0)"
+echo "  BBox non-contour: ignore (-1)"
 
 annotate_cmd=(
   "${PYTHON}"
@@ -162,6 +165,7 @@ annotate_cmd=(
   --strict_xml_annotation_dir
   --contour_preset percentile85_area100
   --contour_min_area 20
+  --no_bbox_label 0
   --bbox_inside_non_contour_label ignore
   --ranked_local_window_size 31
   --ranked_local_percentile 75
@@ -179,7 +183,7 @@ annotate_cmd=(
 )
 
 echo
-echo "[1/2] Building BBox-ranked annotation H5 files"
+echo "[1/3] Building BBox-ranked annotation H5 files"
 "${annotate_cmd[@]}" 2>&1 | tee "${LOG_ROOT}/01_annotation.log"
 
 collect_cmd=(
@@ -196,7 +200,7 @@ if [[ "${SKIP_EXISTING}" == "0" ]]; then
 fi
 
 echo
-echo "[2/2] Collecting BBox-ranked annotation H5 files"
+echo "[2/3] Collecting BBox-ranked annotation H5 files"
 "${collect_cmd[@]}" 2>&1 | tee "${LOG_ROOT}/02_collect.log"
 
 annotated_count="$(
@@ -219,6 +223,15 @@ if [[ "${REQUIRE_FULL_DATASET}" == "1" ]]; then
     exit 1
   fi
 fi
+
+echo
+echo "[3/3] Auditing the saved label policy"
+"${PYTHON}" \
+  check_stage4_bbox_ranked_label_policy.py \
+  --input_dir "${COLLECTED_ROOT}" \
+  --pattern "${ANNOTATED_PATTERN}" \
+  --expected_files "${collected_count}" \
+  2>&1 | tee "${LOG_ROOT}/03_label_policy.log"
 
 echo
 echo "BBox-ranked annotation rebuild complete."

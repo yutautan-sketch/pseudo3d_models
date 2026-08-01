@@ -5,7 +5,10 @@ labels:
   ignore: -1
   background: 0
   positive: 1
-  no_bbox_label: -1
+  # Frames with no BBox are explicit background training data.
+  no_bbox_label: 0
+  # Inside an annotated BBox, only the selected contour is positive; the
+  # remaining points are uncertain and must not be trained as background.
   bbox_inside_non_contour_label: ignore
 
 xml:

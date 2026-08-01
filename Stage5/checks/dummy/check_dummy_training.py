@@ -17,6 +17,71 @@ import torch
 
 from checks.dummy.check_dummy_inference import make_dummy_pointcloud_h5, validate_outputs
 from stage5.models import build_stage5_model
+from stage5.training import compute_segmentation_metrics
+
+
+CONFUSION_METRIC_KEYS = (
+    "true_positive_count",
+    "false_positive_count",
+    "true_negative_count",
+    "false_negative_count",
+    "false_positive_rate",
+    "false_negative_rate",
+)
+
+
+def validate_confusion_metric_semantics() -> None:
+    logits = torch.tensor(
+        [
+            [
+                [0.0, 4.0],
+                [4.0, 0.0],
+                [0.0, 4.0],
+                [4.0, 0.0],
+                [0.0, 4.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+    labels = torch.tensor([[1, 1, 0, 0, -1]], dtype=torch.long)
+    valid_mask = torch.tensor([[True, True, True, True, False]])
+
+    ignored_metrics = compute_segmentation_metrics(
+        {"logits": logits},
+        {"labels": labels, "valid_mask": valid_mask},
+    )
+    expected_ignored = {
+        "true_positive_count": 1.0,
+        "false_positive_count": 1.0,
+        "true_negative_count": 1.0,
+        "false_negative_count": 1.0,
+        "false_positive_rate": 0.5,
+        "false_negative_rate": 0.5,
+    }
+    for key, expected in expected_ignored.items():
+        if not math.isclose(float(ignored_metrics[key]), expected):
+            raise AssertionError(
+                f"Unexpected ignored-point metric {key}: "
+                f"{ignored_metrics[key]} != {expected}"
+            )
+
+    background_labels = labels.clone()
+    background_valid_mask = valid_mask.clone()
+    background_labels[0, 4] = 0
+    background_valid_mask[0, 4] = True
+    background_metrics = compute_segmentation_metrics(
+        {"logits": logits},
+        {"labels": background_labels, "valid_mask": background_valid_mask},
+    )
+    if float(background_metrics["false_positive_count"]) != 2.0:
+        raise AssertionError(
+            "Relabeling an ignored positive prediction as valid background "
+            "must add one false positive"
+        )
+    if not math.isclose(float(background_metrics["false_positive_rate"]), 2.0 / 3.0):
+        raise AssertionError(
+            "False-positive rate did not include the relabeled background point"
+        )
 
 
 def write_list_file(path: Path, h5_paths: list[Path]) -> None:
@@ -163,7 +228,15 @@ def validate_training_outputs(
                 raise AssertionError(f"{name} metrics do not contain loss")
             if not math.isfinite(float(metrics["loss"])):
                 raise AssertionError(f"{name} loss is not finite: {metrics['loss']}")
-            for key in ["accuracy", "precision", "recall", "f1", "iou_femur", "valid_ratio"]:
+            for key in [
+                "accuracy",
+                "precision",
+                "recall",
+                "f1",
+                "iou_femur",
+                "valid_ratio",
+                *CONFUSION_METRIC_KEYS,
+            ]:
                 if key not in metrics:
                     raise AssertionError(f"{name} metrics do not contain {key}")
 
@@ -250,6 +323,8 @@ def main() -> None:
         raise ValueError("--num_train must be positive")
     if args.num_val <= 0:
         raise ValueError("--num_val must be positive")
+
+    validate_confusion_metric_semantics()
 
     work_dir = Path(args.work_dir)
     train_list, val_list, inference_input = make_dummy_dataset(

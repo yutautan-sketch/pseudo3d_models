@@ -895,11 +895,23 @@ def train(args: argparse.Namespace) -> None:
                 best_score=best_score,
             )
 
-        train_summary = f"loss={train_metrics['loss']:.4f} f1={train_metrics['f1']:.4f} iou={train_metrics['iou_femur']:.4f}"
+        train_summary = (
+            f"loss={train_metrics['loss']:.4f} "
+            f"f1={train_metrics['f1']:.4f} "
+            f"iou={train_metrics['iou_femur']:.4f} "
+            f"fp={int(train_metrics['false_positive_count'])} "
+            f"fn={int(train_metrics['false_negative_count'])}"
+        )
         if val_metrics is None:
             print(f"epoch {epoch:03d}: train {train_summary}")
         else:
-            val_summary = f"loss={val_metrics['loss']:.4f} f1={val_metrics['f1']:.4f} iou={val_metrics['iou_femur']:.4f}"
+            val_summary = (
+                f"loss={val_metrics['loss']:.4f} "
+                f"f1={val_metrics['f1']:.4f} "
+                f"iou={val_metrics['iou_femur']:.4f} "
+                f"fp={int(val_metrics['false_positive_count'])} "
+                f"fn={int(val_metrics['false_negative_count'])}"
+            )
             print(f"epoch {epoch:03d}: train {train_summary} | val {val_summary}")
 
     with (output_dir / "history.json").open("w", encoding="utf-8") as f:

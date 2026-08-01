@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from pseudo3d.annotation.annotate_pseudo3d_point_cloud import (
+    LABEL_BACKGROUND,
+    LABEL_FEMUR_CANDIDATE,
+    LABEL_IGNORE,
     LocalBBox,
     RankedContourConfig,
+    VocBBox,
     build_bbox_ranked_contour_mask,
+    build_contour_point_annotations,
 )
+from src.utils.alpha_texture_processing import AlphaTextureConfig
 
 
 def make_bbox() -> LocalBBox:
@@ -138,6 +146,69 @@ def test_config_validation() -> None:
     print("[OK] ranked contour configuration validation")
 
 
+def test_stage5_label_policy() -> None:
+    images = np.zeros((2, 10, 10), dtype=np.uint8)
+    images[0, 3:7, 3:7] = 255
+    bbox_xyxy = np.asarray([2.0, 2.0, 7.0, 7.0], dtype=np.float32)
+    voc = VocBBox(
+        xml_path=Path("synthetic_00001.xml"),
+        object_index=0,
+        object_name="leg",
+        xml_xyxy=bbox_xyxy.copy(),
+        image_size_wh=np.asarray([10.0, 10.0], dtype=np.float32),
+    )
+    local_bbox = LocalBBox(
+        xml_xyxy=bbox_xyxy.copy(),
+        raw_xyxy=bbox_xyxy.copy(),
+        local_xyxy=bbox_xyxy.copy(),
+        valid=True,
+    )
+    point_cloud = {
+        "frame_order": np.asarray([0, 0, 0, 1, 1], dtype=np.int32),
+        "pixel_xy": np.asarray(
+            [[0, 0], [2, 2], [4, 4], [0, 0], [4, 4]],
+            dtype=np.float32,
+        ),
+    }
+    pseudo3d = {
+        "local_encoder_images": images,
+        "frame_indices": np.asarray([0, 1], dtype=np.int64),
+    }
+    labels, valid_mask, frame_annotation = build_contour_point_annotations(
+        point_cloud=point_cloud,
+        pseudo3d=pseudo3d,
+        voc_bboxes={0: [voc]},
+        local_bboxes={0: [local_bbox]},
+        texture_config=AlphaTextureConfig(
+            threshold_mode="fixed",
+            fixed_threshold=180,
+        ),
+        min_alpha=1,
+        min_contour_area=0.0,
+        no_bbox_label=LABEL_BACKGROUND,
+        bbox_inside_non_contour_label="ignore",
+    )
+    np.testing.assert_array_equal(
+        labels,
+        np.asarray(
+            [
+                LABEL_BACKGROUND,
+                LABEL_IGNORE,
+                LABEL_FEMUR_CANDIDATE,
+                LABEL_BACKGROUND,
+                LABEL_BACKGROUND,
+            ],
+            dtype=np.int8,
+        ),
+    )
+    np.testing.assert_array_equal(valid_mask, labels != LABEL_IGNORE)
+    np.testing.assert_array_equal(
+        np.unique(frame_annotation["frame_order"]),
+        np.asarray([0], dtype=np.int32),
+    )
+    print("[OK] no-BBox background and BBox non-contour ignore policy")
+
+
 def main() -> None:
     test_local_beats_off_center_global()
     test_global_can_win_without_source_bias()
@@ -145,6 +216,7 @@ def main() -> None:
     test_small_candidate_is_rejected()
     test_no_eligible_candidate()
     test_config_validation()
+    test_stage5_label_policy()
     print("Stage 4 BBox-ranked teacher synthetic checks passed.")
 
 
