@@ -1,0 +1,33 @@
+schema_version: 1
+config_name: stage4_dense_teacher_v1
+
+labels:
+  ignore: -1
+  background: 0
+  positive: 1
+  no_bbox_label: -1
+  bbox_inside_non_contour_label: ignore
+
+xml:
+  frame_number_offsets: [1]
+  frame_id_source: frame_index
+  annotation_dir_name: annotations_renamed
+  strict_annotation_dir: true
+
+contour:
+  preset: percentile85_area100
+  threshold_mode: percentile
+  percentile: 85.0
+  min_component_area: 100
+  min_area: 20.0
+  min_alpha: 1
+  open_ksize: 3
+  close_ksize: 5
+  morph_shape: ellipse
+  denoise: median
+  denoise_ksize: 3
+
+# Sampling-dependent fallback would make teacher generation circular.
+fallback:
+  enabled: false
+

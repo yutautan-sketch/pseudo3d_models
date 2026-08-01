@@ -247,6 +247,13 @@ def export_one(
         "tophat_percentile": sampling_config.tophat_percentile,
         "tophat_min_response": sampling_config.tophat_min_response,
         "tophat_morph_shape": sampling_config.tophat_morph_shape,
+        "enable_evidence_cleanup": sampling_config.enable_evidence_cleanup,
+        "evidence_open_ksize": sampling_config.evidence_open_ksize,
+        "evidence_close_ksize": sampling_config.evidence_close_ksize,
+        "evidence_morph_shape": sampling_config.evidence_morph_shape,
+        "evidence_min_component_area": (
+            sampling_config.evidence_min_component_area
+        ),
         "local_source_confidence": sampling_config.local_source_confidence,
         "tophat_source_confidence": sampling_config.tophat_source_confidence,
         "context_source_confidence": sampling_config.context_source_confidence,
@@ -441,6 +448,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="ellipse",
         choices=["rect", "ellipse", "cross"],
     )
+    parser.add_argument(
+        "--enable_evidence_cleanup",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument("--evidence_open_ksize", type=int, default=3)
+    parser.add_argument("--evidence_close_ksize", type=int, default=5)
+    parser.add_argument(
+        "--evidence_morph_shape",
+        type=str,
+        default="ellipse",
+        choices=["rect", "ellipse", "cross"],
+    )
+    parser.add_argument("--evidence_min_component_area", type=int, default=100)
     parser.add_argument("--local_source_confidence", type=float, default=0.7)
     parser.add_argument("--tophat_source_confidence", type=float, default=0.7)
     parser.add_argument("--context_source_confidence", type=float, default=0.0)

@@ -1,0 +1,62 @@
+schema_version: 1
+run_name: stage4_sampling_phase_a_tophat_local31_area0_coarse
+
+# Phase A top-hat coarse search. The efficient local candidate from A1 is
+# fixed, context remains disabled, and component removal remains disabled while
+# evidence thresholds are investigated.
+fixed:
+  sample_stride: 2
+  min_alpha: 1
+  min_intensity: 1
+  original_foreground_mode: nonzero
+
+  global_texture:
+    texture_style: threshold_alpha
+    denoise: median
+    denoise_ksize: 3
+    threshold_mode: percentile
+    percentile: 85.0
+    open_ksize: 3
+    close_ksize: 5
+    morph_shape: ellipse
+    min_component_area: 100
+    white_foreground: false
+
+  sampling:
+    sampling_mode: combined_v2
+    include_context_grid: false
+    context_grid_stride: 4
+    context_grid_phase: origin
+    enable_local_percentile: true
+    local_window_size: 31
+    local_percentile: 80.0
+    local_min_contrast: 12.0
+    enable_tophat: true
+    tophat_kernel_size: 21
+    tophat_percentile: 85.0
+    tophat_min_response: 2.0
+    tophat_morph_shape: ellipse
+    enable_evidence_cleanup: true
+    evidence_open_ksize: 3
+    evidence_close_ksize: 5
+    evidence_morph_shape: ellipse
+    evidence_min_component_area: 0
+    local_source_confidence: 0.7
+    tophat_source_confidence: 0.7
+    context_source_confidence: 0.0
+
+evaluation:
+  extent_min_elongation: 2.0
+
+stages:
+  - name: a2_tophat_local31_area0_coarse
+    include_base: true
+    configs:
+      - name: without_tophat_local31_area0
+        overrides:
+          enable_tophat: false
+    one_factor:
+      tophat_kernel_size: [11, 21, 31, 41]
+      tophat_percentile: [80.0, 85.0, 90.0, 95.0]
+      tophat_min_response: [0.0, 2.0, 4.0, 8.0]
+      tophat_morph_shape: [rect, ellipse, cross]

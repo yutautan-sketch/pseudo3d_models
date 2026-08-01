@@ -86,6 +86,10 @@ TOPHAT_KERNEL_SIZE="21"
 TOPHAT_PERCENTILE="85"
 TOPHAT_MIN_RESPONSE="2"
 TOPHAT_MORPH_SHAPE="ellipse"  # rect / ellipse / cross
+EVIDENCE_OPEN_KSIZE="3"
+EVIDENCE_CLOSE_KSIZE="5"
+EVIDENCE_MORPH_SHAPE="ellipse"  # rect / ellipse / cross
+EVIDENCE_MIN_COMPONENT_AREA="100"
 H5_PATTERN="*${OUTPUT_SUFFIX}.h5"
 
 if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
@@ -118,6 +122,11 @@ python pseudo3d/batch/export/batch_export_pseudo3d_point_cloud.py \
   --tophat_percentile "${TOPHAT_PERCENTILE}" \
   --tophat_min_response "${TOPHAT_MIN_RESPONSE}" \
   --tophat_morph_shape "${TOPHAT_MORPH_SHAPE}" \
+  --enable_evidence_cleanup \
+  --evidence_open_ksize "${EVIDENCE_OPEN_KSIZE}" \
+  --evidence_close_ksize "${EVIDENCE_CLOSE_KSIZE}" \
+  --evidence_morph_shape "${EVIDENCE_MORPH_SHAPE}" \
+  --evidence_min_component_area "${EVIDENCE_MIN_COMPONENT_AREA}" \
   --texture_percentile 85 \
   --texture_min_component_area 100 \
   --output_h5_filename_template "{video_name}_pointcloud_${POINT_CLOUD_TAG}.h5" \
@@ -147,6 +156,8 @@ python pseudo3d/batch/annotation/batch_annotate_pseudo3d_point_cloud.py \
   --bbox_ignore_margin 0 \
   --xml_frame_id_source frame_index \
   --xml_frame_number_offsets 1 \
+  --xml_annotation_dir_name annotations_renamed \
+  --strict_xml_annotation_dir \
   --contour_preset percentile85_area100 \
   --contour_percentile 85 \
   --contour_min_component_area 100 \

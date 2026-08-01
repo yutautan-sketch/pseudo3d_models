@@ -60,6 +60,8 @@ python pseudo3d/batch/annotation/batch_annotate_pseudo3d_point_cloud.py \
   --bbox_ignore_margin 0 \
   --xml_frame_id_source frame_index \
   --xml_frame_number_offsets 1 \
+  --xml_annotation_dir_name annotations_renamed \
+  --strict_xml_annotation_dir \
   --contour_preset percentile85_area100 \
   --contour_percentile 85 \
   --contour_min_component_area 100 \

@@ -1,0 +1,56 @@
+schema_version: 2
+config_name: stage4_bbox_ranked_teacher_v2
+
+labels:
+  ignore: -1
+  background: 0
+  positive: 1
+  no_bbox_label: -1
+  bbox_inside_non_contour_label: ignore
+
+xml:
+  frame_number_offsets: [1]
+  frame_id_source: frame_index
+  annotation_dir_name: annotations_renamed
+  strict_annotation_dir: true
+
+global_candidate:
+  preset: percentile85_area100
+  threshold_mode: percentile
+  percentile: 85.0
+  min_component_area: 100
+  min_area: 20.0
+  min_alpha: 1
+  open_ksize: 3
+  close_ksize: 5
+  morph_shape: ellipse
+  denoise: median
+  denoise_ksize: 3
+
+local_candidate:
+  window_size: 31
+  percentile: 75.0
+  min_contrast: 12.0
+  cleanup_open_ksize: 3
+  cleanup_close_ksize: 5
+  cleanup_morph_shape: ellipse
+  cleanup_min_component_area: 15
+
+ranking:
+  # center distance is normalized by the full BBox diagonal.
+  min_area_ratio: 0.02
+  sufficient_area_ratio: 0.10
+  max_center_distance_norm: 0.50
+  center_weight: 0.75
+  area_weight: 0.25
+  prefer_source_on_tie: null
+
+selection:
+  extract_all_external_components: true
+  union_sources_before_ranking: false
+  selected_filled_contour_is_positive: true
+  equal_rank_different_masks: reject
+
+required_regression_video:
+  video_name: 20250403_114201_376
+  expected_selected_source: local_percentile

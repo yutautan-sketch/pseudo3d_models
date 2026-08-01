@@ -126,6 +126,7 @@ def make_sampling_config_from_args(args: argparse.Namespace) -> PointSamplingCon
         include_context_grid = False
         enable_local_percentile = False
         enable_tophat = False
+        enable_evidence_cleanup = False
     else:
         include_context_grid = (
             cfg.include_context_grid
@@ -142,6 +143,11 @@ def make_sampling_config_from_args(args: argparse.Namespace) -> PointSamplingCon
             if args.enable_tophat is None
             else bool(args.enable_tophat)
         )
+        enable_evidence_cleanup = (
+            cfg.enable_evidence_cleanup
+            if args.enable_evidence_cleanup is None
+            else bool(args.enable_evidence_cleanup)
+        )
 
     return PointSamplingConfig(
         sampling_mode=args.sampling_mode,
@@ -157,6 +163,11 @@ def make_sampling_config_from_args(args: argparse.Namespace) -> PointSamplingCon
         tophat_percentile=args.tophat_percentile,
         tophat_min_response=args.tophat_min_response,
         tophat_morph_shape=args.tophat_morph_shape,
+        enable_evidence_cleanup=enable_evidence_cleanup,
+        evidence_open_ksize=args.evidence_open_ksize,
+        evidence_close_ksize=args.evidence_close_ksize,
+        evidence_morph_shape=args.evidence_morph_shape,
+        evidence_min_component_area=args.evidence_min_component_area,
         local_source_confidence=args.local_source_confidence,
         tophat_source_confidence=args.tophat_source_confidence,
         context_source_confidence=args.context_source_confidence,
@@ -779,6 +790,25 @@ def build_parser() -> argparse.ArgumentParser:
         default="ellipse",
         choices=["rect", "ellipse", "cross"],
     )
+    parser.add_argument(
+        "--enable_evidence_cleanup",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help=(
+            "Apply opening, closing, and small-component removal independently "
+            "to local-percentile and top-hat masks. Defaults to enabled for "
+            "combined_v2 and disabled for legacy."
+        ),
+    )
+    parser.add_argument("--evidence_open_ksize", type=int, default=3)
+    parser.add_argument("--evidence_close_ksize", type=int, default=5)
+    parser.add_argument(
+        "--evidence_morph_shape",
+        type=str,
+        default="ellipse",
+        choices=["rect", "ellipse", "cross"],
+    )
+    parser.add_argument("--evidence_min_component_area", type=int, default=100)
     parser.add_argument("--local_source_confidence", type=float, default=0.7)
     parser.add_argument("--tophat_source_confidence", type=float, default=0.7)
     parser.add_argument("--context_source_confidence", type=float, default=0.0)
@@ -869,6 +899,13 @@ def main():
         "tophat_percentile": sampling_config.tophat_percentile,
         "tophat_min_response": sampling_config.tophat_min_response,
         "tophat_morph_shape": sampling_config.tophat_morph_shape,
+        "enable_evidence_cleanup": sampling_config.enable_evidence_cleanup,
+        "evidence_open_ksize": sampling_config.evidence_open_ksize,
+        "evidence_close_ksize": sampling_config.evidence_close_ksize,
+        "evidence_morph_shape": sampling_config.evidence_morph_shape,
+        "evidence_min_component_area": (
+            sampling_config.evidence_min_component_area
+        ),
         "local_source_confidence": sampling_config.local_source_confidence,
         "tophat_source_confidence": sampling_config.tophat_source_confidence,
         "context_source_confidence": sampling_config.context_source_confidence,

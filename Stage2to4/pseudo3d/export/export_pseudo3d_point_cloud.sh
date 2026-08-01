@@ -35,6 +35,10 @@ TOPHAT_KERNEL_SIZE="21"
 TOPHAT_PERCENTILE="85"
 TOPHAT_MIN_RESPONSE="2"
 TOPHAT_MORPH_SHAPE="ellipse"  # rect / ellipse / cross
+EVIDENCE_OPEN_KSIZE="3"
+EVIDENCE_CLOSE_KSIZE="5"
+EVIDENCE_MORPH_SHAPE="ellipse"  # rect / ellipse / cross
+EVIDENCE_MIN_COMPONENT_AREA="100"
 
 if [[ "${SAMPLING_MODE}" == "legacy" ]]; then
   POINT_CLOUD_TAG="${MODE}"
@@ -67,4 +71,9 @@ python pseudo3d/export/export_pseudo3d_point_cloud.py \
   --tophat_kernel_size "${TOPHAT_KERNEL_SIZE}" \
   --tophat_percentile "${TOPHAT_PERCENTILE}" \
   --tophat_min_response "${TOPHAT_MIN_RESPONSE}" \
-  --tophat_morph_shape "${TOPHAT_MORPH_SHAPE}"
+  --tophat_morph_shape "${TOPHAT_MORPH_SHAPE}" \
+  --enable_evidence_cleanup \
+  --evidence_open_ksize "${EVIDENCE_OPEN_KSIZE}" \
+  --evidence_close_ksize "${EVIDENCE_CLOSE_KSIZE}" \
+  --evidence_morph_shape "${EVIDENCE_MORPH_SHAPE}" \
+  --evidence_min_component_area "${EVIDENCE_MIN_COMPONENT_AREA}"

@@ -15,6 +15,7 @@ import numpy as np
 
 from src.utils.alpha_texture_processing import image_to_uint8_gray
 from pseudo3d.annotation.annotate_pseudo3d_point_cloud import (
+    RankedContourConfig,
     build_frame_contour_mask_results,
     load_point_cloud_h5,
     load_voc_bboxes,
@@ -263,6 +264,10 @@ def make_overlay_textures(
     local_percentile_sample_color: tuple[int, int, int] = (64, 200, 255),
     tophat_sample_color: tuple[int, int, int] = (255, 200, 64),
     context_grid_sample_color: tuple[int, int, int] = (120, 120, 120),
+    ranked_contour_config: RankedContourConfig | None = None,
+    ranked_global_contour_color: tuple[int, int, int] = (0, 255, 0),
+    ranked_local_contour_color: tuple[int, int, int] = (255, 0, 255),
+    ranked_shared_contour_color: tuple[int, int, int] = (255, 255, 0),
 ) -> tuple[np.ndarray, dict[str, int]]:
     local_images = pseudo3d["local_encoder_images"]
     n = int(local_images.shape[0])
@@ -278,6 +283,7 @@ def make_overlay_textures(
         enable_fallback=enable_contour_fallback,
         fallback_percentiles=fallback_percentiles or [],
         fallback_min_positive_points=fallback_min_positive_points,
+        ranked_contour_config=ranked_contour_config,
     )
     stats["num_fallback_used"] = int(
         sum(
@@ -324,6 +330,16 @@ def make_overlay_textures(
                     if bool(result.get("fallback_used", False))
                     else contour_color
                 )
+                selected_source = str(
+                    result.get("selected_contour_source", "global")
+                )
+                if ranked_contour_config is not None:
+                    if selected_source == "local_percentile":
+                        draw_color = ranked_local_contour_color
+                    elif selected_source == "shared":
+                        draw_color = ranked_shared_contour_color
+                    else:
+                        draw_color = ranked_global_contour_color
                 _draw_mask_contours(
                     rgb,
                     mask,
@@ -460,6 +476,19 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["frame_index", "frame_order", "both"],
     )
     parser.add_argument(
+        "--xml_annotation_dir_name",
+        type=str,
+        default="annotations_renamed",
+    )
+    parser.add_argument(
+        "--strict_xml_annotation_dir",
+        action="store_true",
+        help=(
+            "Use only the named per-video XML directory and disable fallback "
+            "to annotations and other sibling directories."
+        ),
+    )
+    parser.add_argument(
         "--contour_preset",
         type=str,
         default="percentile90_area100",
@@ -591,6 +620,8 @@ def main() -> None:
         frame_indices=pseudo3d["frame_indices"],
         xml_frame_number_offsets=_parse_offsets(args.xml_frame_number_offsets),
         xml_frame_id_source=args.xml_frame_id_source,
+        xml_annotation_dir_name=args.xml_annotation_dir_name,
+        strict_xml_annotation_dir=args.strict_xml_annotation_dir,
     )
     local_bboxes = {
         order: [
@@ -648,6 +679,8 @@ def main() -> None:
     print(f"  point_cloud_h5: {args.point_cloud_h5}")
     print(f"  point_cloud_point_mode: {point_mode}")
     print(f"  point_cloud_sampling_mode: {sampling_mode}")
+    print(f"  xml_annotation_dir_name: {args.xml_annotation_dir_name}")
+    print(f"  strict_xml_annotation_dir: {args.strict_xml_annotation_dir}")
     print(f"  draw_point_cloud_samples: {args.draw_point_cloud_samples}")
     print(f"  enable_contour_fallback: {enable_contour_fallback}")
     print(f"  fallback_percentiles: {args.fallback_percentiles}")

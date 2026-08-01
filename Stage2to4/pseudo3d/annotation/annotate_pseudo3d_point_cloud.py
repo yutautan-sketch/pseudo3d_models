@@ -25,6 +25,8 @@ from src.utils.pseudo3d_sampling import (
     SOURCE_GLOBAL,
     SOURCE_LOCAL_PERCENTILE,
     SOURCE_TOPHAT,
+    build_local_percentile_evidence,
+    cleanup_evidence_mask,
 )
 
 
@@ -61,6 +63,60 @@ class LocalBBox:
     raw_xyxy: np.ndarray
     local_xyxy: np.ndarray
     valid: bool
+
+
+@dataclass(frozen=True)
+class RankedContourConfig:
+    """BBox-aware selector for independent global/local contour candidates."""
+
+    local_window_size: int = 31
+    local_percentile: float = 75.0
+    local_min_contrast: float = 12.0
+    local_cleanup_open_ksize: int = 3
+    local_cleanup_close_ksize: int = 5
+    local_cleanup_morph_shape: str = "ellipse"
+    local_cleanup_min_component_area: int = 15
+    min_area_ratio: float = 0.02
+    sufficient_area_ratio: float = 0.10
+    max_center_distance_norm: float = 0.50
+    center_weight: float = 0.75
+    area_weight: float = 0.25
+
+    def validate(self) -> None:
+        if self.local_window_size <= 0 or self.local_window_size % 2 == 0:
+            raise ValueError("ranked local_window_size must be a positive odd integer")
+        if not 0.0 <= self.local_percentile <= 100.0:
+            raise ValueError("ranked local_percentile must be in [0, 100]")
+        if self.local_min_contrast < 0.0:
+            raise ValueError("ranked local_min_contrast must be >= 0")
+        if self.local_cleanup_open_ksize < 0:
+            raise ValueError("ranked local_cleanup_open_ksize must be >= 0")
+        if self.local_cleanup_close_ksize < 0:
+            raise ValueError("ranked local_cleanup_close_ksize must be >= 0")
+        if self.local_cleanup_morph_shape not in {"rect", "ellipse", "cross"}:
+            raise ValueError(
+                "ranked local_cleanup_morph_shape must be rect, ellipse, or cross"
+            )
+        if self.local_cleanup_min_component_area < 0:
+            raise ValueError(
+                "ranked local_cleanup_min_component_area must be >= 0"
+            )
+        if not 0.0 <= self.min_area_ratio <= 1.0:
+            raise ValueError("ranked min_area_ratio must be in [0, 1]")
+        if not 0.0 < self.sufficient_area_ratio <= 1.0:
+            raise ValueError("ranked sufficient_area_ratio must be in (0, 1]")
+        if self.sufficient_area_ratio < self.min_area_ratio:
+            raise ValueError(
+                "ranked sufficient_area_ratio must be >= min_area_ratio"
+            )
+        if not 0.0 < self.max_center_distance_norm <= 1.0:
+            raise ValueError(
+                "ranked max_center_distance_norm must be in (0, 1]"
+            )
+        if self.center_weight < 0.0 or self.area_weight < 0.0:
+            raise ValueError("ranked score weights must be >= 0")
+        if self.center_weight + self.area_weight <= 0.0:
+            raise ValueError("at least one ranked score weight must be positive")
 
 
 def _write_h5_attrs(group: Any, attrs: dict[str, Any]) -> None:
@@ -254,6 +310,8 @@ def _candidate_xml_paths(
     frame_order: int,
     offsets: tuple[int, ...],
     frame_id_source: str,
+    annotation_dir_name: str = "annotations_renamed",
+    strict_annotation_dir: bool = False,
 ) -> list[Path]:
     names: list[str] = []
     base_nums = []
@@ -293,7 +351,25 @@ def _candidate_xml_paths(
         "annotations",
     ]
 
-    if root.name in set(annotation_dir_names):
+    if strict_annotation_dir:
+        annotation_dir = Path(annotation_dir_name)
+        if (
+            not annotation_dir_name
+            or annotation_dir.is_absolute()
+            or len(annotation_dir.parts) != 1
+            or annotation_dir.name in {".", ".."}
+        ):
+            raise ValueError(
+                "annotation_dir_name must be one relative directory name, "
+                f"got {annotation_dir_name!r}"
+            )
+        if root.name in set(annotation_dir_names):
+            search_roots = [root.with_name(annotation_dir_name)]
+        elif root.name == video_name:
+            search_roots = [root / annotation_dir_name]
+        else:
+            search_roots = [root / video_name / annotation_dir_name]
+    elif root.name in set(annotation_dir_names):
         search_roots = [
             root,
             *[root.with_name(dirname) for dirname in annotation_dir_names],
@@ -327,6 +403,8 @@ def load_voc_bboxes(
     frame_indices: np.ndarray,
     xml_frame_number_offsets: tuple[int, ...],
     xml_frame_id_source: str,
+    xml_annotation_dir_name: str = "annotations_renamed",
+    strict_xml_annotation_dir: bool = False,
 ) -> dict[int, list[VocBBox]]:
     voc_xml_root = Path(voc_xml_root)
     if not voc_xml_root.exists():
@@ -342,6 +420,8 @@ def load_voc_bboxes(
             frame_order=int(frame_order),
             offsets=xml_frame_number_offsets,
             frame_id_source=xml_frame_id_source,
+            annotation_dir_name=xml_annotation_dir_name,
+            strict_annotation_dir=strict_xml_annotation_dir,
         ):
             if candidate.exists():
                 xml_path = candidate
@@ -654,6 +734,285 @@ def build_largest_contour_mask_from_binary(
     }
 
 
+def build_ranked_local_binary_mask(
+    image: np.ndarray,
+    *,
+    config: RankedContourConfig,
+) -> np.ndarray:
+    """Rebuild the tuned local-percentile evidence mask at full resolution."""
+    config.validate()
+    gray = image_to_uint8_gray(image)
+    local_result = build_local_percentile_evidence(
+        gray,
+        window_size=config.local_window_size,
+        percentile=config.local_percentile,
+        min_contrast=config.local_min_contrast,
+        return_debug_maps=False,
+    )
+    cleanup = cleanup_evidence_mask(
+        local_result["mask"],
+        open_ksize=config.local_cleanup_open_ksize,
+        close_ksize=config.local_cleanup_close_ksize,
+        morph_shape=config.local_cleanup_morph_shape,
+        min_component_area=config.local_cleanup_min_component_area,
+        return_debug_maps=False,
+    )
+    return cleanup["mask"].astype(bool)
+
+
+def _ranked_contour_candidates_from_binary(
+    full_binary: np.ndarray,
+    bbox: LocalBBox,
+    *,
+    source: str,
+    min_contour_area: float,
+    config: RankedContourConfig,
+) -> list[dict[str, Any]]:
+    full_binary = np.asarray(full_binary, dtype=bool)
+    bounds = _bbox_to_roi_bounds(bbox, image_shape_hw=full_binary.shape)
+    if bounds is None:
+        return []
+
+    left, top, right, bottom = bounds
+    binary = full_binary[top : bottom + 1, left : right + 1]
+    contours, _ = cv2.findContours(
+        binary.astype(np.uint8),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if not contours:
+        return []
+
+    bbox_width = int(right - left + 1)
+    bbox_height = int(bottom - top + 1)
+    bbox_area = float(bbox_width * bbox_height)
+    bbox_diagonal = float(np.hypot(bbox_width, bbox_height))
+    bbox_center_x = 0.5 * float(left + right)
+    bbox_center_y = 0.5 * float(top + bottom)
+    source_binary_area = int(binary.sum())
+    source_foreground_ratio = (
+        float(source_binary_area / bbox_area) if bbox_area > 0.0 else 0.0
+    )
+    weight_sum = float(config.center_weight + config.area_weight)
+
+    candidates: list[dict[str, Any]] = []
+    for component_index, contour in enumerate(contours):
+        contour_area = float(cv2.contourArea(contour))
+        roi_mask = np.zeros(binary.shape, dtype=np.uint8)
+        cv2.drawContours(
+            roi_mask,
+            [contour],
+            0,
+            color=1,
+            thickness=-1,
+        )
+        filled_area = int(roi_mask.sum())
+        area_ratio = float(filled_area / bbox_area) if bbox_area > 0.0 else 0.0
+
+        moments = cv2.moments(roi_mask, binaryImage=True)
+        if moments["m00"] > 0.0:
+            center_x = float(left) + float(moments["m10"] / moments["m00"])
+            center_y = float(top) + float(moments["m01"] / moments["m00"])
+            center_distance_norm = float(
+                np.hypot(center_x - bbox_center_x, center_y - bbox_center_y)
+                / bbox_diagonal
+            )
+        else:
+            center_x = np.nan
+            center_y = np.nan
+            center_distance_norm = np.inf
+
+        center_score = float(
+            np.clip(
+                1.0
+                - center_distance_norm / config.max_center_distance_norm,
+                0.0,
+                1.0,
+            )
+        )
+        area_score = float(
+            np.clip(area_ratio / config.sufficient_area_ratio, 0.0, 1.0)
+        )
+        score = float(
+            (
+                config.center_weight * center_score
+                + config.area_weight * area_score
+            )
+            / weight_sum
+        )
+        eligible = bool(
+            contour_area >= float(min_contour_area)
+            and area_ratio >= config.min_area_ratio
+            and center_distance_norm <= config.max_center_distance_norm
+        )
+
+        full_mask = np.zeros(full_binary.shape, dtype=bool)
+        full_mask[top : bottom + 1, left : right + 1] = roi_mask.astype(bool)
+        candidates.append(
+            {
+                "source": source,
+                "component_index": int(component_index),
+                "mask": full_mask,
+                "eligible": eligible,
+                "score": score,
+                "center_score": center_score,
+                "area_score": area_score,
+                "center_x": center_x,
+                "center_y": center_y,
+                "center_distance_norm": center_distance_norm,
+                "contour_area": contour_area,
+                "filled_area": filled_area,
+                "area_ratio": area_ratio,
+                "source_binary_area": source_binary_area,
+                "source_foreground_ratio": source_foreground_ratio,
+            }
+        )
+    return candidates
+
+
+def _best_ranked_source_score(
+    candidates: list[dict[str, Any]],
+    source: str,
+) -> float:
+    scores = [
+        float(candidate["score"])
+        for candidate in candidates
+        if candidate["source"] == source and candidate["eligible"]
+    ]
+    return max(scores) if scores else np.nan
+
+
+def build_bbox_ranked_contour_mask(
+    *,
+    global_binary: np.ndarray,
+    local_binary: np.ndarray,
+    bbox: LocalBBox,
+    min_contour_area: float,
+    config: RankedContourConfig,
+) -> dict[str, Any]:
+    """Choose the most BBox-consistent contour without preferring its source."""
+    config.validate()
+    global_binary = np.asarray(global_binary, dtype=bool)
+    local_binary = np.asarray(local_binary, dtype=bool)
+    if global_binary.shape != local_binary.shape:
+        raise ValueError(
+            "ranked global/local binary shape mismatch: "
+            f"{global_binary.shape} vs {local_binary.shape}"
+        )
+    empty_mask = np.zeros(global_binary.shape, dtype=bool)
+    candidates = _ranked_contour_candidates_from_binary(
+        global_binary,
+        bbox,
+        source="global",
+        min_contour_area=min_contour_area,
+        config=config,
+    )
+    candidates.extend(
+        _ranked_contour_candidates_from_binary(
+            local_binary,
+            bbox,
+            source="local_percentile",
+            min_contour_area=min_contour_area,
+            config=config,
+        )
+    )
+    eligible = [candidate for candidate in candidates if candidate["eligible"]]
+    common = {
+        "num_global_candidates": int(
+            sum(candidate["source"] == "global" for candidate in candidates)
+        ),
+        "num_local_candidates": int(
+            sum(
+                candidate["source"] == "local_percentile"
+                for candidate in candidates
+            )
+        ),
+        "num_global_eligible_candidates": int(
+            sum(
+                candidate["source"] == "global" and candidate["eligible"]
+                for candidate in candidates
+            )
+        ),
+        "num_local_eligible_candidates": int(
+            sum(
+                candidate["source"] == "local_percentile"
+                and candidate["eligible"]
+                for candidate in candidates
+            )
+        ),
+        "global_candidate_score": _best_ranked_source_score(candidates, "global"),
+        "local_candidate_score": _best_ranked_source_score(
+            candidates, "local_percentile"
+        ),
+    }
+    if not eligible:
+        return {
+            "valid": False,
+            "reason": "no_eligible_ranked_contour",
+            "mask": empty_mask,
+            "contour_area": 0.0,
+            "binary_area": 0,
+            "foreground_ratio_in_bbox": 0.0,
+            "selected_contour_source": "none",
+            "contour_selection_score": np.nan,
+            "center_distance_norm": np.nan,
+            "selected_area_ratio": np.nan,
+            **common,
+        }
+
+    def rank(candidate: dict[str, Any]) -> tuple[float, float, float, float]:
+        return (
+            float(candidate["score"]),
+            -float(candidate["center_distance_norm"]),
+            float(candidate["area_score"]),
+            float(candidate["filled_area"]),
+        )
+
+    eligible.sort(key=rank, reverse=True)
+    selected = eligible[0]
+    selected_source = str(selected["source"])
+    selection_reason = f"bbox_ranked_selected_{selected_source}"
+    if len(eligible) > 1:
+        first_rank = np.asarray(rank(eligible[0]), dtype=np.float64)
+        second_rank = np.asarray(rank(eligible[1]), dtype=np.float64)
+        if np.allclose(first_rank, second_rank, rtol=0.0, atol=1e-12):
+            if np.array_equal(eligible[0]["mask"], eligible[1]["mask"]):
+                selected_source = "shared"
+                selection_reason = "bbox_ranked_identical_global_local"
+            else:
+                return {
+                    "valid": False,
+                    "reason": "ambiguous_equal_ranked_contours",
+                    "mask": empty_mask,
+                    "contour_area": 0.0,
+                    "binary_area": 0,
+                    "foreground_ratio_in_bbox": 0.0,
+                    "selected_contour_source": "none",
+                    "contour_selection_score": float(selected["score"]),
+                    "center_distance_norm": float(
+                        selected["center_distance_norm"]
+                    ),
+                    "selected_area_ratio": float(selected["area_ratio"]),
+                    **common,
+                }
+
+    return {
+        "valid": True,
+        "reason": selection_reason,
+        "mask": selected["mask"],
+        "contour_area": float(selected["contour_area"]),
+        "binary_area": int(selected["source_binary_area"]),
+        "foreground_ratio_in_bbox": float(
+            selected["source_foreground_ratio"]
+        ),
+        "selected_contour_source": selected_source,
+        "contour_selection_score": float(selected["score"]),
+        "center_distance_norm": float(selected["center_distance_norm"]),
+        "selected_area_ratio": float(selected["area_ratio"]),
+        **common,
+    }
+
+
 def build_largest_contour_mask_in_bbox(
     image: np.ndarray,
     bbox: LocalBBox,
@@ -849,6 +1208,7 @@ def build_frame_contour_mask_results(
     enable_fallback: bool = False,
     fallback_percentiles: list[float] | None = None,
     fallback_min_positive_points: int = 0,
+    ranked_contour_config: RankedContourConfig | None = None,
 ) -> tuple[dict[int, list[dict[str, Any]]], dict[int, np.ndarray], dict[str, int]]:
     results_by_order: dict[int, list[dict[str, Any]]] = {}
     union_masks_by_order: dict[int, np.ndarray] = {}
@@ -860,7 +1220,17 @@ def build_frame_contour_mask_results(
         "num_valid_contour_frames": 0,
         "num_invalid_contours": 0,
         "num_invalid_contour_frames": 0,
+        "num_selected_global_contours": 0,
+        "num_selected_local_contours": 0,
+        "num_selected_shared_contours": 0,
     }
+
+    if ranked_contour_config is not None:
+        ranked_contour_config.validate()
+        if enable_fallback:
+            raise ValueError(
+                "contour fallback cannot be combined with bbox-ranked contours"
+            )
 
     for order in sorted(local_bboxes):
         order_results = []
@@ -869,7 +1239,18 @@ def build_frame_contour_mask_results(
         frame_has_invalid_contour = False
         use_fallback = bool(enable_fallback and point_cloud is not None)
         full_binary = None
-        if not use_fallback:
+        local_binary = None
+        if ranked_contour_config is not None:
+            full_binary = build_full_frame_binary_mask(
+                local_images[order],
+                texture_config=texture_config,
+                min_alpha=min_alpha,
+            )
+            local_binary = build_ranked_local_binary_mask(
+                local_images[order],
+                config=ranked_contour_config,
+            )
+        elif not use_fallback:
             full_binary = build_full_frame_binary_mask(
                 local_images[order],
                 texture_config=texture_config,
@@ -879,7 +1260,31 @@ def build_frame_contour_mask_results(
         for bbox_idx, (voc, bbox) in enumerate(
             zip(voc_bboxes[order], local_bboxes[order], strict=True)
         ):
-            if use_fallback:
+            if ranked_contour_config is not None:
+                assert full_binary is not None
+                assert local_binary is not None
+                result = build_bbox_ranked_contour_mask(
+                    global_binary=full_binary,
+                    local_binary=local_binary,
+                    bbox=bbox,
+                    min_contour_area=min_contour_area,
+                    config=ranked_contour_config,
+                )
+                positive_points = 0
+                if point_cloud is not None and result["valid"]:
+                    positive_points = count_points_in_mask(
+                        point_cloud=point_cloud,
+                        frame_order_value=int(order),
+                        mask=result["mask"],
+                    )
+                result = _with_contour_selection_metadata(
+                    result,
+                    positive_points=positive_points,
+                    fallback_used=False,
+                    fallback_percentile=None,
+                    fallback_attempts=0,
+                )
+            elif use_fallback:
                 result = try_contour_with_fallbacks(
                     image=local_images[order],
                     bbox=bbox,
@@ -918,6 +1323,15 @@ def build_frame_contour_mask_results(
                 contour_union |= result["mask"]
                 frame_has_valid_contour = True
                 stats["num_valid_contours"] += 1
+                selected_source = str(
+                    result.get("selected_contour_source", "global")
+                )
+                if selected_source == "local_percentile":
+                    stats["num_selected_local_contours"] += 1
+                elif selected_source == "shared":
+                    stats["num_selected_shared_contours"] += 1
+                else:
+                    stats["num_selected_global_contours"] += 1
             else:
                 frame_has_invalid_contour = True
                 stats["num_invalid_contours"] += 1
@@ -956,6 +1370,7 @@ def build_contour_point_annotations(
     fallback_percentiles: list[float] | None = None,
     fallback_min_positive_points: int = 5,
     bbox_inside_non_contour_label: str = "ignore",
+    ranked_contour_config: RankedContourConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     local_images = pseudo3d["local_encoder_images"]
     frame_indices = pseudo3d["frame_indices"]
@@ -974,6 +1389,7 @@ def build_contour_point_annotations(
         enable_fallback=enable_contour_fallback,
         fallback_percentiles=fallback_percentiles or [],
         fallback_min_positive_points=fallback_min_positive_points,
+        ranked_contour_config=ranked_contour_config,
     )
 
     for order in sorted(results_by_order):
@@ -1048,6 +1464,39 @@ def build_contour_point_annotations(
                         result.get("fallback_attempts", 0)
                     ),
                     "annotation_reason": str(result["reason"]),
+                    "selected_contour_source": str(
+                        result.get(
+                            "selected_contour_source",
+                            "global" if result["valid"] else "none",
+                        )
+                    ),
+                    "contour_selection_score": np.float32(
+                        result.get("contour_selection_score", np.nan)
+                    ),
+                    "center_distance_norm": np.float32(
+                        result.get("center_distance_norm", np.nan)
+                    ),
+                    "selected_area_ratio": np.float32(
+                        result.get("selected_area_ratio", np.nan)
+                    ),
+                    "num_global_candidates": np.int32(
+                        result.get("num_global_candidates", 0)
+                    ),
+                    "num_local_candidates": np.int32(
+                        result.get("num_local_candidates", 0)
+                    ),
+                    "num_global_eligible_candidates": np.int32(
+                        result.get("num_global_eligible_candidates", 0)
+                    ),
+                    "num_local_eligible_candidates": np.int32(
+                        result.get("num_local_eligible_candidates", 0)
+                    ),
+                    "global_candidate_score": np.float32(
+                        result.get("global_candidate_score", np.nan)
+                    ),
+                    "local_candidate_score": np.float32(
+                        result.get("local_candidate_score", np.nan)
+                    ),
                     "object_name": str(voc.object_name),
                     "xml_path": str(voc.xml_path),
                 }
@@ -1099,6 +1548,16 @@ def build_contour_point_annotations(
                 "fallback_attempts": np.zeros((0,), dtype=np.int32),
                 "num_labeled_points_union": np.zeros((0,), dtype=np.int32),
                 "annotation_reason": np.asarray([], dtype=object),
+                "selected_contour_source": np.asarray([], dtype=object),
+                "contour_selection_score": np.zeros((0,), dtype=np.float32),
+                "center_distance_norm": np.zeros((0,), dtype=np.float32),
+                "selected_area_ratio": np.zeros((0,), dtype=np.float32),
+                "num_global_candidates": np.zeros((0,), dtype=np.int32),
+                "num_local_candidates": np.zeros((0,), dtype=np.int32),
+                "num_global_eligible_candidates": np.zeros((0,), dtype=np.int32),
+                "num_local_eligible_candidates": np.zeros((0,), dtype=np.int32),
+                "global_candidate_score": np.zeros((0,), dtype=np.float32),
+                "local_candidate_score": np.zeros((0,), dtype=np.float32),
                 "object_name": np.asarray([], dtype=object),
                 "xml_path": np.asarray([], dtype=object),
             },
@@ -1106,7 +1565,12 @@ def build_contour_point_annotations(
 
     frame_annotation: dict[str, np.ndarray] = {}
     for key in rows[0]:
-        if key in {"annotation_reason", "object_name", "xml_path"}:
+        if key in {
+            "annotation_reason",
+            "selected_contour_source",
+            "object_name",
+            "xml_path",
+        }:
             frame_annotation[key] = np.asarray([row[key] for row in rows], dtype=object)
         else:
             frame_annotation[key] = np.asarray([row[key] for row in rows])
@@ -1193,15 +1657,27 @@ def save_annotated_h5(
         ann_group = f.create_group("annotation")
         ann_group.create_dataset("point_label", data=point_label, compression="gzip")
         ann_group.create_dataset("valid_mask", data=valid_mask, compression="gzip")
-        ann_group.attrs["label_source"] = "voc_bbox_largest_contour_weak_label"
+        label_mode = str(meta.get("label_mode", "contour_in_bbox"))
+        ann_group.attrs["label_source"] = (
+            "voc_bbox_ranked_global_local_contour"
+            if label_mode == "bbox_ranked_global_local"
+            else "voc_bbox_largest_contour_weak_label"
+        )
         ann_group.attrs["label_definition"] = (
             "-1=ignore, 0=background, 1=femur_candidate"
         )
-        ann_group.attrs["weak_annotation_note"] = (
-            "VOC bbox is treated as a weak search region. Labels are assigned "
-            "from the largest filled contour after intensity/alpha binarization "
-            "inside the bbox; they are still weak annotations."
-        )
+        if label_mode == "bbox_ranked_global_local":
+            ann_group.attrs["weak_annotation_note"] = (
+                "VOC bbox is used to rank independent global/local contour "
+                "candidates. The best BBox-consistent filled contour is the "
+                "positive segmentation teacher regardless of source."
+            )
+        else:
+            ann_group.attrs["weak_annotation_note"] = (
+                "VOC bbox is treated as a weak search region. Labels are assigned "
+                "from the largest filled contour after intensity/alpha binarization "
+                "inside the bbox; they are still weak annotations."
+            )
 
         frame_group = f.create_group("frame_annotation")
         for key, value in frame_annotation.items():
@@ -1223,6 +1699,162 @@ def save_annotated_h5(
     print(f"Saved annotated point cloud h5: {output_h5}")
 
 
+def add_ranked_contour_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--ranked_local_window_size", type=int, default=31)
+    parser.add_argument("--ranked_local_percentile", type=float, default=75.0)
+    parser.add_argument("--ranked_local_min_contrast", type=float, default=12.0)
+    parser.add_argument("--ranked_local_cleanup_open_ksize", type=int, default=3)
+    parser.add_argument("--ranked_local_cleanup_close_ksize", type=int, default=5)
+    parser.add_argument(
+        "--ranked_local_cleanup_morph_shape",
+        choices=["rect", "ellipse", "cross"],
+        default="ellipse",
+    )
+    parser.add_argument(
+        "--ranked_local_cleanup_min_component_area",
+        type=int,
+        default=15,
+    )
+    parser.add_argument("--ranked_min_area_ratio", type=float, default=0.02)
+    parser.add_argument(
+        "--ranked_sufficient_area_ratio",
+        type=float,
+        default=0.10,
+    )
+    parser.add_argument(
+        "--ranked_max_center_distance_norm",
+        type=float,
+        default=0.50,
+    )
+    parser.add_argument("--ranked_center_weight", type=float, default=0.75)
+    parser.add_argument("--ranked_area_weight", type=float, default=0.25)
+
+
+def make_ranked_contour_config_from_args(
+    args: argparse.Namespace,
+) -> RankedContourConfig | None:
+    if args.label_mode != "bbox_ranked_global_local":
+        return None
+    config = RankedContourConfig(
+        local_window_size=args.ranked_local_window_size,
+        local_percentile=args.ranked_local_percentile,
+        local_min_contrast=args.ranked_local_min_contrast,
+        local_cleanup_open_ksize=args.ranked_local_cleanup_open_ksize,
+        local_cleanup_close_ksize=args.ranked_local_cleanup_close_ksize,
+        local_cleanup_morph_shape=args.ranked_local_cleanup_morph_shape,
+        local_cleanup_min_component_area=(
+            args.ranked_local_cleanup_min_component_area
+        ),
+        min_area_ratio=args.ranked_min_area_ratio,
+        sufficient_area_ratio=args.ranked_sufficient_area_ratio,
+        max_center_distance_norm=args.ranked_max_center_distance_norm,
+        center_weight=args.ranked_center_weight,
+        area_weight=args.ranked_area_weight,
+    )
+    config.validate()
+    return config
+
+
+def ranked_contour_metadata(
+    config: RankedContourConfig | None,
+) -> dict[str, Any]:
+    if config is None:
+        return {}
+    return {
+        "ranked_teacher_schema": "stage4_bbox_ranked_teacher_v2",
+        "ranked_local_window_size": config.local_window_size,
+        "ranked_local_percentile": config.local_percentile,
+        "ranked_local_min_contrast": config.local_min_contrast,
+        "ranked_local_cleanup_open_ksize": config.local_cleanup_open_ksize,
+        "ranked_local_cleanup_close_ksize": config.local_cleanup_close_ksize,
+        "ranked_local_cleanup_morph_shape": config.local_cleanup_morph_shape,
+        "ranked_local_cleanup_min_component_area": (
+            config.local_cleanup_min_component_area
+        ),
+        "ranked_min_area_ratio": config.min_area_ratio,
+        "ranked_sufficient_area_ratio": config.sufficient_area_ratio,
+        "ranked_max_center_distance_norm": config.max_center_distance_norm,
+        "ranked_center_weight": config.center_weight,
+        "ranked_area_weight": config.area_weight,
+    }
+
+
+def ranked_contour_config_from_metadata(
+    attrs: dict[str, Any],
+) -> RankedContourConfig | None:
+    def text_value(key: str, default: str) -> str:
+        value = attrs.get(key, default)
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        if isinstance(value, np.bytes_):
+            return value.tobytes().decode("utf-8")
+        return str(value)
+
+    label_mode = attrs.get("label_mode", "contour_in_bbox")
+    if isinstance(label_mode, (bytes, np.bytes_)):
+        label_mode = bytes(label_mode).decode("utf-8")
+    if str(label_mode) != "bbox_ranked_global_local":
+        return None
+
+    defaults = RankedContourConfig()
+    config = RankedContourConfig(
+        local_window_size=int(
+            attrs.get("ranked_local_window_size", defaults.local_window_size)
+        ),
+        local_percentile=float(
+            attrs.get("ranked_local_percentile", defaults.local_percentile)
+        ),
+        local_min_contrast=float(
+            attrs.get("ranked_local_min_contrast", defaults.local_min_contrast)
+        ),
+        local_cleanup_open_ksize=int(
+            attrs.get(
+                "ranked_local_cleanup_open_ksize",
+                defaults.local_cleanup_open_ksize,
+            )
+        ),
+        local_cleanup_close_ksize=int(
+            attrs.get(
+                "ranked_local_cleanup_close_ksize",
+                defaults.local_cleanup_close_ksize,
+            )
+        ),
+        local_cleanup_morph_shape=text_value(
+            "ranked_local_cleanup_morph_shape",
+            defaults.local_cleanup_morph_shape,
+        ),
+        local_cleanup_min_component_area=int(
+            attrs.get(
+                "ranked_local_cleanup_min_component_area",
+                defaults.local_cleanup_min_component_area,
+            )
+        ),
+        min_area_ratio=float(
+            attrs.get("ranked_min_area_ratio", defaults.min_area_ratio)
+        ),
+        sufficient_area_ratio=float(
+            attrs.get(
+                "ranked_sufficient_area_ratio",
+                defaults.sufficient_area_ratio,
+            )
+        ),
+        max_center_distance_norm=float(
+            attrs.get(
+                "ranked_max_center_distance_norm",
+                defaults.max_center_distance_norm,
+            )
+        ),
+        center_weight=float(
+            attrs.get("ranked_center_weight", defaults.center_weight)
+        ),
+        area_weight=float(
+            attrs.get("ranked_area_weight", defaults.area_weight)
+        ),
+    )
+    config.validate()
+    return config
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1241,7 +1873,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--label_mode",
         type=str,
         default="contour_in_bbox",
-        choices=["contour_in_bbox"],
+        choices=["contour_in_bbox", "bbox_ranked_global_local"],
     )
     parser.add_argument(
         "--endpoint_mode",
@@ -1274,6 +1906,24 @@ def build_parser() -> argparse.ArgumentParser:
             "frame_index is the original video frame index saved in pseudo3d h5; "
             "frame_order is the sampled sequence order. Use both only for legacy "
             "ambiguous datasets."
+        ),
+    )
+    parser.add_argument(
+        "--xml_annotation_dir_name",
+        type=str,
+        default="annotations_renamed",
+        help=(
+            "Preferred per-video XML directory. Used exclusively when "
+            "--strict_xml_annotation_dir is enabled."
+        ),
+    )
+    parser.add_argument(
+        "--strict_xml_annotation_dir",
+        action="store_true",
+        help=(
+            "Search only <voc_xml_root>/<video_name>/"
+            "<xml_annotation_dir_name>; do not fall back to annotations or "
+            "other sibling directories."
         ),
     )
     parser.add_argument(
@@ -1354,6 +2004,7 @@ def build_parser() -> argparse.ArgumentParser:
             "extraction may miss true femur pixels."
         ),
     )
+    add_ranked_contour_arguments(parser)
     return parser
 
 
@@ -1406,6 +2057,8 @@ def main() -> None:
         frame_indices=pseudo3d["frame_indices"],
         xml_frame_number_offsets=_parse_offsets(args.xml_frame_number_offsets),
         xml_frame_id_source=args.xml_frame_id_source,
+        xml_annotation_dir_name=args.xml_annotation_dir_name,
+        strict_xml_annotation_dir=args.strict_xml_annotation_dir,
     )
     local_bboxes = {
         order: [
@@ -1421,6 +2074,7 @@ def main() -> None:
     }
 
     texture_config = make_contour_texture_config_from_args(args)
+    ranked_config = make_ranked_contour_config_from_args(args)
     point_label, valid_mask, frame_annotation = build_contour_point_annotations(
         point_cloud=point_cloud,
         pseudo3d=pseudo3d,
@@ -1434,6 +2088,7 @@ def main() -> None:
         fallback_percentiles=fallback_percentiles,
         fallback_min_positive_points=args.fallback_min_positive_points,
         bbox_inside_non_contour_label=args.bbox_inside_non_contour_label,
+        ranked_contour_config=ranked_config,
     )
     measurement = make_empty_measurement()
 
@@ -1447,6 +2102,12 @@ def main() -> None:
     )
     num_labeled_points = int(np.sum(point_label == LABEL_FEMUR_CANDIDATE))
     num_fallback_used = int(frame_annotation["fallback_used"].astype(bool).sum())
+    selected_sources = frame_annotation["selected_contour_source"].astype(str)
+    num_selected_global = int(np.count_nonzero(selected_sources == "global"))
+    num_selected_local = int(
+        np.count_nonzero(selected_sources == "local_percentile")
+    )
+    num_selected_shared = int(np.count_nonzero(selected_sources == "shared"))
     source_label_stats = summarize_labels_by_source(
         point_cloud=point_cloud,
         point_label=point_label,
@@ -1482,6 +2143,8 @@ def main() -> None:
         "no_bbox_label": int(args.no_bbox_label),
         "xml_frame_id_source": args.xml_frame_id_source,
         "xml_frame_number_offsets": args.xml_frame_number_offsets,
+        "xml_annotation_dir_name": args.xml_annotation_dir_name,
+        "strict_xml_annotation_dir": bool(args.strict_xml_annotation_dir),
         "contour_preset": args.contour_preset,
         "contour_threshold_mode": texture_config.threshold_mode,
         "contour_percentile": float(texture_config.percentile),
@@ -1507,10 +2170,18 @@ def main() -> None:
         "num_valid_contour_frames": num_valid_contour_frames,
         "num_fallback_used": num_fallback_used,
         "num_labeled_points": num_labeled_points,
+        "num_selected_global_contours": num_selected_global,
+        "num_selected_local_contours": num_selected_local,
+        "num_selected_shared_contours": num_selected_shared,
         **source_label_stats,
+        **ranked_contour_metadata(ranked_config),
         "label_source": (
-            "VOC BBox weak annotation; largest filled contour in bbox after "
-            "binarization is projected to point labels"
+            "VOC BBox-ranked independent global/local filled contour teacher"
+            if ranked_config is not None
+            else (
+                "VOC BBox weak annotation; largest filled contour in bbox after "
+                "binarization is projected to point labels"
+            )
         ),
     }
 
@@ -1522,6 +2193,9 @@ def main() -> None:
     print(f"  num_valid_contour_frames: {num_valid_contour_frames}")
     print(f"  num_fallback_used       : {num_fallback_used}")
     print(f"  num_labeled_points      : {num_labeled_points}")
+    print(f"  selected global contours: {num_selected_global}")
+    print(f"  selected local contours : {num_selected_local}")
+    print(f"  selected shared contours: {num_selected_shared}")
     print(
         "  num_context_only_labeled: "
         f"{source_label_stats['num_context_only_femur_candidate_points']}"

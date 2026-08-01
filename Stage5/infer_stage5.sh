@@ -38,25 +38,26 @@ PY
 export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/PointNeXt/openpoints:${PYTHONPATH:-}"
 
-DATE="260711"
-EX_DATE="260714"
+DATE="${DATE:-260711}"
+EX_DATE="${EX_DATE:-260714}"
 
 # ------------------------------------------------------------
 # input path info
 # ------------------------------------------------------------
-DATASET_ROOT="/mnt/data/3d_projects/pseudo3d_dataset"
+DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
 
 # Directory created by:
 #   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
-INPUT_DIR="${DATASET_ROOT}/${DATE}"
+INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/${DATE}}"
 
-MODE="foreground"
-H5_PATTERN="*_annotated_${MODE}.h5"
+MODE="${MODE:-foreground}"
+H5_PATTERN="${H5_PATTERN:-*_annotated_${MODE}.h5}"
+INPUT_FILENAME_SUFFIX="${INPUT_FILENAME_SUFFIX:-_pointcloud_annotated_${MODE}.h5}"
 
 # Optional single-video/file filter. Leave empty to process all matched H5s.
 # Example:
 #   VIDEO="20250627_104104_9320"
-VIDEO="20250626_124212_7300"
+VIDEO="${VIDEO-20250626_124212_7300}"
 
 # Optional quick subset. 0 means all files.
 MAX_FILES=0
@@ -102,7 +103,7 @@ FEATURES_OVERRIDE=""
 SAVE_LOGITS=1
 
 if [[ -n "${VIDEO}" ]]; then
-  INPUT_PATTERN="${VIDEO}_pointcloud_annotated_${MODE}.h5"
+  INPUT_PATTERN="${VIDEO}${INPUT_FILENAME_SUFFIX}"
 else
   INPUT_PATTERN="${H5_PATTERN}"
 fi
@@ -151,7 +152,8 @@ for input_h5 in "${INPUT_H5_FILES[@]}"; do
   fi
 
   input_name="$(basename "${input_h5}")"
-  video_name="${input_name%_pointcloud_annotated_${MODE}.h5}"
+  video_name="${input_name%${INPUT_FILENAME_SUFFIX}}"
+  video_name="${video_name%_pointcloud_annotated_${MODE}.h5}"
   video_name="${video_name%_annotated_${MODE}.h5}"
 
   output_h5="${PRED_ROOT}/${video_name}_stage5_pred_${MODEL_NAME}.h5"

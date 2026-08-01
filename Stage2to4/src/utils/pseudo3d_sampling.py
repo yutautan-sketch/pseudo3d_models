@@ -7,7 +7,11 @@ import cv2
 import numpy as np
 from scipy.ndimage import median_filter, percentile_filter
 
-from src.utils.alpha_texture_processing import image_to_uint8_gray
+from src.utils.alpha_texture_processing import (
+    apply_morphology,
+    image_to_uint8_gray,
+    remove_small_components,
+)
 
 
 SamplingMode = Literal["legacy", "combined_v2"]
@@ -54,6 +58,12 @@ class PointSamplingConfig:
     tophat_min_response: float = 2.0
     tophat_morph_shape: MorphShape = "ellipse"
 
+    enable_evidence_cleanup: bool = False
+    evidence_open_ksize: int = 3
+    evidence_close_ksize: int = 5
+    evidence_morph_shape: MorphShape = "ellipse"
+    evidence_min_component_area: int = 100
+
     local_source_confidence: float = 0.7
     tophat_source_confidence: float = 0.7
     context_source_confidence: float = 0.0
@@ -77,6 +87,11 @@ class PointSamplingConfig:
             tophat_percentile=85.0,
             tophat_min_response=2.0,
             tophat_morph_shape="ellipse",
+            enable_evidence_cleanup=True,
+            evidence_open_ksize=3,
+            evidence_close_ksize=5,
+            evidence_morph_shape="ellipse",
+            evidence_min_component_area=100,
         )
 
 
@@ -277,6 +292,65 @@ def build_tophat_evidence(
     return result
 
 
+def cleanup_evidence_mask(
+    mask: np.ndarray,
+    *,
+    open_ksize: int = 3,
+    close_ksize: int = 5,
+    morph_shape: MorphShape = "ellipse",
+    min_component_area: int = 100,
+    return_debug_maps: bool = False,
+) -> dict[str, np.ndarray]:
+    """
+    Apply the global-foreground cleanup sequence to an evidence mask.
+
+    Local-percentile and top-hat masks call this independently so a noisy
+    source cannot be retained merely because it overlaps another source.
+    """
+    raw_mask = np.asarray(mask, dtype=bool)
+    _validate_2d_shape(raw_mask.shape)
+
+    open_ksize = int(open_ksize)
+    close_ksize = int(close_ksize)
+    min_component_area = int(min_component_area)
+    if open_ksize < 0:
+        raise ValueError(
+            f"evidence_open_ksize must be >= 0, got {open_ksize}"
+        )
+    if close_ksize < 0:
+        raise ValueError(
+            f"evidence_close_ksize must be >= 0, got {close_ksize}"
+        )
+    if morph_shape not in {"rect", "ellipse", "cross"}:
+        raise ValueError(f"Unknown evidence_morph_shape: {morph_shape}")
+    if min_component_area < 0:
+        raise ValueError(
+            "evidence_min_component_area must be >= 0, "
+            f"got {min_component_area}"
+        )
+
+    morphology_mask = apply_morphology(
+        raw_mask,
+        open_ksize=open_ksize,
+        close_ksize=close_ksize,
+        morph_shape=morph_shape,
+    ).astype(bool)
+    cleaned_mask = remove_small_components(
+        morphology_mask,
+        min_area=min_component_area,
+    ).astype(bool)
+
+    result: dict[str, np.ndarray] = {"mask": cleaned_mask}
+    if return_debug_maps:
+        result.update(
+            {
+                "raw_mask": raw_mask.copy(),
+                "morphology_mask": morphology_mask,
+            }
+        )
+    return result
+
+
 def build_sampling_source_flags(
     image: np.ndarray,
     global_mask: np.ndarray | None,
@@ -333,6 +407,23 @@ def build_sampling_source_flags(
                 return_debug_maps=return_debug_maps,
             )
             local_mask = local_result["mask"].astype(bool)
+            if config.enable_evidence_cleanup:
+                local_cleanup = cleanup_evidence_mask(
+                    local_mask,
+                    open_ksize=config.evidence_open_ksize,
+                    close_ksize=config.evidence_close_ksize,
+                    morph_shape=config.evidence_morph_shape,
+                    min_component_area=config.evidence_min_component_area,
+                    return_debug_maps=return_debug_maps,
+                )
+                local_mask = local_cleanup["mask"].astype(bool)
+                if return_debug_maps:
+                    debug_maps["local_raw_evidence_mask"] = local_cleanup[
+                        "raw_mask"
+                    ]
+                    debug_maps["local_morphology_mask"] = local_cleanup[
+                        "morphology_mask"
+                    ]
             source_masks["local_percentile_mask"] = local_mask
             source_flags[local_mask] |= SOURCE_LOCAL_PERCENTILE
             if return_debug_maps:
@@ -350,6 +441,23 @@ def build_sampling_source_flags(
                 return_debug_maps=return_debug_maps,
             )
             tophat_mask = tophat_result["mask"].astype(bool)
+            if config.enable_evidence_cleanup:
+                tophat_cleanup = cleanup_evidence_mask(
+                    tophat_mask,
+                    open_ksize=config.evidence_open_ksize,
+                    close_ksize=config.evidence_close_ksize,
+                    morph_shape=config.evidence_morph_shape,
+                    min_component_area=config.evidence_min_component_area,
+                    return_debug_maps=return_debug_maps,
+                )
+                tophat_mask = tophat_cleanup["mask"].astype(bool)
+                if return_debug_maps:
+                    debug_maps["tophat_raw_evidence_mask"] = tophat_cleanup[
+                        "raw_mask"
+                    ]
+                    debug_maps["tophat_morphology_mask"] = tophat_cleanup[
+                        "morphology_mask"
+                    ]
             source_masks["tophat_mask"] = tophat_mask
             source_flags[tophat_mask] |= SOURCE_TOPHAT
             if return_debug_maps:

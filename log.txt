@@ -1,0 +1,79 @@
+=== CONFIG SUMMARY ===
+config_name=current_combined_v2 | teacher_valid_bbox_count=28 | teacher_invalid_bbox_count=86 | zero_positive_bbox_count=0 | positive_bbox_recall_at_1=1.0 | positive_bbox_recall_at_16=
+1.0 | positive_pixel_recall_p05=1.0 | positive_pixel_recall_min=0.9961685823754789 | points_per_frame_mean=14480.792307692307 | legacy_point_count_multiplier=5.822756502454369 | select
+ed_ignore_ratio=0.47008371301400315 | useful_point_ratio=0.5299162869859968 | sampling_time_per_frame_seconds=0.8941917228799027
+config_name=without_context | teacher_valid_bbox_count=28 | teacher_invalid_bbox_count=86 | zero_positive_bbox_count=0 | positive_bbox_recall_at_1=1.0 | positive_bbox_recall_at_16=1.0 
+| positive_pixel_recall_p05=1.0 | positive_pixel_recall_min=0.9961685823754789 | points_per_frame_mean=11347.723076923077 | legacy_point_count_multiplier=4.562942892227367 | selected_i
+gnore_ratio=0.4723095924360292 | useful_point_ratio=0.5276904075639708 | sampling_time_per_frame_seconds=0.8935699374558261
+config_name=without_local | teacher_valid_bbox_count=28 | teacher_invalid_bbox_count=86 | zero_positive_bbox_count=0 | positive_bbox_recall_at_1=1.0 | positive_bbox_recall_at_16=1.0 | 
+positive_pixel_recall_p05=1.0 | positive_pixel_recall_min=0.9961685823754789 | points_per_frame_mean=12255.16923076923 | legacy_point_count_multiplier=4.9278288653607625 | selected_ign
+ore_ratio=0.47383521678764123 | useful_point_ratio=0.5261647832123587 | sampling_time_per_frame_seconds=0.002652848676706736
+config_name=without_tophat | teacher_valid_bbox_count=28 | teacher_invalid_bbox_count=86 | zero_positive_bbox_count=0 | positive_bbox_recall_at_1=1.0 | positive_bbox_recall_at_16=1.0 |
+ positive_pixel_recall_p05=1.0 | positive_pixel_recall_min=0.9885057471264368 | points_per_frame_mean=11641.13076923077 | legacy_point_count_multiplier=4.680922731448403 | selected_ign
+ore_ratio=0.47020544528122105 | useful_point_ratio=0.529794554718779 | sampling_time_per_frame_seconds=0.8909857179611348
+config_name=without_evidence_cleanup | teacher_valid_bbox_count=28 | teacher_invalid_bbox_count=86 | zero_positive_bbox_count=0 | positive_bbox_recall_at_1=1.0 | positive_bbox_recall_a
+t_16=1.0 | positive_pixel_recall_p05=1.0 | positive_pixel_recall_min=0.9961685823754789 | points_per_frame_mean=16400.253846153846 | legacy_point_count_multiplier=6.5945759524406045 | 
+selected_ignore_ratio=0.4728022502465956 | useful_point_ratio=0.5271977497534044 | sampling_time_per_frame_seconds=0.8931276205568932
+
+=== GLOBAL SOURCE ABLATION ===
+config_name=current_combined_v2 | ablation=full | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_points=1
+882503 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=current_combined_v2 | ablation=without_global | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selecte
+d_points=1749447 | marginal_rescued_bbox_count=0 | unique_added_points=133056 | marginal_rescued_per_1000_added_points=0.0
+config_name=current_combined_v2 | ablation=without_local | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected
+_points=1593172 | marginal_rescued_bbox_count=0 | unique_added_points=289331 | marginal_rescued_per_1000_added_points=0.0
+config_name=current_combined_v2 | ablation=without_tophat | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9992488733099649 | total_selecte
+d_points=1513347 | marginal_rescued_bbox_count=0 | unique_added_points=369156 | marginal_rescued_per_1000_added_points=0.0
+config_name=current_combined_v2 | ablation=without_context | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_select
+ed_points=1475204 | marginal_rescued_bbox_count=0 | unique_added_points=407299 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_context | ablation=full | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_points=14752
+04 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_context | ablation=without_global | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_po
+ints=1298428 | marginal_rescued_bbox_count=0 | unique_added_points=176776 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_context | ablation=without_local | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_poi
+nts=1175097 | marginal_rescued_bbox_count=0 | unique_added_points=300107 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_context | ablation=without_tophat | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9992488733099649 | total_selected_po
+ints=1087589 | marginal_rescued_bbox_count=0 | unique_added_points=387615 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_context | ablation=without_context | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_p
+oints=1475204 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_local | ablation=full | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_points=1593172
+ | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_local | ablation=without_global | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_poin
+ts=1428366 | marginal_rescued_bbox_count=0 | unique_added_points=164806 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_local | ablation=without_local | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_point
+s=1593172 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_local | ablation=without_tophat | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.25012518778167253 | total_selected_poi
+nts=775267 | marginal_rescued_bbox_count=0 | unique_added_points=817905 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_local | ablation=without_context | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_poi
+nts=1175097 | marginal_rescued_bbox_count=0 | unique_added_points=418075 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_tophat | ablation=full | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9992488733099649 | total_selected_points=151334
+7 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_tophat | ablation=without_global | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.99899849774662 | total_selected_point
+s=1357217 | marginal_rescued_bbox_count=0 | unique_added_points=156130 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_tophat | ablation=without_local | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.25012518778167253 | total_selected_poi
+nts=775267 | marginal_rescued_bbox_count=0 | unique_added_points=738080 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_tophat | ablation=without_tophat | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9992488733099649 | total_selected_poi
+nts=1513347 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_tophat | ablation=without_context | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9992488733099649 | total_selected_po
+ints=1087589 | marginal_rescued_bbox_count=0 | unique_added_points=425758 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_evidence_cleanup | ablation=full | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_selected_poi
+nts=2132033 | marginal_rescued_bbox_count=0 | unique_added_points=0 | marginal_rescued_per_1000_added_points=nan
+config_name=without_evidence_cleanup | ablation=without_global | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_se
+lected_points=2006632 | marginal_rescued_bbox_count=0 | unique_added_points=125401 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_evidence_cleanup | ablation=without_local | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_sel
+ected_points=1765588 | marginal_rescued_bbox_count=0 | unique_added_points=366445 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_evidence_cleanup | ablation=without_tophat | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.99899849774662 | total_sele
+cted_points=1785608 | marginal_rescued_bbox_count=0 | unique_added_points=346425 | marginal_rescued_per_1000_added_points=0.0
+config_name=without_evidence_cleanup | ablation=without_context | zero_positive_bbox_count=0 | positive_bbox_recall_at_16=1.0 | positive_pixel_recall_micro=0.9997496244366549 | total_s
+elected_points=1739390 | marginal_rescued_bbox_count=0 | unique_added_points=392643 | marginal_rescued_per_1000_added_points=0.0
+
+=== TEACHER QUALITY ===
+{'teacher_invalid': 86, 'teacher_valid': 28}
+
+=== RUNTIME ===
+num_videos=3
+num_configs=5
+teacher_generation_seconds=0.1329174218699336
+total_runtime_seconds=465.126256885007
+failure_rows=0
+pareto_configs=3

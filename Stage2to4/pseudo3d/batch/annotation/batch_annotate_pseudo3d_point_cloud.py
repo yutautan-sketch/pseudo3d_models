@@ -18,12 +18,15 @@ from pseudo3d.annotation.annotate_pseudo3d_point_cloud import (
     LABEL_FEMUR_CANDIDATE,
     LABEL_IGNORE,
     LABEL_BACKGROUND,
+    add_ranked_contour_arguments,
     build_contour_point_annotations,
     load_point_cloud_h5,
     load_pseudo3d_h5,
     load_voc_bboxes,
     make_contour_texture_config_from_args,
     make_empty_measurement,
+    make_ranked_contour_config_from_args,
+    ranked_contour_metadata,
     save_annotated_h5,
     summarize_labels_by_source,
     xml_bbox_to_local,
@@ -256,6 +259,8 @@ def annotate_one(
         frame_indices=pseudo3d["frame_indices"],
         xml_frame_number_offsets=_parse_offsets(args.xml_frame_number_offsets),
         xml_frame_id_source=args.xml_frame_id_source,
+        xml_annotation_dir_name=args.xml_annotation_dir_name,
+        strict_xml_annotation_dir=args.strict_xml_annotation_dir,
     )
     local_bboxes = {
         order: [
@@ -271,6 +276,7 @@ def annotate_one(
     }
 
     texture_config = make_contour_texture_config_from_args(args)
+    ranked_config = make_ranked_contour_config_from_args(args)
     point_label, valid_mask, frame_annotation = build_contour_point_annotations(
         point_cloud=point_cloud,
         pseudo3d=pseudo3d,
@@ -284,6 +290,7 @@ def annotate_one(
         fallback_percentiles=fallback_percentiles,
         fallback_min_positive_points=args.fallback_min_positive_points,
         bbox_inside_non_contour_label=args.bbox_inside_non_contour_label,
+        ranked_contour_config=ranked_config,
     )
     measurement = make_empty_measurement()
 
@@ -297,6 +304,12 @@ def annotate_one(
     )
     num_labeled_points = int(np.sum(point_label == LABEL_FEMUR_CANDIDATE))
     num_fallback_used = int(frame_annotation["fallback_used"].astype(bool).sum())
+    selected_sources = frame_annotation["selected_contour_source"].astype(str)
+    num_selected_global = int(np.count_nonzero(selected_sources == "global"))
+    num_selected_local = int(
+        np.count_nonzero(selected_sources == "local_percentile")
+    )
+    num_selected_shared = int(np.count_nonzero(selected_sources == "shared"))
     source_label_stats = summarize_labels_by_source(
         point_cloud=point_cloud,
         point_label=point_label,
@@ -333,6 +346,8 @@ def annotate_one(
         "no_bbox_label": int(args.no_bbox_label),
         "xml_frame_id_source": args.xml_frame_id_source,
         "xml_frame_number_offsets": args.xml_frame_number_offsets,
+        "xml_annotation_dir_name": args.xml_annotation_dir_name,
+        "strict_xml_annotation_dir": bool(args.strict_xml_annotation_dir),
         "contour_preset": args.contour_preset,
         "contour_threshold_mode": texture_config.threshold_mode,
         "contour_percentile": float(texture_config.percentile),
@@ -358,11 +373,19 @@ def annotate_one(
         "num_valid_contour_frames": num_valid_contour_frames,
         "num_fallback_used": num_fallback_used,
         "num_labeled_points": num_labeled_points,
+        "num_selected_global_contours": num_selected_global,
+        "num_selected_local_contours": num_selected_local,
+        "num_selected_shared_contours": num_selected_shared,
         **source_label_stats,
+        **ranked_contour_metadata(ranked_config),
         "batch_source": "batch_annotate_pseudo3d_point_cloud.py",
         "label_source": (
-            "VOC BBox weak annotation; largest filled contour in bbox after "
-            "binarization is projected to point labels"
+            "VOC BBox-ranked independent global/local filled contour teacher"
+            if ranked_config is not None
+            else (
+                "VOC BBox weak annotation; largest filled contour in bbox after "
+                "binarization is projected to point labels"
+            )
         ),
     }
 
@@ -389,10 +412,15 @@ def annotate_one(
         "num_valid_contour_frames": num_valid_contour_frames,
         "num_fallback_used": num_fallback_used,
         "num_labeled_points": num_labeled_points,
+        "num_selected_global_contours": num_selected_global,
+        "num_selected_local_contours": num_selected_local,
+        "num_selected_shared_contours": num_selected_shared,
         "point_cloud_sampling_mode": _attr_to_str(
             point_cloud_attrs.get("sampling_mode"),
             "legacy",
         ),
+        "xml_annotation_dir_name": args.xml_annotation_dir_name,
+        "strict_xml_annotation_dir": bool(args.strict_xml_annotation_dir),
         "source_flags_inferred": bool(
             point_cloud_attrs.get("source_flags_inferred", False)
         ),
@@ -430,7 +458,12 @@ def write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "num_valid_contour_frames",
         "num_fallback_used",
         "num_labeled_points",
+        "num_selected_global_contours",
+        "num_selected_local_contours",
+        "num_selected_shared_contours",
         "point_cloud_sampling_mode",
+        "xml_annotation_dir_name",
+        "strict_xml_annotation_dir",
         "source_flags_inferred",
         "num_global_femur_candidate_points",
         "num_local_percentile_femur_candidate_points",
@@ -495,7 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--label_mode",
         type=str,
         default="contour_in_bbox",
-        choices=["contour_in_bbox"],
+        choices=["contour_in_bbox", "bbox_ranked_global_local"],
     )
     parser.add_argument("--bbox_ignore_margin", type=float, default=0.0)
     parser.add_argument(
@@ -510,6 +543,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default="frame_index",
         choices=["frame_index", "frame_order", "both"],
+    )
+    parser.add_argument(
+        "--xml_annotation_dir_name",
+        type=str,
+        default="annotations_renamed",
+    )
+    parser.add_argument(
+        "--strict_xml_annotation_dir",
+        action="store_true",
+        help=(
+            "Use only the named per-video XML directory and disable fallback "
+            "to annotations and other sibling directories."
+        ),
     )
     parser.add_argument(
         "--contour_preset",
@@ -557,6 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="ignore",
         choices=["ignore", "background"],
     )
+    add_ranked_contour_arguments(parser)
     return parser
 
 
@@ -576,6 +623,7 @@ def main() -> None:
     print(f"VOC XML root           : {args.voc_xml_root}")
     print(f"Geometry key           : {args.geometry_key}")
     print(f"Contour preset         : {args.contour_preset}")
+    print(f"Label mode             : {args.label_mode}")
 
     rows: list[dict[str, Any]] = []
     processed = 0
@@ -635,6 +683,10 @@ def main() -> None:
                 f"bbox={result['num_voc_bboxes']}, "
                 f"valid_contours={result['num_valid_contours']}, "
                 f"labeled_points={result['num_labeled_points']}, "
+                "selected(global/local/shared)="
+                f"{result['num_selected_global_contours']}/"
+                f"{result['num_selected_local_contours']}/"
+                f"{result['num_selected_shared_contours']}, "
                 "context_only_labeled="
                 f"{result['num_context_only_femur_candidate_points']}"
             )

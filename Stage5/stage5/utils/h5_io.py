@@ -21,6 +21,26 @@ ANNOTATION_REQUIRED_KEYS = (
     "valid_mask",
 )
 
+OPTIONAL_POINT_LEVEL_KEYS = (
+    "frame_index",
+    "source_type",
+    "source_flags",
+    "sampling_confidence",
+)
+
+OPTIONAL_FRAME_LEVEL_KEYS = (
+    "per_frame_counts",
+    "per_frame_global_counts",
+    "per_frame_local_percentile_counts",
+    "per_frame_tophat_counts",
+    "per_frame_context_grid_counts",
+    "per_frame_context_only_counts",
+    "per_frame_evidence_counts",
+    "per_frame_overlap_counts",
+)
+
+OPTIONAL_POINT_CLOUD_KEYS = OPTIONAL_POINT_LEVEL_KEYS + OPTIONAL_FRAME_LEVEL_KEYS
+
 
 def read_path_list(path: str | Path) -> list[Path]:
     """Read newline-delimited paths, preserving absolute external data paths."""
@@ -76,8 +96,7 @@ def load_stage5_pointcloud_h5(path: str | Path) -> dict[str, Any]:
             "annotation_attrs": dict(annotation.attrs),
         }
 
-        optional_point_keys = ("frame_index", "source_type", "per_frame_counts")
-        for key in optional_point_keys:
+        for key in OPTIONAL_POINT_CLOUD_KEYS:
             if key in point_cloud:
                 data[key] = point_cloud[key][:]
 
@@ -97,6 +116,12 @@ def load_stage5_pointcloud_h5(path: str | Path) -> dict[str, Any]:
             f"Dataset length mismatch in {path}: point_cloud/points has {num_points} "
             f"rows but pixel_xy has {data['pixel_xy'].shape[0]}"
         )
+    for key in OPTIONAL_POINT_LEVEL_KEYS:
+        if key in data and data[key].shape[0] != num_points:
+            raise ValueError(
+                f"Dataset length mismatch in {path}: point_cloud/points has "
+                f"{num_points} rows but {key} has {data[key].shape[0]}"
+            )
 
     return data
 
@@ -125,8 +150,7 @@ def load_pointcloud_for_inference(path: str | Path) -> dict[str, Any]:
             "file_attrs": dict(f.attrs),
         }
 
-        optional_point_keys = ("frame_index", "source_type", "per_frame_counts")
-        for key in optional_point_keys:
+        for key in OPTIONAL_POINT_CLOUD_KEYS:
             if key in point_cloud:
                 data[key] = point_cloud[key][:]
 
@@ -149,6 +173,12 @@ def load_pointcloud_for_inference(path: str | Path) -> dict[str, Any]:
             f"Dataset length mismatch in {path}: point_cloud/points has {num_points} "
             f"rows but pixel_xy has {data['pixel_xy'].shape[0]}"
         )
+    for key in OPTIONAL_POINT_LEVEL_KEYS:
+        if key in data and data[key].shape[0] != num_points:
+            raise ValueError(
+                f"Dataset length mismatch in {path}: point_cloud/points has "
+                f"{num_points} rows but {key} has {data[key].shape[0]}"
+            )
 
     return data
 

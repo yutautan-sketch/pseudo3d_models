@@ -1,0 +1,4 @@
+video_name,pseudo3d_h5,voc_xml_root,split,enabled,notes
+20250627_092449_3280,/mnt/data/3d_projects/pseudo3d_dataset/stage4_rebuild/260722/pseudo3d_outputs/20250627_092449_3280_ts448_oym96_corr.h5,/mnt/data/Data_hbl/predirectory_for_coco_annotation_leg/260630/260630_pseudo3d,smoke,true,Phase 7 zero legacy BBox points in 19 of 19 valid BBox frames
+20250624_132811_8530,/mnt/data/3d_projects/pseudo3d_dataset/stage4_rebuild/260722/pseudo3d_outputs/20250624_132811_8530_ts448_oym96_corr.h5,/mnt/data/Data_hbl/predirectory_for_coco_annotation_leg/260630/260630_pseudo3d,smoke,true,Phase 7 zero legacy BBox points in 16 of 16 valid BBox frames
+20250610_155045_7420,/mnt/data/3d_projects/pseudo3d_dataset/stage4_rebuild/260722/pseudo3d_outputs/20250610_155045_7420_ts448_oym96_corr.h5,/mnt/data/Data_hbl/predirectory_for_coco_annotation_leg/260630/260630_pseudo3d,smoke,true,Phase 7 mixed case with 16 zero legacy BBox frames and 26 preexisting positive BBox frames

@@ -54,6 +54,8 @@ python pseudo3d/export/export_annotation_mask_visualization.py \
   --texture_dir_name "annotation_mask_textures_${POINT_CLOUD_TAG}" \
   --xml_frame_id_source frame_index \
   --xml_frame_number_offsets 1 \
+  --xml_annotation_dir_name annotations_renamed \
+  --strict_xml_annotation_dir \
   --contour_preset "${DETAIL}" \
   --contour_percentile 85 \
   --contour_min_component_area 100 \

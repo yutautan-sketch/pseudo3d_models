@@ -37,20 +37,22 @@ PY
 )"
 export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
 
-DATE="260711"
-EX_DATE="260714"
+DATE="${DATE:-260711}"
+EX_DATE="${EX_DATE:-260801}"
 
 # ------------------------------------------------------------
 # input path info
 # ------------------------------------------------------------
-DATASET_ROOT="/mnt/data/3d_projects/pseudo3d_dataset"
+DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
 
-# Directory created by:
-#   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
-INPUT_DIR="${DATASET_ROOT}/${DATE}"
+STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
+STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v2}"
+STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
+INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
 
-MODE="foreground"
-H5_PATTERN="*_annotated_${MODE}.h5"
+MODE="${MODE:-foreground}"
+H5_PATTERN="${H5_PATTERN:-*_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
+EXPECTED_INPUT_FILES="${EXPECTED_INPUT_FILES:-182}"
 
 # Optional quick subset. 0 means all files.
 MAX_TRAIN_FILES=0
@@ -63,7 +65,7 @@ MAX_VAL_FILES=0
 # output path info
 # ------------------------------------------------------------
 OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
-PREFIX="w20_s10_ce_smooth00_auto_weight_lr1e3_ep200"
+PREFIX="w20_s10_bboxrankv2_glocal_ce_smooth00_auto_weight_lr1e3_ep200"
 EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 
@@ -140,6 +142,50 @@ if [[ "${num_inputs}" -eq 0 ]]; then
   echo "  H5_PATTERN=${H5_PATTERN}" >&2
   exit 1
 fi
+if [[ "${num_inputs}" -ne "${EXPECTED_INPUT_FILES}" ]]; then
+  echo "Stage 5 requires the complete ${DATE} BBox-ranked dataset:" >&2
+  echo "  expected files=${EXPECTED_INPUT_FILES}" >&2
+  echo "  matched files=${num_inputs}" >&2
+  echo "  INPUT_DIR=${INPUT_DIR}" >&2
+  echo "  H5_PATTERN=${H5_PATTERN}" >&2
+  exit 1
+fi
+
+"${PYTHON}" - "${INPUT_DIR}" "${H5_PATTERN}" "${EXPECTED_INPUT_FILES}" <<'PY'
+import sys
+from pathlib import Path
+
+import h5py
+
+input_dir = Path(sys.argv[1])
+pattern = sys.argv[2]
+expected = int(sys.argv[3])
+paths = sorted(input_dir.glob(pattern))
+if len(paths) != expected:
+    raise SystemExit(f"H5 preflight count mismatch: {len(paths)} != {expected}")
+
+videos = set()
+for path in paths:
+    with h5py.File(path, "r") as handle:
+        label_mode = str(handle.attrs.get("label_mode", ""))
+        teacher_schema = str(handle.attrs.get("ranked_teacher_schema", ""))
+        video_name = str(handle.attrs.get("video_name", ""))
+        if label_mode != "bbox_ranked_global_local":
+            raise SystemExit(f"Unexpected label_mode in {path}: {label_mode}")
+        if teacher_schema != "stage4_bbox_ranked_teacher_v2":
+            raise SystemExit(
+                f"Unexpected ranked_teacher_schema in {path}: {teacher_schema}"
+            )
+        if not video_name:
+            raise SystemExit(f"Missing video_name in {path}")
+        if video_name in videos:
+            raise SystemExit(f"Duplicate video_name: {video_name}")
+        videos.add(video_name)
+print(
+    "Stage 5 BBox-ranked input preflight passed: "
+    f"files={len(paths)}, videos={len(videos)}"
+)
+PY
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -147,6 +193,7 @@ echo "Stage5 short training"
 echo "  input dir      : ${INPUT_DIR}"
 echo "  h5 pattern     : ${H5_PATTERN}"
 echo "  matched files  : ${num_inputs}"
+echo "  teacher        : stage4_bbox_ranked_teacher_v2"
 echo "  output dir     : ${OUTPUT_DIR}"
 echo "  model          : ${MODEL_NAME}"
 echo "  epochs         : ${EPOCHS}"

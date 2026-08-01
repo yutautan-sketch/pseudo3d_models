@@ -1,0 +1,3 @@
+video_name,pseudo3d_h5,voc_xml_root,split,enabled,notes
+example_video,/absolute/path/to/example_video_pseudo3d.h5,/absolute/path/to/voc_dataset_root,smoke,false,Replace this disabled example with real rows
+
