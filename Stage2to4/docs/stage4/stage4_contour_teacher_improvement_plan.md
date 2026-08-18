@@ -371,6 +371,318 @@ point-level datasetを候補数だけ複製しない。
 
 カテゴリごとに上位20件程度のoverlayを生成する。
 
+#### Phase 1実装目的
+
+既存の`stage4_bbox_ranked_teacher_v2`による輪郭選択結果を変更せず、182件の全BBoxに
+ついて候補mask、選択結果、形状、位置、過抽出、不確実性をread-onlyで監査する。
+
+Phase 1では以下を行わない。
+
+- point labelやannotation H5の再生成
+- 自動refine
+- `auto_accept`などのhard threshold確定
+- CVAT用review ZIPの生成
+- 既存H5やXMLへの書き込み
+
+#### Phase 1実装予定ファイル
+
+```text
+pseudo3d/analysis/audit_stage4_contour_teacher.py
+checks/stage4/check_stage4_contour_teacher_audit.py
+```
+
+必要な場合のみ、既存teacher実装へread-onlyな候補取得関数を追加する。
+
+```text
+pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
+```
+
+候補生成やranking処理を監査スクリプトへ複製せず、annotation生成時と同じ処理を共有する。
+
+#### Phase 1固定入力
+
+- 182件の入力manifest
+- 元pseudo3D H5
+- `bboxrank_v2_nobbox_bg` annotated H5
+- strict VOC XML
+- `stage4_bbox_ranked_teacher_v2.yaml`
+- teacher config fingerprint
+- foreground条件:
+  - global: enabled
+  - local window: 31
+  - local percentile: 75
+  - local min contrast: 12
+  - cleanup area: 15
+  - top-hat/context: disabled
+
+監査開始時に、H5、XML、video、frame、BBoxの対応関係をstrict preflightする。
+
+#### 既存処理の再利用
+
+以下の既存処理を再利用する。
+
+- XMLとframeのstrict matching
+- raw/local BBox変換
+- global binary mask生成
+- local-percentile mask生成
+- cleanup処理
+- global/localの全外部成分抽出
+- BBox-ranked eligibility判定
+- rankingと現行候補選択
+
+監査用処理は全候補を取得できるようにするが、現行の
+`build_bbox_ranked_contour_mask`の選択結果を変更しない。
+
+#### BBox監査レコード
+
+`bbox_audit.csv`は1 BBoxにつき1行とし、次のキーで一意にする。
+
+```text
+video_name + frame_order + frame_index + bbox_index
+```
+
+識別情報として次を記録する。
+
+- video name
+- source H5、annotated H5、XML path
+- frame order、frame index
+- object index、BBox index、object name
+- XML/raw/local BBox座標
+- image shape、BBox幅、高さ、面積
+
+保存済みteacher結果として次を記録する。
+
+- valid contour
+- annotation reason
+- selected contour source
+- contour selection score
+- contour area
+- selected area ratio
+- foreground ratio in BBox
+- frame point数
+- BBox内point数
+- positive point数
+
+候補情報として次を記録する。
+
+- global/local候補数
+- global/local eligible候補数
+- source別best score
+- 1位・2位候補のscore
+- score margin
+- 1位・2位候補のsource
+- 1位・2位maskのIoU
+- global/local best maskのIoU
+- 候補間の重心距離
+
+過抽出・形状指標として次を記録する。
+
+- source foreground / BBox面積比
+- filled contour / BBox面積比
+- positive point / BBox内point比
+- BBox中心と輪郭重心の正規化距離
+- BBox境界接触pixel数・接触率
+- 上下左右それぞれの境界接触
+- 接続成分数
+- solidity
+- extent
+- perimeter
+- compactness
+- contour bounding rectangle / BBox extent
+
+閾値変更に対するstabilityはPhase 3で計測し、Phase 1では現行global/local候補間の差だけを
+扱う。
+
+#### 保存済み結果との一致検証
+
+再計算したteacher結果と、annotated H5に保存された以下の値を照合する。
+
+- valid contour
+- annotation reason
+- selected source
+- contour area
+- selected area ratio
+- center distance
+- positive point数
+- global/local候補数
+- source別score
+
+許容誤差を超える差があれば監査結果として続行せず、設定または入力の不一致として
+失敗させる。
+
+#### 監査カテゴリ
+
+hard thresholdは設定せず、metricによる順位として抽出する。
+
+- `overfilled`: 面積比が大きい
+- `border_contact`: BBox境界接触率が高い
+- `ambiguous`: score marginが小さく候補maskが異なる
+- `off_center`: 中心距離が大きい
+- `invalid`: eligible候補なし、または曖昧性による棄却
+- `small_contour`: 面積・positive点数が小さい
+- `candidate_good_control`: 中心・面積・境界接触が比較的安定
+
+各カテゴリの上位件数はCLIで指定し、初期値を20とする。同じBBoxが複数カテゴリに
+入ることを許可する。
+
+#### Overlay生成
+
+ランキング対象について、次を描画する。
+
+- 元local frame
+- annotation BBox
+- global binary
+- local binary
+- global候補輪郭
+- local候補輪郭
+- 現在の採用輪郭
+- BBox中心と候補重心
+- candidate sourceと順位
+- score、面積比、中心距離、境界接触率
+- audit category
+
+元画像とoverlayを混同しないよう、監査専用ディレクトリへ出力する。
+
+#### Phase 1出力構造
+
+```text
+stage4_contour_teacher_audit/
+├── bbox_audit.csv
+├── video_summary.csv
+├── category_summary.csv
+├── failures.csv
+├── audit_summary.json
+├── run_config.yaml
+└── overlays/
+    ├── overfilled/
+    ├── border_contact/
+    ├── ambiguous/
+    ├── off_center/
+    ├── invalid/
+    ├── small_contour/
+    └── candidate_good_control/
+```
+
+`run_config.yaml`またはsummaryへ、入力manifest、teacher config、fingerprint、実行日時、
+対象件数、スクリプトversionを保存する。
+
+#### CLI方針
+
+最低限、以下を引数化する。
+
+- input manifest
+- pseudo3D/annotated H5 root
+- teacher config
+- output root
+- categoryごとのtop-K
+- overlay生成の有無
+- overwrite禁止または明示的許可
+- preflight-only
+- continue-on-error
+
+最終監査では`failure_rows=0`を必須とする。
+
+#### Phase 1 Synthetic check
+
+- 既知形状でarea ratio、重心、境界接触率が正しい
+- solidity、extent、compactnessが有限である
+- 空maskとinvalid BBoxを安全に扱う
+- 複数候補のscore marginとIoUが正しい
+- global/local候補のsourceを混同しない
+- 複数BBoxと非連続frame indexが整合する
+- audit追加前後で現行teacherの選択結果が変わらない
+- CSV行順とoverlay選択が決定的である
+- 入力H5を更新しない
+
+#### Phase 1完了条件
+
+- manifest上の182件をすべて監査できる
+- 全XML BBoxに一意な監査行がある
+- 保存済みteacher結果と再計算結果が一致する
+- unexpected NaN/Infがない
+- invalid値にはreason codeがある
+- failure rowsが0件
+- 既存H5/XMLが変更されていない
+- 各カテゴリの上位例と良好control例を目視できる
+- Phase 2用CVAT golden sampleを2〜3件選べる
+- Phase 3で調査するrefine条件と閾値範囲を提案できる
+
+#### Phase 1実装状況（2026-08-18）
+
+次のファイルへPhase 1を実装した。
+
+```text
+pseudo3d/analysis/audit_stage4_contour_teacher.py
+checks/stage4/check_stage4_contour_teacher_audit.py
+pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
+```
+
+annotation実装へ追加したのは、teacher v2と同じ候補生成およびsort keyを監査側から
+read-onlyで利用する共有APIである。既存の候補eligibility、ranking、tie判定は変更せず、
+annotation生成と監査が同じ計算経路を使う。
+
+監査CLIは次を実装済みである。
+
+- manifest、teacher config、annotated H5、strict XMLのpreflight
+- teacher configとannotated H5 metadataの一致検査
+- global/local候補と現行選択結果の再計算
+- 保存済みframe annotationおよびpoint labelとの完全照合
+- BBox単位の位置、面積、境界接触、形状、候補差metric
+- metric rankingによる7カテゴリの上位抽出
+- category別overlay、BBox/video/category summaryの生成
+- 入力H5/XMLのsizeとmtimeが実行前後で不変であることの検査
+- failure row、run config、teacher/manifest fingerprintの保存
+
+Synthetic checkは、既知形状、候補比較、ranking決定性に加え、複数BBox、非連続frame
+index、BBoxなしframeを含む小型H5/XMLのend-to-end監査を対象とする。
+
+実データ監査前に次を実行する。
+
+```bash
+cd /mnt/data/3d_projects/models/Stage2to4
+
+/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
+  checks/stage4/check_stage4_contour_teacher_audit.py
+```
+
+182件のpreflightは次のコマンドで行う。
+
+```bash
+cd /mnt/data/3d_projects/models/Stage2to4
+
+RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
+
+/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
+  pseudo3d/analysis/audit_stage4_contour_teacher.py \
+  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
+  --annotated_root "${RUN_ROOT}/annotated" \
+  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
+  --output_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
+  --expected_videos 182 \
+  --preflight_only \
+  --continue_on_error
+```
+
+preflight通過後、`--preflight_only`を外して全監査を実行する。
+
+```bash
+cd /mnt/data/3d_projects/models/Stage2to4
+
+RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
+
+/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
+  pseudo3d/analysis/audit_stage4_contour_teacher.py \
+  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
+  --annotated_root "${RUN_ROOT}/annotated" \
+  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
+  --output_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
+  --expected_videos 182 \
+  --top_k 20 \
+  --continue_on_error
+```
+
+同じoutput rootで再実行する場合に限り、内容を置換する明示的な`--overwrite`を付ける。
+
 ### Phase 2: CVAT最小converterとgolden round trip
 
 2〜3画像のbinary maskを`Segmentation Mask 1.1`へ変換し、ZIP構造、labelmap、stem、

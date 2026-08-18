@@ -882,15 +882,27 @@ def _best_ranked_source_score(
     return max(scores) if scores else np.nan
 
 
-def build_bbox_ranked_contour_mask(
+def ranked_contour_candidate_sort_key(
+    candidate: dict[str, Any],
+) -> tuple[float, float, float, float]:
+    """Return the exact deterministic sort key used by teacher v2."""
+    return (
+        float(candidate["score"]),
+        -float(candidate["center_distance_norm"]),
+        float(candidate["area_score"]),
+        float(candidate["filled_area"]),
+    )
+
+
+def build_bbox_ranked_contour_candidates(
     *,
     global_binary: np.ndarray,
     local_binary: np.ndarray,
     bbox: LocalBBox,
     min_contour_area: float,
     config: RankedContourConfig,
-) -> dict[str, Any]:
-    """Choose the most BBox-consistent contour without preferring its source."""
+) -> list[dict[str, Any]]:
+    """Build every global/local candidate without selecting or mutating one."""
     config.validate()
     global_binary = np.asarray(global_binary, dtype=bool)
     local_binary = np.asarray(local_binary, dtype=bool)
@@ -899,7 +911,6 @@ def build_bbox_ranked_contour_mask(
             "ranked global/local binary shape mismatch: "
             f"{global_binary.shape} vs {local_binary.shape}"
         )
-    empty_mask = np.zeros(global_binary.shape, dtype=bool)
     candidates = _ranked_contour_candidates_from_binary(
         global_binary,
         bbox,
@@ -915,6 +926,28 @@ def build_bbox_ranked_contour_mask(
             min_contour_area=min_contour_area,
             config=config,
         )
+    )
+    return candidates
+
+
+def build_bbox_ranked_contour_mask(
+    *,
+    global_binary: np.ndarray,
+    local_binary: np.ndarray,
+    bbox: LocalBBox,
+    min_contour_area: float,
+    config: RankedContourConfig,
+) -> dict[str, Any]:
+    """Choose the most BBox-consistent contour without preferring its source."""
+    global_binary = np.asarray(global_binary, dtype=bool)
+    local_binary = np.asarray(local_binary, dtype=bool)
+    empty_mask = np.zeros(global_binary.shape, dtype=bool)
+    candidates = build_bbox_ranked_contour_candidates(
+        global_binary=global_binary,
+        local_binary=local_binary,
+        bbox=bbox,
+        min_contour_area=min_contour_area,
+        config=config,
     )
     eligible = [candidate for candidate in candidates if candidate["eligible"]]
     common = {
@@ -960,21 +993,17 @@ def build_bbox_ranked_contour_mask(
             **common,
         }
 
-    def rank(candidate: dict[str, Any]) -> tuple[float, float, float, float]:
-        return (
-            float(candidate["score"]),
-            -float(candidate["center_distance_norm"]),
-            float(candidate["area_score"]),
-            float(candidate["filled_area"]),
-        )
-
-    eligible.sort(key=rank, reverse=True)
+    eligible.sort(key=ranked_contour_candidate_sort_key, reverse=True)
     selected = eligible[0]
     selected_source = str(selected["source"])
     selection_reason = f"bbox_ranked_selected_{selected_source}"
     if len(eligible) > 1:
-        first_rank = np.asarray(rank(eligible[0]), dtype=np.float64)
-        second_rank = np.asarray(rank(eligible[1]), dtype=np.float64)
+        first_rank = np.asarray(
+            ranked_contour_candidate_sort_key(eligible[0]), dtype=np.float64
+        )
+        second_rank = np.asarray(
+            ranked_contour_candidate_sort_key(eligible[1]), dtype=np.float64
+        )
         if np.allclose(first_rank, second_rank, rtol=0.0, atol=1e-12):
             if np.array_equal(eligible[0]["mask"], eligible[1]["mask"]):
                 selected_source = "shared"
