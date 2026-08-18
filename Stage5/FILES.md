@@ -4,9 +4,15 @@
 
 - `train_stage5.py`: training CLI.
 - `infer_stage5.py`: inference CLI.
+- `evaluate_stage5.py`: annotated H5 evaluation CLI with window and aggregated metrics.
+- `prepare_stage5_evaluation_data.py`: selects evaluation H5 files and collects reference PLY files.
+- `summarize_stage5_evaluations.py`: combines metrics from multiple checkpoints.
+- `export_anonymized_stage5_metrics.py`: creates shareable split-labeled metrics and a separate private ID map.
 - `stage5/`: dataset, model wrappers, losses, metrics, and utilities.
 - `train_stage5.sh`: editable training launcher with external data paths.
 - `infer_stage5.sh`: editable inference launcher with external data paths.
+- `evaluate_stage5.sh`: fixed train-sanity/full-validation checkpoint evaluation pipeline.
+- `export_anonymized_stage5_metrics.sh`: standalone anonymized-metrics exporter for an existing evaluation.
 
 ## Check and debug scripts
 

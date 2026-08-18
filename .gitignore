@@ -3,6 +3,7 @@ node_modules/
 __pycache__/
 .env
 .venv/
+.codex/
 .devcontainer/
 codex_config.toml
 Stage2to4/dualtrack_checkpoints/

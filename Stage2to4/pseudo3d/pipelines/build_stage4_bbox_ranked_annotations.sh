@@ -227,7 +227,7 @@ fi
 echo
 echo "[3/3] Auditing the saved label policy"
 "${PYTHON}" \
-  check_stage4_bbox_ranked_label_policy.py \
+  checks/stage4/check_stage4_bbox_ranked_label_policy.py \
   --input_dir "${COLLECTED_ROOT}" \
   --pattern "${ANNOTATED_PATTERN}" \
   --expected_files "${collected_count}" \

@@ -14,13 +14,15 @@ from typing import Any
 import h5py
 import numpy as np
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.utils.pseudo3d_sampling import (
     summarize_per_frame_counts,
     summarize_source_flags,
 )
 
-
-REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_REBUILD_ROOT = Path(
     "/mnt/data/3d_projects/pseudo3d_dataset/stage4_rebuild/260722"
 )

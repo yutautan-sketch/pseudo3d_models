@@ -937,9 +937,9 @@ pseudo3d/pipelines/build_stage4_bbox_ranked_annotations.sh
 pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
 pseudo3d/batch/export/batch_export_annotation_mask_visualization.sh
 pseudo3d/batch/export/batch_export_point_cloud_ply.py
-check_stage4_bbox_ranked_teacher.py
-check_stage4_bbox_ranked_realdata.py
-check_stage4_bbox_ranked_label_policy.py
+checks/stage4/check_stage4_bbox_ranked_teacher.py
+checks/stage4/check_stage4_bbox_ranked_realdata.py
+checks/stage4/check_stage4_bbox_ranked_label_policy.py
 ```
 
 ### Config

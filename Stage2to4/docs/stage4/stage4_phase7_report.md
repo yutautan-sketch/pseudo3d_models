@@ -144,28 +144,28 @@ bash -n <対象shell群>
 
 ```bash
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  check_pseudo3d_sampling_synthetic.py
+  checks/stage4/check_pseudo3d_sampling_synthetic.py
 ```
 
 ### 4.3 projection、H5、CLI
 
 ```bash
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  check_pseudo3d_projection_h5.py
+  checks/stage4/check_pseudo3d_projection_h5.py
 ```
 
 ### 4.4 legacy互換性
 
 ```bash
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  check_stage4_legacy_compatibility.py
+  checks/stage4/check_stage4_legacy_compatibility.py
 ```
 
 ### 4.5 実データ候補監査
 
 ```bash
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  check_stage4_realdata_candidates.py
+  checks/stage4/check_stage4_realdata_candidates.py
 ```
 
 候補選定では、annotation contour positiveではなく「有効なBBoxがあり、frame上には点が存在するが、legacy点がBBox内に0点」の条件をprimaryとした。
@@ -215,7 +215,7 @@ cleanup導入前および導入後の双方で3件の処理が完了し、`proce
 
 ```bash
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  check_stage4_combined_v2_realdata_smoke.py \
+  checks/stage4/check_stage4_combined_v2_realdata_smoke.py \
   --candidates_list /mnt/data/3d_projects/pseudo3d_dataset/stage4_rebuild/260722/candidates.txt \
   --combined_root /mnt/data/3d_projects/pseudo3d_dataset/stage4_rebuild/260722/combined_v2_default_corr
 ```
@@ -223,18 +223,18 @@ cleanup導入前および導入後の双方で3件の処理が完了し、`proce
 ### 4.8 schema、collect、Stage 5、PLY
 
 ```bash
-/home/kodaira/anaconda3/envs/dualtrack311/bin/python check_stage4_annotation_schema_propagation.py
-/home/kodaira/anaconda3/envs/dualtrack311/bin/python check_stage4_collect_schema_propagation.py
+/home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_annotation_schema_propagation.py
+/home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_collect_schema_propagation.py
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
   ../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
-/home/kodaira/anaconda3/envs/dualtrack311/bin/python check_stage4_combined_v2_annotated_ply.py
+/home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_combined_v2_annotated_ply.py
 ```
 
 ### 4.9 batch/pipeline integration
 
 ```bash
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  check_stage4_batch_pipeline_integration.py
+  checks/stage4/check_stage4_batch_pipeline_integration.py
 ```
 
 ### 4.10 cleanup後のsource別可視化更新
@@ -293,7 +293,7 @@ cleanup導入前および導入後の双方で3件の処理が完了し、`proce
 
 ## 6. Syntheticおよびprojectionの詳細
 
-最終的な `check_pseudo3d_sampling_synthetic.py` では以下の全テストが成功した。
+最終的な `checks/stage4/check_pseudo3d_sampling_synthetic.py` では以下の全テストが成功した。
 
 ```text
 test_context_grid_counts
@@ -562,16 +562,16 @@ strict source visualization: 更新完了、目視確認完了
 
 ### 14.4 Phase 7 checker
 
-* `check_pseudo3d_sampling_synthetic.py`
-* `check_pseudo3d_projection_h5.py`
-* `check_stage4_realdata_candidates.py`
-* `check_stage4_legacy_compatibility.py`
-* `check_stage4_combined_v2_realdata_smoke.py`
-* `check_stage4_annotation_schema_propagation.py`
-* `check_stage4_collect_schema_propagation.py`
-* `check_stage4_combined_v2_annotated_ply.py`
-* `check_stage4_batch_pipeline_integration.py`
-* `export_stage4_combined_v2_smoke_visualizations.py`
+* `checks/stage4/check_pseudo3d_sampling_synthetic.py`
+* `checks/stage4/check_pseudo3d_projection_h5.py`
+* `checks/stage4/check_stage4_realdata_candidates.py`
+* `checks/stage4/check_stage4_legacy_compatibility.py`
+* `checks/stage4/check_stage4_combined_v2_realdata_smoke.py`
+* `checks/stage4/check_stage4_annotation_schema_propagation.py`
+* `checks/stage4/check_stage4_collect_schema_propagation.py`
+* `checks/stage4/check_stage4_combined_v2_annotated_ply.py`
+* `checks/stage4/check_stage4_batch_pipeline_integration.py`
+* `pseudo3d/analysis/export_stage4_combined_v2_smoke_visualizations.py`
 
 ## 15. H5 schema差分
 

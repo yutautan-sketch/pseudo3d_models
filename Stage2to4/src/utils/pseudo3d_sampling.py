@@ -71,7 +71,7 @@ class PointSamplingConfig:
     @classmethod
     def combined_v2_defaults(cls) -> "PointSamplingConfig":
         """
-        Provisional combined_v2 configuration from stage4_edit_prompt.md.
+        Provisional combined_v2 configuration from docs/stage4/edit_prompt.md.
         """
         return cls(
             sampling_mode="combined_v2",

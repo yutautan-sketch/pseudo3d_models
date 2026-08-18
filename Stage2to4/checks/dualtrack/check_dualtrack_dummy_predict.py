@@ -1,4 +1,9 @@
 from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 from omegaconf import OmegaConf
@@ -54,7 +59,7 @@ def load_dualtrack_model(repo_root: Path, device: torch.device):
 
 
 def main():
-    repo_root = Path(__file__).resolve().parent
+    repo_root = REPO_ROOT
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)

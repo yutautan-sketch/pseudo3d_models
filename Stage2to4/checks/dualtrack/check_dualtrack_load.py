@@ -1,5 +1,9 @@
-from omegaconf import OmegaConf
 from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 from omegaconf import OmegaConf
@@ -9,7 +13,7 @@ from src.utils.pseudo3d_processing import resolve_dualtrack_checkpoint
 
 
 def main():
-    repo_root = Path(__file__).resolve().parent
+    repo_root = REPO_ROOT
 
     cfg_path = repo_root / "configs" / "model" / "dualtrack.yaml"
     ckpt_path = resolve_dualtrack_checkpoint(repo_root)

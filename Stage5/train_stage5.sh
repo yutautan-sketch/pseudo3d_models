@@ -38,7 +38,7 @@ PY
 export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
 
 DATE="${DATE:-260711}"
-EX_DATE="${EX_DATE:-260801}"
+EX_DATE="${EX_DATE:-260817}"
 
 # ------------------------------------------------------------
 # input path info
@@ -65,7 +65,7 @@ MAX_VAL_FILES=0
 # output path info
 # ------------------------------------------------------------
 OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
-PREFIX="w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep150_bs8"
+PREFIX="w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs8"
 EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 
@@ -76,7 +76,7 @@ MODEL_NAME="pointnext_s"
 FEATURES="intensity,confidence"
 NUM_POINTS=0
 BATCH_SIZE=8
-EPOCHS=150
+EPOCHS=200
 
 # Conservative Stage5 fine-tuning LR. PointNeXt S3DIS uses 1e-2, but Stage5
 # starts from weak labels and smaller batches, so keep 1e-3 for the smoke run.

@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CANDIDATES_LIST = Path(
     "/mnt/data/3d_projects/pseudo3d_dataset/stage4_smoke/candidates.txt"
 )

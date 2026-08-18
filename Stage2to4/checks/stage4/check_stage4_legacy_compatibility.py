@@ -8,8 +8,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-STAGE2TO4_ROOT = Path(__file__).resolve().parent
+STAGE2TO4_ROOT = Path(__file__).resolve().parents[2]
 GIT_ROOT = STAGE2TO4_ROOT.parent
+if str(STAGE2TO4_ROOT) not in sys.path:
+    sys.path.insert(0, str(STAGE2TO4_ROOT))
 BASELINE_COMMIT = "65daf6d"
 EXPORT_RELATIVE_PATH = Path("pseudo3d/export/export_pseudo3d_point_cloud.py")
 ANNOTATE_RELATIVE_PATH = Path(

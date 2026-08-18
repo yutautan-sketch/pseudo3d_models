@@ -43,7 +43,7 @@ valid点がないwindowも現在はPointNeXt-Sのforwardを通過する。損失
 同じH5を使ってcheckpoint間と実験間を比較する。
 
 - 訓練データ例: `20250626_124212_7300`
-- validationデータ: validなpositive点を含む2から3ファイルを固定選択する
+- validationデータ: 学習runの`val_files.txt`に記録された全ファイルを使用する
 
 各H5について、少なくとも以下を比較する。
 
@@ -82,6 +82,28 @@ ignore点には信頼できる正解labelがないため、ignore領域のpositi
 ### 4.4 完了条件
 
 同じ訓練H5・validation H5についてcheckpoint間の挙動を比較でき、valid領域のFalse Positiveとignore領域のpositive予測を別々に確認できること。
+
+### 4.5 評価スクリプト
+
+`evaluate_stage5.sh`から以下を自動実行する。
+
+- 学習runの`train_files.txt`と`val_files.txt`を使用する
+- train sanityは`20250626_124212_7300`と、固定seedで選んだ追加2ファイルを使用する
+- validationは`val_files.txt`の全ファイルを使用する
+- checkpointごとにH5単位・window単位・元点index集約後のmetricsを保存する
+- Stage 4のraw PLYとannotation-colored PLYを評価対象分だけ共通参照ディレクトリへコピーする
+- GT positive点だけを含む共通参照PLYを保存する
+- probability PLY、診断カテゴリPLY、predicted positive点だけのPLYを保存する
+- 全checkpointのsplit/H5/window metricsを比較用CSVへ結合する
+
+デフォルトの比較checkpointは、現在の150 epoch runに合わせて以下とする。
+
+- `checkpoint_epoch_0030.pt`
+- `checkpoint_epoch_0100.pt`
+- `checkpoint_epoch_0150.pt`
+- `best.pt`
+
+200 epoch runを評価する場合は、bash実行時の`CHECKPOINT_NAMES`を変更する。
 
 ## 5. Phase 2: Empty-valid windowの除外
 

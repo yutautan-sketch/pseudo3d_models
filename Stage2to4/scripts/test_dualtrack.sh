@@ -13,7 +13,7 @@
 
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-python scripts/dualtrack/train_fusion_model.py \
+python scripts/dualtrack_legacy/train_fusion_model.py \
     --model dualtrack_tus_rec_2024 \
     --num_workers 1 \
     --load_preprocessed \
