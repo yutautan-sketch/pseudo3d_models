@@ -1,0 +1,62 @@
+schema_version: 3
+config_name: stage4_contour_auto_refine_phase3_screening_v1
+base_teacher_config_name: stage4_bbox_ranked_teacher_v2
+# The exact current fingerprint is validated against the Phase 1 audit.
+# Set this optional field only when one canonical YAML representation must be pinned.
+base_teacher_fingerprint: null
+
+# These gates are provisional screening values. The runner intentionally
+# refuses decision mode while production_thresholds_fixed is false.
+trigger:
+  max_selected_area_ratio: 0.55
+  max_foreground_area_ratio: 0.75
+  max_border_contact_ratio: 0.20
+  max_center_distance_norm: 0.32
+  min_baseline_score_margin: 0.03
+
+candidate_generation:
+  percentile_values: [70.0, 75.0, 80.0, 85.0, 90.0, 92.5, 95.0]
+  otsu_enabled: true
+  adaptive_methods: [mean, gaussian]
+  adaptive_block_sizes: [11, 21, 31]
+  adaptive_c_values: [2.0, 5.0]
+  cleanup_variants:
+    - name: none
+      open_ksize: 0
+      close_ksize: 0
+      morph_shape: ellipse
+      min_component_area: 0
+    - name: tuned_cleanup
+      open_ksize: 3
+      close_ksize: 5
+      morph_shape: ellipse
+      min_component_area: 15
+
+eligibility:
+  min_contour_area: 20.0
+  min_filled_area: 20
+  min_area_ratio: 0.02
+  max_area_ratio: 0.65
+  max_center_distance_norm: 0.45
+  max_border_contact_ratio: 0.35
+  min_candidate_points: 1
+
+ranking:
+  preferred_area_ratio: 0.15
+  weights:
+    center: 0.25
+    area: 0.20
+    border: 0.15
+    solidity: 0.05
+    compactness: 0.05
+    extent: 0.05
+    stability: 0.15
+    support: 0.10
+
+decision:
+  production_thresholds_fixed: false
+  minimum_refine_score_gain: 0.05
+  minimum_score_margin: 0.025
+  minimum_stability_iou: 0.55
+  minimum_support_count: 2
+  equal_score_tolerance: 1.0e-12
