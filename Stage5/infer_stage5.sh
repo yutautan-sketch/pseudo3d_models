@@ -4,10 +4,10 @@ set -euo pipefail
 # ------------------------------------------------------------
 # Run Stage 5 inference on collected annotated pseudo-3D point-cloud H5 files.
 #
-# This script expects annotated point-cloud H5 files already collected into one
-# flat directory by:
+# This script expects the accepted Stage 4 teacher v6 H5 files collected into
+# one flat directory by:
 #
-#   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
+#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
 #
 # Edit the path/parameter blocks below, then run:
 #
@@ -39,20 +39,20 @@ export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:$
 export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/PointNeXt/openpoints:${PYTHONPATH:-}"
 
 DATE="${DATE:-260711}"
-EX_DATE="${EX_DATE:-260714}"
+EX_DATE="${EX_DATE:-260908}"
 
 # ------------------------------------------------------------
 # input path info
 # ------------------------------------------------------------
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
-
-# Directory created by:
-#   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
-INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/${DATE}}"
+STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
+STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
+STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
+INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
 
 MODE="${MODE:-foreground}"
-H5_PATTERN="${H5_PATTERN:-*_annotated_${MODE}.h5}"
-INPUT_FILENAME_SUFFIX="${INPUT_FILENAME_SUFFIX:-_pointcloud_annotated_${MODE}.h5}"
+H5_PATTERN="${H5_PATTERN:-*_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
+INPUT_FILENAME_SUFFIX="${INPUT_FILENAME_SUFFIX:-_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
 
 # Optional single-video/file filter. Leave empty to process all matched H5s.
 # Example:
@@ -84,17 +84,17 @@ POINTNEXT_SA_USE_RES=1
 # ------------------------------------------------------------
 # checkpoint path info
 # ------------------------------------------------------------
-RUN_ROOT="/mnt/data/3d_projects/stage5_runs"
+RUN_ROOT="${RUN_ROOT:-/mnt/data/3d_projects/stage5_runs}"
 MODEL="pointnext_s"
-PREFIX="w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_ce_smooth00_auto_weight_lr1e3_ep200"
+PREFIX="${PREFIX:-w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
 EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
-CHECKPOINT_NAME="checkpoint_epoch_0150.pt"
-CHECKPOINT="${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
+CHECKPOINT_NAME="${CHECKPOINT_NAME:-best.pt}"
+CHECKPOINT="${CHECKPOINT:-${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}}"
 
 # ------------------------------------------------------------
 # output path info
 # ------------------------------------------------------------
-PRED_ROOT="/mnt/data/3d_projects/stage5_predictions/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
+PRED_ROOT="${PRED_ROOT:-/mnt/data/3d_projects/stage5_predictions/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}}"
 
 # Leave empty to use feature_names stored in checkpoint config.
 FEATURES_OVERRIDE=""
@@ -115,7 +115,7 @@ fi
 
 if [[ ! -d "${INPUT_DIR}" ]]; then
   echo "Input directory not found: ${INPUT_DIR}" >&2
-  echo "Run Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh first." >&2
+  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh first." >&2
   exit 1
 fi
 

@@ -28,16 +28,16 @@ export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/Point
 # Training run to evaluate
 # ------------------------------------------------------------
 DATE="${DATE:-260711}"
-EX_DATE="${EX_DATE:-260817}"
+EX_DATE="${EX_DATE:-260908}"
 RUN_ROOT="${RUN_ROOT:-/mnt/data/3d_projects/stage5_runs}"
-PREFIX="${PREFIX:-w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep150_bs8}"
+PREFIX="${PREFIX:-w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
 DEFAULT_EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
 RUN_DIR="${RUN_DIR:-${RUN_ROOT}/${EX_DATE}/${DEFAULT_EXPERIMENT_NAME}}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-$(basename "${RUN_DIR}")}"
 
 # Space-separated checkpoint filenames. Override this environment variable to
 # evaluate a different set without editing the Python evaluator.
-CHECKPOINT_NAMES="${CHECKPOINT_NAMES:-checkpoint_epoch_0030.pt checkpoint_epoch_0100.pt checkpoint_epoch_0150.pt best.pt}"
+CHECKPOINT_NAMES="${CHECKPOINT_NAMES:-checkpoint_epoch_0030.pt checkpoint_epoch_0100.pt checkpoint_epoch_0150.pt checkpoint_epoch_0200.pt best.pt}"
 
 # ------------------------------------------------------------
 # Evaluation selection and outputs
@@ -60,7 +60,7 @@ VAL_LIST="${RUN_DIR}/val_files.txt"
 #   Stage2to4/pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
 STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
-STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v2_nobbox_bg}"
+STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
 STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
 STAGE4_RUN_ROOT="${STAGE4_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}}"
 RAW_REFERENCE_PLY_DIR="${RAW_REFERENCE_PLY_DIR:-${STAGE4_RUN_ROOT}/pointcloud_foreground}"
