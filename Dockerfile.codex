@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @openai/codex
+RUN npm install -g @anthropic-ai/claude-code
 
 # ubuntu:24.04 に既存の UID=1000 ユーザーを使用する
 USER ubuntu
