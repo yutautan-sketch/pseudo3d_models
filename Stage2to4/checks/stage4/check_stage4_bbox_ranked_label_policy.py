@@ -22,10 +22,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input_dir", type=Path, required=True)
     parser.add_argument("--pattern", type=str, required=True)
     parser.add_argument("--expected_files", type=int, default=182)
+    parser.add_argument(
+        "--allow_cvat_authoritative_no_bbox_positive",
+        action="store_true",
+        help=(
+            "Allow positive (but never ignore) points on BBox-free frames only "
+            "when frame-level provenance marks CVAT snapshot authority."
+        ),
+    )
     return parser.parse_args()
 
 
-def audit_file(path: Path) -> dict[str, int]:
+def _decode(value: object) -> str:
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def audit_file(
+    path: Path, *, allow_cvat_authoritative_no_bbox_positive: bool = False
+) -> dict[str, int]:
     required = (
         "point_cloud/frame_order",
         "point_cloud/pixel_xy",
@@ -51,6 +65,42 @@ def audit_file(path: Path) -> dict[str, int]:
         valid_mask = handle["annotation/valid_mask"][:].astype(bool)
         bbox_orders = handle["frame_annotation/frame_order"][:].astype(np.int64)
         bboxes = handle["frame_annotation/bbox_local_xyxy"][:].astype(np.float64)
+        authoritative_orders: set[int] = set()
+        if allow_cvat_authoritative_no_bbox_positive:
+            if _decode(handle.attrs.get("contour_teacher_schema", "")) != (
+                "bboxrank_v5_cvat_authoritative_v1"
+            ):
+                raise AssertionError(
+                    "CVAT-authoritative no-BBox allowance requires the v5 schema"
+                )
+            if "manual_review_fullvideo_frames" not in handle:
+                raise AssertionError("missing CVAT-authoritative frame provenance")
+            provenance = handle["manual_review_fullvideo_frames"]
+            for name in (
+                "frame_order",
+                "label_authority",
+                "cvat_mask_status",
+            ):
+                if name not in provenance:
+                    raise AssertionError(
+                        f"missing manual_review_fullvideo_frames/{name}"
+                    )
+            provenance_orders = provenance["frame_order"][:].astype(np.int64)
+            authorities = [_decode(value) for value in provenance["label_authority"][:]]
+            mask_statuses = [
+                _decode(value) for value in provenance["cvat_mask_status"][:]
+            ]
+            if not (
+                provenance_orders.size == len(authorities) == len(mask_statuses)
+            ):
+                raise AssertionError("CVAT-authoritative frame provenance is misaligned")
+            authoritative_orders = {
+                int(order)
+                for order, authority, status in zip(
+                    provenance_orders, authorities, mask_statuses, strict=True
+                )
+                if authority == "cvat_snapshot" and status == "positive"
+            }
 
     if frame_order.ndim != 1 or labels.shape != frame_order.shape:
         raise AssertionError("frame_order and point_label must be aligned 1-D arrays")
@@ -72,7 +122,25 @@ def audit_file(path: Path) -> dict[str, int]:
     bbox_frame_values = np.unique(bbox_orders)
     no_bbox_mask = ~np.isin(frame_order, bbox_frame_values)
     no_bbox_labels = np.unique(labels[no_bbox_mask])
-    if no_bbox_labels.size and not np.array_equal(
+    no_bbox_positive_points = int(
+        np.sum(no_bbox_mask & (labels == LABEL_POSITIVE))
+    )
+    if allow_cvat_authoritative_no_bbox_positive:
+        invalid_no_bbox = no_bbox_mask & ~np.isin(
+            labels, np.asarray([LABEL_BACKGROUND, LABEL_POSITIVE])
+        )
+        if np.any(invalid_no_bbox):
+            raise AssertionError("BBox-free authoritative frames contain ignore labels")
+        positive_orders = set(
+            int(value)
+            for value in np.unique(frame_order[no_bbox_mask & (labels == LABEL_POSITIVE)])
+        )
+        if not positive_orders.issubset(authoritative_orders):
+            raise AssertionError(
+                "BBox-free positives lack positive CVAT snapshot provenance: "
+                f"{sorted(positive_orders - authoritative_orders)}"
+            )
+    elif no_bbox_labels.size and not np.array_equal(
         no_bbox_labels,
         np.asarray([LABEL_BACKGROUND], dtype=no_bbox_labels.dtype),
     ):
@@ -125,7 +193,10 @@ def audit_file(path: Path) -> dict[str, int]:
         "no_bbox_frames": int(
             np.setdiff1d(np.unique(frame_order), bbox_frame_values).size
         ),
-        "no_bbox_background_points": int(no_bbox_mask.sum()),
+        "no_bbox_background_points": int(
+            np.sum(no_bbox_mask & (labels == LABEL_BACKGROUND))
+        ),
+        "no_bbox_cvat_positive_points": no_bbox_positive_points,
         "bbox_inside_points": bbox_inside_points,
         "bbox_nonpositive_ignore_points": bbox_nonpositive_ignore_points,
         "positive_points": int(np.sum(labels == LABEL_POSITIVE)),
@@ -144,13 +215,19 @@ def main() -> None:
         "points": 0,
         "no_bbox_frames": 0,
         "no_bbox_background_points": 0,
+        "no_bbox_cvat_positive_points": 0,
         "bbox_inside_points": 0,
         "bbox_nonpositive_ignore_points": 0,
         "positive_points": 0,
     }
     for index, path in enumerate(paths, start=1):
         try:
-            stats = audit_file(path)
+            stats = audit_file(
+                path,
+                allow_cvat_authoritative_no_bbox_positive=(
+                    args.allow_cvat_authoritative_no_bbox_positive
+                ),
+            )
         except Exception as exc:
             raise SystemExit(f"[FAIL] {path}: {type(exc).__name__}: {exc}") from exc
         for key, value in stats.items():
