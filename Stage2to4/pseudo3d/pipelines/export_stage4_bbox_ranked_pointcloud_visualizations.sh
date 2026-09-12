@@ -1,31 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Export both raw and annotation-colored PLY files for the complete 260711
-# BBox-ranked v2 dataset without rebuilding point-cloud H5 files.
+# Export both raw and annotation-colored PLY files from the accepted Stage 4
+# teacher v6 H5 files without rebuilding point-cloud H5 files.
 
 PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
 REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
+DATE="${DATE:-260711}"
 SAMPLING_RUN_NAME="${SAMPLING_RUN_NAME:-global_local_l75_w31_c12_area15}"
-TEACHER_RUN_NAME="${TEACHER_RUN_NAME:-bboxrank_v2_nobbox_bg}"
-V2_RUN_NAME="${V2_RUN_NAME:-${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
+TEACHER_RUN_NAME="${TEACHER_RUN_NAME:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
+RUN_NAME="${RUN_NAME:-${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
 
-SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SAMPLING_RUN_NAME}}"
-V2_RUN_ROOT="${V2_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${V2_RUN_NAME}}"
-RAW_H5_ROOT="${RAW_H5_ROOT:-${SOURCE_RUN_ROOT}/point_cloud}"
-ANNOTATED_H5_ROOT="${ANNOTATED_H5_ROOT:-${V2_RUN_ROOT}/annotated}"
-RAW_PLY_ROOT="${RAW_PLY_ROOT:-${V2_RUN_ROOT}/pointcloud_foreground}"
-ANNOTATED_PLY_ROOT="${ANNOTATED_PLY_ROOT:-${V2_RUN_ROOT}/pointcloud_annotated_foreground}"
+RUN_ROOT="${RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${RUN_NAME}}"
+RAW_H5_ROOT="${RAW_H5_ROOT:-${RUN_ROOT}/collected}"
+ANNOTATED_H5_ROOT="${ANNOTATED_H5_ROOT:-${RUN_ROOT}/collected}"
+RAW_PLY_ROOT="${RAW_PLY_ROOT:-${RUN_ROOT}/pointcloud_foreground}"
+ANNOTATED_PLY_ROOT="${ANNOTATED_PLY_ROOT:-${RUN_ROOT}/pointcloud_annotated_foreground}"
 
-POINT_CLOUD_TAG="foreground_combined_v2_${SAMPLING_RUN_NAME}"
-ANNOTATED_TAG="${POINT_CLOUD_TAG}_${TEACHER_RUN_NAME}"
-RAW_H5_PATTERN="*_pointcloud_${POINT_CLOUD_TAG}.h5"
-ANNOTATED_H5_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.h5"
-RAW_PLY_PATTERN="*_pointcloud_${POINT_CLOUD_TAG}.ply"
-ANNOTATED_PLY_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.ply"
+ANNOTATED_TAG="foreground_combined_v2_${RUN_NAME}"
+RAW_H5_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.h5"
+ANNOTATED_H5_PATTERN="${RAW_H5_PATTERN}"
+RAW_PLY_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.ply"
+ANNOTATED_PLY_PATTERN="${RAW_PLY_PATTERN}"
 
-EXPECTED_FILES="${EXPECTED_FILES:-182}"
+EXPECTED_FILES="${EXPECTED_FILES:-181}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 
 cd "${REPO_ROOT}"
@@ -73,13 +72,14 @@ if [[ "${SKIP_EXISTING}" == "1" ]]; then
   skip_args+=(--skip_existing)
 fi
 
-echo "Stage 4 BBox-ranked point-cloud visualization export"
-echo "  raw H5 root       : ${RAW_H5_ROOT}"
-echo "  annotated H5 root : ${ANNOTATED_H5_ROOT}"
-echo "  raw PLY root      : ${RAW_PLY_ROOT}"
+echo "Stage 4 teacher v6 point-cloud visualization export"
+echo "  teacher            : ${TEACHER_RUN_NAME}"
+echo "  raw H5 root        : ${RAW_H5_ROOT}"
+echo "  annotated H5 root  : ${ANNOTATED_H5_ROOT}"
+echo "  raw PLY root       : ${RAW_PLY_ROOT}"
 echo "  annotated PLY root: ${ANNOTATED_PLY_ROOT}"
-echo "  input files       : raw=${raw_h5_count}, annotated=${annotated_h5_count}"
-echo "  skip existing     : ${SKIP_EXISTING}"
+echo "  input files        : raw=${raw_h5_count}, annotated=${annotated_h5_count}"
+echo "  skip existing      : ${SKIP_EXISTING}"
 
 echo
 echo "[1/2] Exporting pointcloud_foreground PLY files"
@@ -107,7 +107,7 @@ echo "[2/2] Exporting pointcloud_annotated_foreground PLY files"
   --summary_csv "${ANNOTATED_PLY_ROOT}/summary.csv" \
   --no_annotation_only_output \
   --background_mode dim \
-  --color_mode annotation_source \
+  --color_mode annotation \
   --femur_color "255,64,32" \
   --global_color "255,255,255" \
   --local_percentile_color "64,200,255" \
