@@ -17,7 +17,7 @@ import torch
 
 from checks.dummy.check_dummy_inference import make_dummy_pointcloud_h5, validate_outputs
 from stage5.models import build_stage5_model
-from stage5.training import compute_segmentation_metrics
+from stage5.training import build_loss, compute_segmentation_metrics
 
 
 CONFUSION_METRIC_KEYS = (
@@ -84,6 +84,57 @@ def validate_confusion_metric_semantics() -> None:
         )
 
 
+def validate_accumulated_loss_semantics() -> None:
+    loss_fn = build_loss(
+        "cross_entropy",
+        ignore_index=-1,
+        class_weight=[0.5, 1.5],
+        label_smoothing=0.0,
+    )
+    microbatches = [
+        {
+            "logits": torch.tensor([[[2.0, -1.0], [-0.5, 1.5]]]),
+            "labels": torch.tensor([[0, 1]]),
+            "valid_mask": torch.tensor([[True, True]]),
+        },
+        {
+            "logits": torch.tensor([[[0.2, 0.8], [1.0, -0.2], [0.1, 0.3]]]),
+            "labels": torch.tensor([[1, 0, -1]]),
+            "valid_mask": torch.tensor([[True, True, False]]),
+        },
+    ]
+
+    accumulated_sum = torch.zeros(())
+    accumulated_normalizer = torch.zeros(())
+    combined_logits: list[torch.Tensor] = []
+    combined_labels: list[torch.Tensor] = []
+    combined_masks: list[torch.Tensor] = []
+    for microbatch in microbatches:
+        result = loss_fn(
+            {"logits": microbatch["logits"]},
+            {"labels": microbatch["labels"], "valid_mask": microbatch["valid_mask"]},
+        )
+        accumulated_sum = accumulated_sum + result["loss_sum"]
+        accumulated_normalizer = accumulated_normalizer + result["loss_normalizer"]
+        combined_logits.append(microbatch["logits"].reshape(-1, 2))
+        combined_labels.append(microbatch["labels"].reshape(-1))
+        combined_masks.append(microbatch["valid_mask"].reshape(-1))
+
+    combined_result = loss_fn(
+        {"logits": torch.cat(combined_logits, dim=0).unsqueeze(0)},
+        {
+            "labels": torch.cat(combined_labels, dim=0).unsqueeze(0),
+            "valid_mask": torch.cat(combined_masks, dim=0).unsqueeze(0),
+        },
+    )
+    accumulated_loss = accumulated_sum / accumulated_normalizer
+    if not torch.allclose(accumulated_loss, combined_result["loss"], atol=1e-7, rtol=1e-7):
+        raise AssertionError(
+            "Accumulated weighted CE differs from combined CE: "
+            f"{float(accumulated_loss)} != {float(combined_result['loss'])}"
+        )
+
+
 def write_list_file(path: Path, h5_paths: list[Path]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -144,6 +195,8 @@ def run_training(
         str(args.sample_points),
         "--batch_size",
         str(args.batch_size),
+        "--gradient_accumulation_steps",
+        str(args.gradient_accumulation_steps),
         "--epochs",
         str(args.epochs),
         "--lr",
@@ -182,6 +235,8 @@ def validate_training_outputs(
     *,
     expected_epochs: int,
     expected_window_mode: str,
+    expected_batch_size: int,
+    expected_gradient_accumulation_steps: int,
 ) -> None:
     config_path = output_dir / "config.json"
     metrics_path = output_dir / "metrics.jsonl"
@@ -201,6 +256,19 @@ def validate_training_outputs(
         raise AssertionError(f"Unexpected feature_dim in config.json: {config.get('feature_dim')}")
     if config.get("window_mode") != expected_window_mode:
         raise AssertionError(f"Unexpected window_mode in config.json: {config.get('window_mode')}")
+    if int(config.get("batch_size", 0)) != expected_batch_size:
+        raise AssertionError(
+            f"Unexpected batch size: {config.get('batch_size')} != {expected_batch_size}"
+        )
+    if (
+        int(config.get("gradient_accumulation_steps", 0))
+        != expected_gradient_accumulation_steps
+    ):
+        raise AssertionError(
+            "Unexpected gradient accumulation setting: "
+            f"{config.get('gradient_accumulation_steps')} != "
+            f"{expected_gradient_accumulation_steps}"
+        )
     if expected_window_mode == "overlap":
         for name in ["train_window_summary.csv", "val_window_summary.csv"]:
             path = output_dir / name
@@ -220,6 +288,11 @@ def validate_training_outputs(
     if len(records) != expected_epochs:
         raise AssertionError(f"Expected {expected_epochs} metric records, got {len(records)}")
 
+    num_train_samples = int(config["num_train_samples"])
+    expected_microbatches = math.ceil(num_train_samples / expected_batch_size)
+    expected_optimizer_steps = math.ceil(
+        expected_microbatches / expected_gradient_accumulation_steps
+    )
     for record in records:
         train = record.get("train") or {}
         val = record.get("val") or {}
@@ -239,6 +312,21 @@ def validate_training_outputs(
             ]:
                 if key not in metrics:
                     raise AssertionError(f"{name} metrics do not contain {key}")
+        if int(train.get("debug_microbatch_count", -1)) != expected_microbatches:
+            raise AssertionError(
+                "Unexpected train microbatch count: "
+                f"{train.get('debug_microbatch_count')} != {expected_microbatches}"
+            )
+        if int(train.get("debug_optimizer_step_count", -1)) != expected_optimizer_steps:
+            raise AssertionError(
+                "Unexpected optimizer step count: "
+                f"{train.get('debug_optimizer_step_count')} != {expected_optimizer_steps}"
+            )
+        if (
+            int(train.get("debug_gradient_accumulation_steps", -1))
+            != expected_gradient_accumulation_steps
+        ):
+            raise AssertionError("Training metrics lost the gradient accumulation setting")
 
     checkpoint = torch.load(best_path, map_location="cpu")
     if "model" not in checkpoint or "config" not in checkpoint:
@@ -303,6 +391,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_points", type=int, default=512)
     parser.add_argument("--sample_points", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--width", type=int, default=16)
     parser.add_argument("--depth", type=int, default=2)
@@ -325,6 +414,7 @@ def main() -> None:
         raise ValueError("--num_val must be positive")
 
     validate_confusion_metric_semantics()
+    validate_accumulated_loss_semantics()
 
     work_dir = Path(args.work_dir)
     train_list, val_list, inference_input = make_dummy_dataset(
@@ -346,6 +436,8 @@ def main() -> None:
         run_dir,
         expected_epochs=args.epochs,
         expected_window_mode=args.window_mode,
+        expected_batch_size=args.batch_size,
+        expected_gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
 
     output_h5 = work_dir / "trained_dummy_prediction.h5"

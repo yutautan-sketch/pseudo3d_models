@@ -583,36 +583,74 @@ def run_one_epoch(
     ignore_index: int = -1,
     class_weight_info: dict[str, Any] | None = None,
     label_smoothing: float = 0.0,
+    gradient_accumulation_steps: int = 1,
 ) -> tuple[float, dict[str, Any]]:
     is_train = optimizer is not None
+    gradient_accumulation_steps = int(gradient_accumulation_steps)
+    if gradient_accumulation_steps <= 0:
+        raise ValueError("gradient_accumulation_steps must be positive")
     model.train(is_train)
     metric_acc = SegmentationMetricAccumulator(device=device, ignore_index=ignore_index)
     debug_acc = TrainingDebugAccumulator(ignore_index=ignore_index)
-    total_loss = 0.0
+    total_loss_sum = 0.0
+    total_loss_normalizer = 0.0
     total_batches = 0
+    optimizer_steps = 0
+    accumulated_microbatches = 0
+    accumulated_normalizer = 0.0
+
+    if is_train:
+        optimizer.zero_grad(set_to_none=True)
 
     iterator = tqdm(loader, desc=f"{desc} epoch {epoch}", leave=False)
-    for batch in iterator:
+    for batch_index, batch in enumerate(iterator):
         batch = move_batch_to_device(batch, device)
-
-        if is_train:
-            optimizer.zero_grad(set_to_none=True)
 
         with torch.set_grad_enabled(is_train):
             output = model(batch)
             loss_dict = loss_fn(output, batch)
             loss = loss_dict["loss"]
             if is_train:
-                loss.backward()
-                if grad_clip_norm is not None and grad_clip_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
-                optimizer.step()
+                loss_sum = loss_dict.get("loss_sum")
+                loss_normalizer_tensor = loss_dict.get("loss_normalizer")
+                if loss_sum is None or loss_normalizer_tensor is None:
+                    loss_sum = loss
+                    loss_normalizer = 1.0
+                else:
+                    loss_normalizer = float(loss_normalizer_tensor.detach().item())
+                if loss_normalizer > 0:
+                    loss_sum.backward()
+                accumulated_microbatches += 1
+                accumulated_normalizer += loss_normalizer
+
+                should_step = (
+                    accumulated_microbatches >= gradient_accumulation_steps
+                    or batch_index + 1 == len(loader)
+                )
+                if should_step:
+                    if accumulated_normalizer > 0:
+                        for parameter in model.parameters():
+                            if parameter.grad is not None:
+                                parameter.grad.div_(accumulated_normalizer)
+                        if grad_clip_norm is not None and grad_clip_norm > 0:
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+                        optimizer.step()
+                        optimizer_steps += 1
+                    optimizer.zero_grad(set_to_none=True)
+                    accumulated_microbatches = 0
+                    accumulated_normalizer = 0.0
 
         metric_acc.update(output, batch)
         debug_acc.update(output, batch)
-        total_loss += float(loss.detach().item())
+        loss_normalizer_tensor = loss_dict.get("loss_normalizer")
+        if loss_normalizer_tensor is None:
+            batch_loss_normalizer = 1.0
+        else:
+            batch_loss_normalizer = float(loss_normalizer_tensor.detach().item())
+        total_loss_sum += float(loss.detach().item()) * batch_loss_normalizer
+        total_loss_normalizer += batch_loss_normalizer
         total_batches += 1
-        iterator.set_postfix(loss=total_loss / max(total_batches, 1))
+        iterator.set_postfix(loss=total_loss_sum / max(total_loss_normalizer, 1.0))
 
     metrics = metric_acc.compute()
     metrics.update(debug_acc.compute())
@@ -621,8 +659,18 @@ def run_one_epoch(
         class_weight_info=class_weight_info,
         label_smoothing=label_smoothing,
     )
-    avg_loss = total_loss / max(total_batches, 1)
+    avg_loss = total_loss_sum / max(total_loss_normalizer, 1.0)
     metrics["loss"] = avg_loss
+    metrics["debug_microbatch_count"] = float(total_batches)
+    metrics["debug_optimizer_step_count"] = float(optimizer_steps if is_train else 0)
+    metrics["debug_gradient_accumulation_steps"] = float(
+        gradient_accumulation_steps if is_train else 1
+    )
+    loader_batch_size = int(loader.batch_size) if loader.batch_size is not None else 1
+    metrics["debug_effective_batch_size_samples"] = float(
+        loader_batch_size * (gradient_accumulation_steps if is_train else 1)
+    )
+    metrics["debug_loss_normalizer"] = float(total_loss_normalizer)
     return avg_loss, metrics
 
 
@@ -665,6 +713,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--val_every must be positive")
     if args.batch_size <= 0:
         raise ValueError("--batch_size must be positive")
+    if args.gradient_accumulation_steps <= 0:
+        raise ValueError("--gradient_accumulation_steps must be positive")
     if args.num_workers < 0:
         raise ValueError("--num_workers must be non-negative")
     if args.max_train_files < 0:
@@ -808,6 +858,12 @@ def train(args: argparse.Namespace) -> None:
         print(f"val files: {len(val_paths)}")
         print(f"val samples: {len(val_dataset)}")
     print(f"feature_dim: {feature_dim}")
+    print(f"physical batch size: {args.batch_size}")
+    print(f"gradient accumulation steps: {args.gradient_accumulation_steps}")
+    print(
+        "effective batch size (samples): "
+        f"{args.batch_size * args.gradient_accumulation_steps}"
+    )
     if class_weight is not None:
         print(f"class weight: {class_weight}")
         if class_weight_info["mode"] == "auto":
@@ -832,6 +888,7 @@ def train(args: argparse.Namespace) -> None:
             ignore_index=args.ignore_index,
             class_weight_info=class_weight_info,
             label_smoothing=args.label_smoothing,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
         )
 
         val_metrics = None
@@ -988,6 +1045,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label_smoothing", type=float, default=0.0)
 
     parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Accumulate point-weighted microbatch gradients before each optimizer step",
+    )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
