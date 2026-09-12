@@ -1,0 +1,8 @@
+schema_version,video_name,frame_order,frame_index,frame_stem,expected_xml_name,expected_saved_bbox_rows,action,reason_code,notes
+1,20250626_090828_2100,49,49,20250626_090828_2100__fo00049__fi00000049,20250626_090828_2100_00050.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
+1,20250626_094835_7950,13,13,20250626_094835_7950__fo00013__fi00000013,20250626_094835_7950_00014.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
+1,20250626_094835_7950,14,14,20250626_094835_7950__fo00014__fi00000014,20250626_094835_7950_00015.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
+1,20250626_094835_7950,15,15,20250626_094835_7950__fo00015__fi00000015,20250626_094835_7950_00016.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
+1,20250626_094835_7950,16,16,20250626_094835_7950__fo00016__fi00000016,20250626_094835_7950_00017.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
+1,20250626_094835_7950,17,17,20250626_094835_7950__fo00017__fi00000017,20250626_094835_7950_00018.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
+1,20250626_094835_7950,18,18,20250626_094835_7950__fo00018__fi00000018,20250626_094835_7950_00019.xml,1,invalidate_entire_frame,deleted_incorrect_bbox_xml,Confirmed intentional XML deletion; invalidate the entire frame.
