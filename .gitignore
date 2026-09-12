@@ -12,3 +12,4 @@ Stage2to4/dualtrack_checkpoints/
 *.pth
 *.ckpt
 CLAUDE.md
+.venvs/
