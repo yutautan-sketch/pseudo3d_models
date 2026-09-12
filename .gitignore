@@ -5,8 +5,10 @@ __pycache__/
 .venv/
 .codex/
 .devcontainer/
+.tmp/
 codex_config.toml
 Stage2to4/dualtrack_checkpoints/
 *.pt
 *.pth
 *.ckpt
+CLAUDE.md
