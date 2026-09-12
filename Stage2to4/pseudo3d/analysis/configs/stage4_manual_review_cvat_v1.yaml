@@ -1,0 +1,23 @@
+schema_version: 1
+config_name: stage4_manual_review_cvat_v1
+
+cvat:
+  format_name: Segmentation Mask 1.1
+  label_name: femur
+  background_index: 0
+  foreground_index: 1
+  convert_masks_to_polygons: false
+
+labels:
+  ignore: -1
+  background: 0
+  positive: 1
+  no_bbox_label: 0
+  bbox_inside_non_contour_label: ignore
+
+validation:
+  require_nonempty_manual_bbox: true
+  reject_bbox_union_outside_pixels: true
+
+output:
+  annotated_h5_suffix: _pointcloud_annotated_bboxrank_v2_phase4_manual_v1.h5
