@@ -14,6 +14,10 @@ if str(REPO_ROOT) not in sys.path:
 import h5py
 import numpy as np
 
+from pseudo3d.analysis.build_stage4_exclusion_manifest import (
+    build_excluded_manifest,
+    load_exclusions,
+)
 from pseudo3d.analysis.stage4_sampling_sweep_config import (
     DenseTeacherConfig,
     dense_teacher_config_from_mapping,
@@ -228,6 +232,84 @@ def test_preflight_rejects_unmatched_strict_xml(temp_dir: Path) -> None:
     assert "No strict VOC BBox matched" in rows[0].error
 
 
+def test_reversible_video_exclusion_manifest(temp_dir: Path) -> None:
+    source = temp_dir / "source.csv"
+    _write_manifest(
+        source,
+        [
+            {
+                "video_name": "video_keep",
+                "pseudo3d_h5": "keep.h5",
+                "voc_xml_root": "voc",
+                "split": "train",
+                "enabled": "true",
+                "notes": "original keep note",
+            },
+            {
+                "video_name": "20250626_090758_8000",
+                "pseudo3d_h5": "excluded.h5",
+                "voc_xml_root": "voc",
+                "split": "train",
+                "enabled": "true",
+                "notes": "original exclusion note",
+            },
+        ],
+    )
+    exclusions = temp_dir / "exclusions.csv"
+    with exclusions.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(EXCLUSION_FIELDNAMES))
+        writer.writeheader()
+        writer.writerow(
+            {
+                "video_name": "20250626_090758_8000",
+                "reason_code": "local_crop_tracking_drift",
+                "evidence_frames": "15-23",
+                "scope": "stage4_teacher",
+                "recoverable": "true",
+                "notes": "Preserve source data for recropping.",
+            }
+        )
+
+    fieldnames, rows, enabled = build_excluded_manifest(
+        source,
+        load_exclusions(exclusions),
+    )
+    assert fieldnames == [
+        "video_name",
+        "pseudo3d_h5",
+        "voc_xml_root",
+        "split",
+        "enabled",
+        "notes",
+    ]
+    assert len(rows) == 2
+    assert enabled == 1
+    assert rows[0]["enabled"] == "true"
+    assert rows[0]["notes"] == "original keep note"
+    assert rows[1]["enabled"] == "false"
+    assert "local_crop_tracking_drift" in rows[1]["notes"]
+    assert rows[1]["pseudo3d_h5"] == "excluded.h5"
+    assert rows[1]["voc_xml_root"] == "voc"
+
+    duplicate_exclusions = temp_dir / "duplicate_exclusions.csv"
+    duplicate_exclusions.write_text(
+        exclusions.read_text(encoding="utf-8")
+        + "20250626_090758_8000,duplicate,15-23,stage4_teacher,true,duplicate\n",
+        encoding="utf-8",
+    )
+    _assert_raises(ValueError, lambda: load_exclusions(duplicate_exclusions))
+
+
+EXCLUSION_FIELDNAMES = (
+    "video_name",
+    "reason_code",
+    "evidence_frames",
+    "scope",
+    "recoverable",
+    "notes",
+)
+
+
 def main() -> None:
     test_teacher_config_is_fixed_and_fingerprinted()
     print("[OK] fixed teacher config and fingerprint")
@@ -240,6 +322,8 @@ def main() -> None:
         print("[OK] manifest and teacher validation failures")
         test_preflight_rejects_unmatched_strict_xml(temp_dir)
         print("[OK] unmatched strict XML rejection")
+        test_reversible_video_exclusion_manifest(temp_dir)
+        print("[OK] reversible Stage 4 video exclusion manifest")
 
     print("Stage 4 sampling sweep manifest checks passed.")
 

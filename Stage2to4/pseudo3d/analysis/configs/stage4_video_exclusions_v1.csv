@@ -1,0 +1,2 @@
+video_name,reason_code,evidence_frames,scope,recoverable,notes
+20250626_090758_8000,local_crop_tracking_drift,15-23,stage4_teacher,true,Frame 14 is visible but subsequent annotated femur BBoxes leave the local crop on the left; preserve source H5 and XML for future recropping.
