@@ -30,7 +30,7 @@ export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/Point
 # ------------------------------------------------------------
 # Dummy data / training settings
 # ------------------------------------------------------------
-WORK_DIR="${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_training_check"
+WORK_DIR="${WORK_DIR:-${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_training_check_${POINTNEXT_NORM:-batchnorm}}"
 NUM_TRAIN=2
 NUM_VAL=1
 NUM_FRAMES=16
@@ -38,6 +38,7 @@ POINTS_PER_FRAME=64
 WINDOW_SIZE_FRAMES=8
 WINDOW_STRIDE_FRAMES=4
 BATCH_SIZE=1
+GRADIENT_ACCUMULATION_STEPS=2
 EPOCHS=1
 
 WIDTH=32
@@ -47,6 +48,8 @@ RADIUS=0.1
 NSAMPLE=16
 SA_LAYERS=2
 SA_USE_RES=1
+POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
+POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
 
 LR=1e-3
 WEIGHT_DECAY=0.0
@@ -62,8 +65,10 @@ echo "  train/val files : ${NUM_TRAIN}/${NUM_VAL}"
 echo "  frames/points   : ${NUM_FRAMES}/${POINTS_PER_FRAME}"
 echo "  window frames   : size=${WINDOW_SIZE_FRAMES}, stride=${WINDOW_STRIDE_FRAMES}"
 echo "  batch/epochs    : ${BATCH_SIZE}/${EPOCHS}"
+echo "  grad accumulation: ${GRADIENT_ACCUMULATION_STEPS}"
 echo "  model width     : ${WIDTH}"
 echo "  radius/nsample  : ${RADIUS}/${NSAMPLE}"
+echo "  norm/groups     : ${POINTNEXT_NORM}/${POINTNEXT_NORM_GROUPS}"
 
 cmd=(
   "${PYTHON}" "${SCRIPT_DIR}/checks/dummy/check_dummy_pointnext_s_training.py"
@@ -75,6 +80,7 @@ cmd=(
   --window_size_frames "${WINDOW_SIZE_FRAMES}"
   --window_stride_frames "${WINDOW_STRIDE_FRAMES}"
   --batch_size "${BATCH_SIZE}"
+  --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}"
   --epochs "${EPOCHS}"
   --width "${WIDTH}"
   --expansion "${EXPANSION}"
@@ -82,6 +88,8 @@ cmd=(
   --radius "${RADIUS}"
   --nsample "${NSAMPLE}"
   --sa_layers "${SA_LAYERS}"
+  --pointnext_norm "${POINTNEXT_NORM}"
+  --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
   --lr "${LR}"
   --weight_decay "${WEIGHT_DECAY}"
   --seed "${SEED}"

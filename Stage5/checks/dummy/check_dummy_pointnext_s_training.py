@@ -15,6 +15,7 @@ import torch
 
 from checks.dummy.check_dummy_pointnext_s_forward import make_window_dummy_h5
 from stage5.models import build_stage5_model
+from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
 
 
 def write_list_file(path: Path, h5_paths: list[Path]) -> None:
@@ -94,6 +95,8 @@ def run_training(
         str(args.window_stride_frames),
         "--batch_size",
         str(args.batch_size),
+        "--gradient_accumulation_steps",
+        str(args.gradient_accumulation_steps),
         "--epochs",
         str(args.epochs),
         "--lr",
@@ -114,6 +117,10 @@ def run_training(
         str(args.nsample),
         "--pointnext_sa_layers",
         str(args.sa_layers),
+        "--pointnext_norm",
+        args.pointnext_norm,
+        "--pointnext_norm_groups",
+        str(args.pointnext_norm_groups),
         "--num_workers",
         "0",
         "--device",
@@ -130,7 +137,13 @@ def run_training(
     subprocess.run(cmd, check=True)
 
 
-def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict:
+def validate_training_outputs(
+    output_dir: Path,
+    *,
+    expected_epochs: int,
+    expected_batch_size: int,
+    expected_gradient_accumulation_steps: int,
+) -> dict:
     required_paths = [
         output_dir / "config.json",
         output_dir / "metrics.jsonl",
@@ -152,6 +165,19 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
         raise AssertionError(f"Unexpected window_mode in config.json: {config.get('window_mode')}")
     if int(config.get("feature_dim", -1)) != 2:
         raise AssertionError(f"Unexpected feature_dim in config.json: {config.get('feature_dim')}")
+    if int(config.get("batch_size", 0)) != expected_batch_size:
+        raise AssertionError(
+            f"Unexpected batch size: {config.get('batch_size')} != {expected_batch_size}"
+        )
+    if (
+        int(config.get("gradient_accumulation_steps", 0))
+        != expected_gradient_accumulation_steps
+    ):
+        raise AssertionError(
+            "Unexpected gradient accumulation setting: "
+            f"{config.get('gradient_accumulation_steps')} != "
+            f"{expected_gradient_accumulation_steps}"
+        )
 
     records = []
     with (output_dir / "metrics.jsonl").open("r", encoding="utf-8") as f:
@@ -162,6 +188,11 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
     if len(records) != expected_epochs:
         raise AssertionError(f"Expected {expected_epochs} metric records, got {len(records)}")
 
+    num_train_samples = int(config["num_train_samples"])
+    expected_microbatches = math.ceil(num_train_samples / expected_batch_size)
+    expected_optimizer_steps = math.ceil(
+        expected_microbatches / expected_gradient_accumulation_steps
+    )
     for record in records:
         train = record.get("train") or {}
         val = record.get("val") or {}
@@ -180,6 +211,21 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
             ):
                 if key not in metrics:
                     raise AssertionError(f"{split} metrics do not contain {key}")
+        if int(train.get("debug_microbatch_count", -1)) != expected_microbatches:
+            raise AssertionError(
+                "Unexpected train microbatch count: "
+                f"{train.get('debug_microbatch_count')} != {expected_microbatches}"
+            )
+        if int(train.get("debug_optimizer_step_count", -1)) != expected_optimizer_steps:
+            raise AssertionError(
+                "Unexpected optimizer step count: "
+                f"{train.get('debug_optimizer_step_count')} != {expected_optimizer_steps}"
+            )
+        if (
+            int(train.get("debug_gradient_accumulation_steps", -1))
+            != expected_gradient_accumulation_steps
+        ):
+            raise AssertionError("Training metrics lost the gradient accumulation setting")
 
     return config
 
@@ -197,6 +243,8 @@ def validate_checkpoint_reload(output_dir: Path, config: dict, *, device: str) -
         pointnext_nsample=int(config["pointnext_nsample"]),
         pointnext_sa_layers=int(config["pointnext_sa_layers"]),
         pointnext_sa_use_res=bool(config["pointnext_sa_use_res"]),
+        pointnext_norm=str(config.get("pointnext_norm", "batchnorm")),
+        pointnext_norm_groups=int(config.get("pointnext_norm_groups", 8)),
     )
     result = model.load_state_dict(checkpoint["model"], strict=True)
     if result.missing_keys or result.unexpected_keys:
@@ -218,6 +266,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window_size_frames", type=int, default=8)
     parser.add_argument("--window_stride_frames", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--width", type=int, default=32)
     parser.add_argument("--expansion", type=int, default=4)
@@ -227,6 +276,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sa_layers", type=int, default=2)
     parser.add_argument("--no_sa_use_res", dest="sa_use_res", action="store_false")
     parser.set_defaults(sa_use_res=True)
+    parser.add_argument(
+        "--pointnext_norm", choices=sorted(SUPPORTED_POINTNEXT_NORMS), default="batchnorm"
+    )
+    parser.add_argument("--pointnext_norm_groups", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=123)
@@ -238,6 +291,8 @@ def main() -> None:
     args = parse_args()
     if args.device != "cuda":
         raise RuntimeError("PointNeXt-S training smoke test requires --device cuda")
+    if args.batch_size != 1:
+        raise ValueError("Padding-free PointNeXt-S training smoke test requires --batch_size 1")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available")
 
@@ -258,7 +313,12 @@ def main() -> None:
         output_dir=output_dir,
         args=args,
     )
-    config = validate_training_outputs(output_dir, expected_epochs=args.epochs)
+    config = validate_training_outputs(
+        output_dir,
+        expected_epochs=args.epochs,
+        expected_batch_size=args.batch_size,
+        expected_gradient_accumulation_steps=args.gradient_accumulation_steps,
+    )
     validate_checkpoint_reload(output_dir, config, device=args.device)
 
     print("PointNeXt-S Stage5 training CLI check passed.")

@@ -20,6 +20,7 @@ from tqdm import tqdm
 
 from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
 from stage5.models import build_stage5_model
+from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
 from stage5.training import SegmentationMetricAccumulator, build_loss
 
 
@@ -703,6 +704,8 @@ def build_model_kwargs(args: argparse.Namespace) -> dict[str, Any]:
                 "pointnext_nsample": args.pointnext_nsample,
                 "pointnext_sa_layers": args.pointnext_sa_layers,
                 "pointnext_sa_use_res": args.pointnext_sa_use_res,
+                "pointnext_norm": args.pointnext_norm,
+                "pointnext_norm_groups": args.pointnext_norm_groups,
             }
         )
     return kwargs
@@ -735,6 +738,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pointnext_nsample must be positive")
     if args.pointnext_sa_layers <= 0:
         raise ValueError("--pointnext_sa_layers must be positive")
+    if args.pointnext_norm_groups <= 0:
+        raise ValueError("--pointnext_norm_groups must be positive")
     if args.save_every < 0:
         raise ValueError("--save_every must be non-negative")
     if (
@@ -1007,6 +1012,13 @@ def parse_args() -> argparse.Namespace:
         help="Disable residual set-abstraction blocks in the PointNeXt-S wrapper",
     )
     parser.set_defaults(pointnext_sa_use_res=True)
+    parser.add_argument(
+        "--pointnext_norm",
+        choices=sorted(SUPPORTED_POINTNEXT_NORMS),
+        default="batchnorm",
+        help="Normalization used throughout the PointNeXt-S encoder/decoder/head (S5-11)",
+    )
+    parser.add_argument("--pointnext_norm_groups", type=int, default=8)
 
     parser.add_argument("--features", default="intensity,confidence")
     parser.add_argument("--num_points", type=int, default=8192)

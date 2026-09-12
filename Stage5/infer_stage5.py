@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from stage5.models import build_stage5_model
 from stage5.models.model_factory import _extract_state_dict
+from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
 from stage5.utils.feature_normalization import (
     normalize_frame_order,
     normalize_pixel_xy,
@@ -110,6 +111,8 @@ def resolve_model_kwargs(args: argparse.Namespace, config: dict[str, Any], featu
                 "pointnext_sa_use_res": bool(
                     value("pointnext_sa_use_res", config.get("sa_use_res", True))
                 ),
+                "pointnext_norm": str(value("pointnext_norm", "batchnorm")),
+                "pointnext_norm_groups": int(value("pointnext_norm_groups", 8)),
             }
         )
     return kwargs
@@ -468,6 +471,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pointnext_sa_layers", type=int, default=None)
     parser.add_argument("--pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_true", default=None)
     parser.add_argument("--no_pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_false")
+    parser.add_argument("--pointnext_norm", choices=sorted(SUPPORTED_POINTNEXT_NORMS), default=None)
+    parser.add_argument("--pointnext_norm_groups", type=int, default=None)
     parser.add_argument("--window_size_frames", type=int, default=None)
     parser.add_argument("--window_stride_frames", type=int, default=None)
     parser.add_argument("--include_tail_window", dest="include_tail_window", action="store_true", default=None)

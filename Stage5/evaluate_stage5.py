@@ -197,6 +197,8 @@ def model_from_checkpoint(
                 "pointnext_sa_use_res": bool(
                     config.get("pointnext_sa_use_res", config.get("sa_use_res", True))
                 ),
+                "pointnext_norm": str(config.get("pointnext_norm", "batchnorm")),
+                "pointnext_norm_groups": int(config.get("pointnext_norm_groups", 8)),
             }
         )
 

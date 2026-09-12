@@ -7,6 +7,8 @@ from typing import Any
 import torch
 
 from .base_segmentor import BasePointSegmentor
+from .norm_layers import resolve_pointnext_norm_args
+from .pointnext_decoder_patch import ensure_stage5_pointnext_decoder_registered
 
 
 class AttrDict(dict):
@@ -54,7 +56,10 @@ def build_pointnext_s_config(
     nsample: int = 16,
     sa_layers: int = 2,
     sa_use_res: bool = True,
+    norm: str = "batchnorm",
+    norm_groups: int = 8,
 ) -> AttrDict:
+    norm_args = resolve_pointnext_norm_args(norm, norm_groups)
     return _attrdict(
         {
             "NAME": "BaseSeg",
@@ -83,21 +88,23 @@ def build_pointnext_s_config(
                 "act_args": {
                     "act": "relu",
                 },
-                "norm_args": {
-                    "norm": "bn",
-                },
+                "norm_args": dict(norm_args),
             },
+            # NAME="Stage5PointNextDecoder", not the official "PointNextDecoder":
+            # the official class accepts norm_args/act_args via **kwargs but never
+            # actually uses them (see pointnext_decoder_patch.py), so decoder norm
+            # would otherwise stay hardcoded to FeaturePropogation's own bn1d default
+            # regardless of what is configured here.
             "decoder_args": {
-                "NAME": "PointNextDecoder",
+                "NAME": "Stage5PointNextDecoder",
+                "norm_args": dict(norm_args),
             },
             "cls_args": {
                 "NAME": "SegHead",
                 "num_classes": int(num_classes),
                 "in_channels": None,
                 "dropout": float(dropout),
-                "norm_args": {
-                    "norm": "bn",
-                },
+                "norm_args": dict(norm_args),
             },
         }
     )
@@ -118,6 +125,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
         nsample: int = 16,
         sa_layers: int = 2,
         sa_use_res: bool = True,
+        pointnext_norm: str = "batchnorm",
+        pointnext_norm_groups: int = 8,
     ) -> None:
         super().__init__(num_classes=num_classes, feature_dim=feature_dim)
         self.width = int(width)
@@ -127,6 +136,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
         self.nsample = int(nsample)
         self.sa_layers = int(sa_layers)
         self.sa_use_res = bool(sa_use_res)
+        self.pointnext_norm = str(pointnext_norm)
+        self.pointnext_norm_groups = int(pointnext_norm_groups)
 
         _ensure_openpoints_importable()
         try:
@@ -136,6 +147,7 @@ class PointNeXtSSegmentor(BasePointSegmentor):
                 "Failed to import OpenPoints. Ensure PointNeXt/openpoints dependencies "
                 "are installed in the active environment."
             ) from exc
+        ensure_stage5_pointnext_decoder_registered()
 
         cfg = build_pointnext_s_config(
             num_classes=self.num_classes,
@@ -147,6 +159,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
             nsample=self.nsample,
             sa_layers=self.sa_layers,
             sa_use_res=self.sa_use_res,
+            norm=self.pointnext_norm,
+            norm_groups=self.pointnext_norm_groups,
         )
         self.pointnext = build_model_from_cfg(cfg)
 
@@ -201,6 +215,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
                 "nsample": self.nsample,
                 "sa_layers": self.sa_layers,
                 "sa_use_res": self.sa_use_res,
+                "pointnext_norm": self.pointnext_norm,
+                "pointnext_norm_groups": self.pointnext_norm_groups,
             }
         )
         return config
@@ -219,6 +235,8 @@ def pointnext_s(
     nsample = int(kwargs.pop("nsample", kwargs.pop("pointnext_nsample", 16)))
     sa_layers = int(kwargs.pop("sa_layers", kwargs.pop("pointnext_sa_layers", 2)))
     sa_use_res = bool(kwargs.pop("sa_use_res", kwargs.pop("pointnext_sa_use_res", True)))
+    pointnext_norm = str(kwargs.pop("norm", kwargs.pop("pointnext_norm", "batchnorm")))
+    pointnext_norm_groups = int(kwargs.pop("norm_groups", kwargs.pop("pointnext_norm_groups", 8)))
 
     # Accepted for compatibility with train_stage5.py's shared model kwargs.
     kwargs.pop("depth", None)
@@ -238,4 +256,6 @@ def pointnext_s(
         nsample=nsample,
         sa_layers=sa_layers,
         sa_use_res=sa_use_res,
+        pointnext_norm=pointnext_norm,
+        pointnext_norm_groups=pointnext_norm_groups,
     )

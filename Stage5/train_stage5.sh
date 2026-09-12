@@ -115,6 +115,12 @@ POINTNEXT_NSAMPLE=32
 POINTNEXT_SA_LAYERS=2
 POINTNEXT_SA_USE_RES=1
 
+# Normalization used throughout the PointNeXt-S encoder/decoder/head (S5-11).
+# "batchnorm" is the historical default. For a GroupNorm pilot, set this to
+# "groupnorm" and point INIT_CHECKPOINT at the GroupNorm-transferred init
+# checkpoint produced by checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh.
+POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
+POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
 
 # Sampling knobs.
 # In WINDOW_MODE="overlap", each frame-order window is one training sample and
@@ -394,7 +400,7 @@ if [[ "${CLASS_WEIGHT}" == "auto" || "${CLASS_WEIGHT}" == "pointnext_auto" ]]; t
   echo "  auto cls weight: epsilon=${AUTO_CLASS_WEIGHT_EPSILON}, normalize=${NORMALIZE_AUTO_CLASS_WEIGHT}"
 fi
 if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
-  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}"
+  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}, norm=${POINTNEXT_NORM}, norm_groups=${POINTNEXT_NORM_GROUPS}"
 fi
 
 cmd=(
@@ -417,6 +423,8 @@ cmd=(
   --pointnext_radius "${POINTNEXT_RADIUS}"
   --pointnext_nsample "${POINTNEXT_NSAMPLE}"
   --pointnext_sa_layers "${POINTNEXT_SA_LAYERS}"
+  --pointnext_norm "${POINTNEXT_NORM}"
+  --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
   --num_workers "${NUM_WORKERS}"
   --device "${DEVICE}"
   --seed "${SEED}"
