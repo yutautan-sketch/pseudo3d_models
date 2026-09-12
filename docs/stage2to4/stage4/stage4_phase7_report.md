@@ -226,7 +226,7 @@ cleanup導入前および導入後の双方で3件の処理が完了し、`proce
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_annotation_schema_propagation.py
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_collect_schema_propagation.py
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
-  ../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
+  ../../../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
 /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_combined_v2_annotated_ply.py
 ```
 
@@ -555,10 +555,10 @@ strict source visualization: 更新完了、目視確認完了
 
 ### 14.3 Stage 5
 
-* `../Stage5/stage5/utils/h5_io.py`
-* `../Stage5/train_stage5.sh`
-* `../Stage5/infer_stage5.sh`
-* `../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py`
+* `../../../Stage5/stage5/utils/h5_io.py`
+* `../../../Stage5/train_stage5.sh`
+* `../../../Stage5/infer_stage5.sh`
+* `../../../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py`
 
 ### 14.4 Phase 7 checker
 
