@@ -161,6 +161,8 @@ def audit_file(
             if not np.isfinite(bbox).all():
                 continue
             x1, y1, x2, y2 = bbox
+            if x2 <= x1 or y2 <= y1:
+                continue
             left = int(np.floor(max(0.0, x1)))
             top = int(np.floor(max(0.0, y1)))
             right = int(np.ceil(x2))

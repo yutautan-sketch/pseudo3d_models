@@ -4,10 +4,10 @@ set -euo pipefail
 # ------------------------------------------------------------
 # Padding-free Stage 5 training on collected annotated pseudo-3D H5 files.
 #
-# This script expects the accepted Stage 4 teacher v6 H5 files collected into
+# This script expects the accepted Stage 4 teacher v7 H5 files collected into
 # one flat directory by:
 #
-#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
+#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v7_crop_quality.sh
 #
 # Edit the path/parameter blocks below, then run:
 #
@@ -46,20 +46,26 @@ EX_DATE="${EX_DATE:-260908}"
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
 
 STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
-STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
+STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v7_cvat_authoritative_crop_quality_v1}"
 STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
 INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
 
 MODE="${MODE:-foreground}"
 H5_PATTERN="${H5_PATTERN:-*_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
-EXPECTED_INPUT_FILES="${EXPECTED_INPUT_FILES:-181}"
-EXPECTED_CVAT_VIDEOS="${EXPECTED_CVAT_VIDEOS:-59}"
-EXPECTED_CVAT_FRAMES="${EXPECTED_CVAT_FRAMES:-3014}"
+EXPECTED_INPUT_FILES="${EXPECTED_INPUT_FILES:-180}"
+EXPECTED_CVAT_VIDEOS="${EXPECTED_CVAT_VIDEOS:-58}"
+EXPECTED_CVAT_FRAMES="${EXPECTED_CVAT_FRAMES:-2960}"
 EXPECTED_XML_INVALIDATED_FRAMES="${EXPECTED_XML_INVALIDATED_FRAMES:-7}"
 EXPECTED_XML_INVALIDATED_VIDEOS="${EXPECTED_XML_INVALIDATED_VIDEOS:-2}"
 EXPECTED_XML_REMOVED_POSITIVE_POINTS="${EXPECTED_XML_REMOVED_POSITIVE_POINTS:-2124}"
 EXPECTED_XML_REMOVED_BBOX_ROWS="${EXPECTED_XML_REMOVED_BBOX_ROWS:-7}"
-EXPECTED_EXCLUDED_VIDEO="${EXPECTED_EXCLUDED_VIDEO:-20250626_090758_8000}"
+EXPECTED_CROP_INVALIDATED_FRAMES="${EXPECTED_CROP_INVALIDATED_FRAMES:-1}"
+EXPECTED_CROP_INVALIDATED_VIDEOS="${EXPECTED_CROP_INVALIDATED_VIDEOS:-1}"
+EXPECTED_CROP_REMOVED_POSITIVE_POINTS="${EXPECTED_CROP_REMOVED_POSITIVE_POINTS:-0}"
+EXPECTED_CROP_REMOVED_IGNORE_POINTS="${EXPECTED_CROP_REMOVED_IGNORE_POINTS:-6}"
+EXPECTED_CROP_REMOVED_BBOX_ROWS="${EXPECTED_CROP_REMOVED_BBOX_ROWS:-1}"
+EXPECTED_EXCLUDED_VIDEOS="${EXPECTED_EXCLUDED_VIDEOS:-20250626_090758_8000,20250626_090652_6340}"
+PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 
 # Optional quick subset. 0 means all files.
 MAX_TRAIN_FILES=0
@@ -75,7 +81,7 @@ OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
 EPOCHS="${EPOCHS:-200}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-8}"
-PREFIX="w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep${EPOCHS}_bs${BATCH_SIZE}_acc${GRADIENT_ACCUMULATION_STEPS}_nopad"
+PREFIX="w16_s8_bboxrankv7_cvatcropq_glocal_ce_smooth00_auto_weight_lr1e3_ep${EPOCHS}_bs${BATCH_SIZE}_acc${GRADIENT_ACCUMULATION_STEPS}_nopad"
 EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
 
@@ -122,6 +128,11 @@ POINTNEXT_SA_USE_RES=1
 POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
 POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
 
+# Effective training label for BBox non-contour points (S5-12).
+# "bbox_noncontour_ignore" is the historical default (no-op). Set to
+# "bbox_noncontour_background" for the Run B label-policy pilot.
+LABEL_POLICY="${LABEL_POLICY:-bbox_noncontour_ignore}"
+
 # Sampling knobs.
 # In WINDOW_MODE="overlap", each frame-order window is one training sample and
 # NUM_POINTS/SAMPLING_MODE are kept only for legacy non-window runs.
@@ -139,7 +150,7 @@ EXCLUDE_IGNORE_IN_SAMPLING=0
 #   ""       : no class weight
 #   "auto"   : PointNeXt-style 1 / (class_frequency + epsilon), normalized to mean 1
 #   "1,4"    : manual class weights
-CLASS_WEIGHT="auto"
+CLASS_WEIGHT="${CLASS_WEIGHT:-auto}"
 AUTO_CLASS_WEIGHT_EPSILON=0.02
 NORMALIZE_AUTO_CLASS_WEIGHT=1
 LABEL_SMOOTHING=0.0
@@ -152,10 +163,14 @@ if [[ "${GRADIENT_ACCUMULATION_STEPS}" -le 0 ]]; then
   echo "GRADIENT_ACCUMULATION_STEPS must be positive" >&2
   exit 1
 fi
+if [[ "${PREFLIGHT_ONLY}" != "0" && "${PREFLIGHT_ONLY}" != "1" ]]; then
+  echo "PREFLIGHT_ONLY must be 0 or 1; got ${PREFLIGHT_ONLY}" >&2
+  exit 1
+fi
 
 if [[ ! -d "${INPUT_DIR}" ]]; then
   echo "Input directory not found: ${INPUT_DIR}" >&2
-  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh first, or set INPUT_DIR." >&2
+  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v7_crop_quality.sh first, or set INPUT_DIR." >&2
   exit 1
 fi
 
@@ -167,7 +182,7 @@ if [[ "${num_inputs}" -eq 0 ]]; then
   exit 1
 fi
 if [[ "${num_inputs}" -ne "${EXPECTED_INPUT_FILES}" ]]; then
-  echo "Stage 5 requires the complete ${DATE} teacher v6 dataset:" >&2
+  echo "Stage 5 requires the complete ${DATE} teacher v7 dataset:" >&2
   echo "  expected files=${EXPECTED_INPUT_FILES}" >&2
   echo "  matched files=${num_inputs}" >&2
   echo "  INPUT_DIR=${INPUT_DIR}" >&2
@@ -186,7 +201,12 @@ fi
   "${EXPECTED_XML_INVALIDATED_VIDEOS}" \
   "${EXPECTED_XML_REMOVED_POSITIVE_POINTS}" \
   "${EXPECTED_XML_REMOVED_BBOX_ROWS}" \
-  "${EXPECTED_EXCLUDED_VIDEO}" <<'PY'
+  "${EXPECTED_CROP_INVALIDATED_FRAMES}" \
+  "${EXPECTED_CROP_INVALIDATED_VIDEOS}" \
+  "${EXPECTED_CROP_REMOVED_POSITIVE_POINTS}" \
+  "${EXPECTED_CROP_REMOVED_IGNORE_POINTS}" \
+  "${EXPECTED_CROP_REMOVED_BBOX_ROWS}" \
+  "${EXPECTED_EXCLUDED_VIDEOS}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -203,7 +223,14 @@ expected_invalidated_frames = int(sys.argv[7])
 expected_invalidated_videos = int(sys.argv[8])
 expected_removed_positive = int(sys.argv[9])
 expected_removed_bbox_rows = int(sys.argv[10])
-expected_excluded_video = sys.argv[11]
+expected_crop_invalidated_frames = int(sys.argv[11])
+expected_crop_invalidated_videos = int(sys.argv[12])
+expected_crop_removed_positive = int(sys.argv[13])
+expected_crop_removed_ignore = int(sys.argv[14])
+expected_crop_removed_bbox_rows = int(sys.argv[15])
+expected_excluded_videos = {
+    value.strip() for value in sys.argv[16].split(",") if value.strip()
+}
 paths = sorted(input_dir.glob(pattern))
 if len(paths) != expected:
     raise SystemExit(f"H5 preflight count mismatch: {len(paths)} != {expected}")
@@ -223,6 +250,13 @@ removed_positive = 0
 removed_bbox_rows = 0
 manifest_hashes = set()
 manifest_fingerprints = set()
+crop_invalidated_videos = 0
+crop_invalidated_frames = 0
+crop_removed_positive = 0
+crop_removed_ignore = 0
+crop_removed_bbox_rows = 0
+crop_manifest_hashes = set()
+crop_manifest_fingerprints = set()
 for path in paths:
     with h5py.File(path, "r") as handle:
         label_mode = text(handle.attrs.get("label_mode", ""))
@@ -251,6 +285,12 @@ for path in paths:
             "xml_annotation_invalidation/after_ignore_points",
             "xml_annotation_invalidation/before_positive_points",
             "xml_annotation_invalidation/removed_frame_annotation_rows",
+            "crop_quality_invalidation/frame_order",
+            "crop_quality_invalidation/after_positive_points",
+            "crop_quality_invalidation/after_ignore_points",
+            "crop_quality_invalidation/before_positive_points",
+            "crop_quality_invalidation/before_ignore_points",
+            "crop_quality_invalidation/removed_frame_annotation_rows",
         )
         missing = [name for name in required if name not in handle]
         if missing:
@@ -302,7 +342,7 @@ for path in paths:
         manifest_hashes.add(manifest_hash)
         manifest_fingerprints.add(manifest_fingerprint)
         expected_group_attrs = {
-            "teacher_version": expected_teacher,
+            "teacher_version": "bboxrank_v6_cvat_authoritative_xml_invalidation_v1",
             "source_teacher_version": "bboxrank_v5_cvat_authoritative_v1",
             "policy": "explicit_deleted_xml_frame_tombstone",
             "frame_authority": "xml_deletion_manifest",
@@ -337,17 +377,81 @@ for path in paths:
                 .astype(np.int64)
                 .sum()
             )
+
+        crop = handle["crop_quality_invalidation"]
+        crop_count = len(crop["frame_order"])
+        crop_invalidated_frames += crop_count
+        crop_invalidated_videos += int(crop_count > 0)
+        crop_manifest_hash = text(crop.attrs.get("manifest_sha256", ""))
+        crop_manifest_fingerprint = text(
+            crop.attrs.get("manifest_fingerprint", "")
+        )
+        if not crop_manifest_hash or not crop_manifest_fingerprint:
+            raise SystemExit(f"Missing crop invalidation manifest identity in {path}")
+        crop_manifest_hashes.add(crop_manifest_hash)
+        crop_manifest_fingerprints.add(crop_manifest_fingerprint)
+        expected_crop_attrs = {
+            "teacher_version": expected_teacher,
+            "source_teacher_version": (
+                "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
+            ),
+            "policy": "fully-outside local-crop frame -> all background",
+            "frame_authority": "crop_quality_invalidation_manifest",
+        }
+        for name, expected_value in expected_crop_attrs.items():
+            actual = text(crop.attrs.get(name, ""))
+            if actual != expected_value:
+                raise SystemExit(
+                    f"Unexpected crop invalidation {name} in {path}: {actual!r}"
+                )
+        if crop_count:
+            after_positive = crop["after_positive_points"][:].astype(np.int64)
+            after_ignore = crop["after_ignore_points"][:].astype(np.int64)
+            if np.any(after_positive != 0) or np.any(after_ignore != 0):
+                raise SystemExit(
+                    f"Crop-invalidated frame retains non-background labels in {path}"
+                )
+            for order in crop["frame_order"][:].astype(np.int64):
+                selected = frame_order == order
+                if not np.any(selected) or not np.all(point_label[selected] == 0):
+                    raise SystemExit(
+                        f"Crop-invalidated frame_order={order} is not all background "
+                        f"in {path}"
+                    )
+                if not np.all(valid_mask[selected]):
+                    raise SystemExit(
+                        f"Crop-invalidated frame_order={order} is not fully valid "
+                        f"in {path}"
+                    )
+            crop_removed_positive += int(
+                crop["before_positive_points"][:].astype(np.int64).sum()
+            )
+            crop_removed_ignore += int(
+                crop["before_ignore_points"][:].astype(np.int64).sum()
+            )
+            crop_removed_bbox_rows += int(
+                crop["removed_frame_annotation_rows"][:].astype(np.int64).sum()
+            )
         if not video_name:
             raise SystemExit(f"Missing video_name in {path}")
         if video_name in videos:
             raise SystemExit(f"Duplicate video_name: {video_name}")
         videos.add(video_name)
-if expected_excluded_video in videos:
-    raise SystemExit(f"Excluded crop-failure video is present: {expected_excluded_video}")
+unexpected_excluded = videos & expected_excluded_videos
+if unexpected_excluded:
+    raise SystemExit(
+        f"Excluded crop-failure videos are present: {sorted(unexpected_excluded)}"
+    )
 if len(manifest_hashes) != 1 or len(manifest_fingerprints) != 1:
     raise SystemExit(
-        "v6 files do not share one invalidation manifest identity: "
+        "v7 files do not share one XML invalidation manifest identity: "
         f"sha={len(manifest_hashes)}, fingerprint={len(manifest_fingerprints)}"
+    )
+if len(crop_manifest_hashes) != 1 or len(crop_manifest_fingerprints) != 1:
+    raise SystemExit(
+        "v7 files do not share one crop invalidation manifest identity: "
+        f"sha={len(crop_manifest_hashes)}, "
+        f"fingerprint={len(crop_manifest_fingerprints)}"
     )
 expected_counts = {
     "cvat_videos": (cvat_videos, expected_cvat_videos),
@@ -356,19 +460,52 @@ expected_counts = {
     "invalidated_videos": (invalidated_videos, expected_invalidated_videos),
     "removed_positive": (removed_positive, expected_removed_positive),
     "removed_bbox_rows": (removed_bbox_rows, expected_removed_bbox_rows),
+    "crop_invalidated_frames": (
+        crop_invalidated_frames,
+        expected_crop_invalidated_frames,
+    ),
+    "crop_invalidated_videos": (
+        crop_invalidated_videos,
+        expected_crop_invalidated_videos,
+    ),
+    "crop_removed_positive": (
+        crop_removed_positive,
+        expected_crop_removed_positive,
+    ),
+    "crop_removed_ignore": (
+        crop_removed_ignore,
+        expected_crop_removed_ignore,
+    ),
+    "crop_removed_bbox_rows": (
+        crop_removed_bbox_rows,
+        expected_crop_removed_bbox_rows,
+    ),
 }
 for name, (actual, expected_value) in expected_counts.items():
     if actual != expected_value:
-        raise SystemExit(f"v6 {name} mismatch: {actual} != {expected_value}")
+        raise SystemExit(f"v7 {name} mismatch: {actual} != {expected_value}")
 print(
-    "Stage 5 teacher v6 input preflight passed: "
+    "Stage 5 teacher v7 input preflight passed: "
     f"files={len(paths)}, videos={len(videos)}, "
     f"cvat_videos={cvat_videos}, cvat_frames={cvat_frames}, "
     f"invalidated_videos={invalidated_videos}, "
     f"invalidated_frames={invalidated_frames}, "
-    f"removed_positive={removed_positive}, removed_bbox_rows={removed_bbox_rows}"
+    f"removed_positive={removed_positive}, removed_bbox_rows={removed_bbox_rows}, "
+    f"crop_invalidated_videos={crop_invalidated_videos}, "
+    f"crop_invalidated_frames={crop_invalidated_frames}, "
+    f"crop_removed_ignore={crop_removed_ignore}, "
+    f"crop_removed_bbox_rows={crop_removed_bbox_rows}"
 )
 PY
+
+if [[ "${PREFLIGHT_ONLY}" == "1" ]]; then
+  echo "Stage 5 teacher v7 input preflight-only run complete; training was not started."
+  echo "  input dir     : ${INPUT_DIR}"
+  echo "  h5 pattern    : ${H5_PATTERN}"
+  echo "  matched files : ${num_inputs}"
+  echo "  teacher       : ${STAGE4_TEACHER}"
+  exit 0
+fi
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -377,7 +514,7 @@ echo "  input dir      : ${INPUT_DIR}"
 echo "  h5 pattern     : ${H5_PATTERN}"
 echo "  matched files  : ${num_inputs}"
 echo "  teacher        : ${STAGE4_TEACHER}"
-echo "  label policy   : CVAT-reviewed=authoritative; unreviewed=inherited; XML-invalidated=background"
+echo "  label policy   : CVAT-reviewed=authoritative; unreviewed=inherited; XML/crop-invalidated=background"
 echo "  output dir     : ${OUTPUT_DIR}"
 echo "  model          : ${MODEL_NAME}"
 echo "  epochs         : ${EPOCHS}"
@@ -401,6 +538,7 @@ if [[ "${CLASS_WEIGHT}" == "auto" || "${CLASS_WEIGHT}" == "pointnext_auto" ]]; t
 fi
 if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
   echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}, norm=${POINTNEXT_NORM}, norm_groups=${POINTNEXT_NORM_GROUPS}"
+  echo "  label_policy   : ${LABEL_POLICY}"
 fi
 
 cmd=(
@@ -425,6 +563,7 @@ cmd=(
   --pointnext_sa_layers "${POINTNEXT_SA_LAYERS}"
   --pointnext_norm "${POINTNEXT_NORM}"
   --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
+  --label_policy "${LABEL_POLICY}"
   --num_workers "${NUM_WORKERS}"
   --device "${DEVICE}"
   --seed "${SEED}"

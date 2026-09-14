@@ -12,6 +12,7 @@ Stage2to4由来の文書は`stage2to4/`配下に、Stage5由来の文書は`stag
 - `stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`: Phase 5 full-video CVAT運用・実装記録
 - `stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`: full-video CVAT snapshotを最終positiveの唯一の根拠にする反映改修計画
 - `stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`: 削除済み誤BBox XMLの無効化、teacher v6構築・可視化・最終受入記録
+- `stage2to4/stage4/stage4_crop_quality_stray_ignore_investigation_plan.md`: teacher v6のcrop追従不良とBBox外ignoreを分離して調査・補正する計画
 - `stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`: BBox境界接触を用いた自動輪郭選択の小規模見直し案
 - `stage2to4/stage4/stage4_v4_point_label_visualization_plan.md`: teacher v4の保存済み3値point labelを直接確認する可視化計画
 - `stage2to4/stage4/cvat_segmentation_mask_1_1_import_spec.md`: CVATセグメンテーションマスク1:1インポート仕様

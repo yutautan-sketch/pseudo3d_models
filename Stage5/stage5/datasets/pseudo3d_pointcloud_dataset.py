@@ -14,6 +14,7 @@ from stage5.utils.feature_normalization import (
     normalize_xyz,
 )
 from stage5.utils.h5_io import load_stage5_pointcloud_h5, read_path_list
+from stage5.utils.label_policy import DEFAULT_LABEL_POLICY, apply_bbox_noncontour_label_policy
 from stage5.utils.frame_windows import (
     FrameWindow,
     generate_frame_order_windows,
@@ -88,6 +89,7 @@ class Pseudo3DPointCloudDataset(Dataset):
         include_tail_window: bool = True,
         seed: int | None = None,
         cache_data: bool = False,
+        label_policy: str = DEFAULT_LABEL_POLICY,
     ) -> None:
         self.h5_paths = _coerce_paths(h5_paths)
         if not self.h5_paths:
@@ -112,6 +114,7 @@ class Pseudo3DPointCloudDataset(Dataset):
         )
         self.seed = seed
         self.cache_data = bool(cache_data)
+        self.label_policy = str(label_policy)
         self._cache: dict[int, dict[str, Any]] = {}
         self.samples = self._build_sample_index()
 
@@ -134,9 +137,34 @@ class Pseudo3DPointCloudDataset(Dataset):
         if self.cache_data and index in self._cache:
             return self._cache[index]
         data = load_stage5_pointcloud_h5(self.h5_paths[index])
+        self._apply_label_policy(data, h5_path=self.h5_paths[index])
         if self.cache_data:
             self._cache[index] = data
         return data
+
+    def _apply_label_policy(self, data: dict[str, Any], *, h5_path: Path) -> None:
+        """Replace data['point_label']/['valid_mask'] with effective training labels
+        in place, keeping the source arrays under separate keys for diagnostics
+        (S5-12). No-op arrays are still copied so callers never see source H5
+        arrays aliased through the effective keys.
+        """
+        source_point_label = data["point_label"]
+        source_valid_mask = data["valid_mask"]
+        effective_label, effective_valid_mask, stats = apply_bbox_noncontour_label_policy(
+            self.label_policy,
+            point_label=source_point_label,
+            valid_mask=source_valid_mask,
+            frame_order=data.get("frame_order"),
+            pixel_xy=data.get("pixel_xy"),
+            bbox_frame_order=data.get("bbox_frame_order"),
+            bbox_local_xyxy=data.get("bbox_local_xyxy"),
+            context=f"label_policy={self.label_policy!r} for {h5_path}",
+        )
+        data["source_point_label"] = source_point_label
+        data["source_valid_mask"] = source_valid_mask
+        data["point_label"] = effective_label
+        data["valid_mask"] = effective_valid_mask
+        data["label_policy_stats"] = stats
 
     def _load_frame_order_only(self, h5_index: int) -> np.ndarray:
         if self.cache_data and h5_index in self._cache:

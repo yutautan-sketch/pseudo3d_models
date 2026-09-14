@@ -44,6 +44,9 @@ SUMMARY_FIELDS = (
     "xml_invalidation_frames",
     "xml_invalidation_manifest_sha256",
     "xml_invalidation_fingerprint",
+    "crop_invalidation_frames",
+    "crop_invalidation_manifest_sha256",
+    "crop_invalidation_fingerprint",
     "positive_outside_cvat_mask_points",
     "cvat_point_mask_mismatch_points",
     "source_counts_json",
@@ -110,6 +113,7 @@ def _existing_summary(
     require_cvat_masks: bool,
     require_cvat_authoritative: bool,
     require_xml_invalidation: bool,
+    require_crop_quality_invalidation: bool,
 ) -> dict[str, Any]:
     summary_path = output_dir / "summary.json"
     if not summary_path.is_file():
@@ -126,8 +130,12 @@ def _existing_summary(
         if authority not in {
             "cvat_snapshot",
             "cvat_snapshot_with_xml_invalidation",
+            "cvat_snapshot_with_crop_quality_invalidation",
+            "cvat_snapshot_with_xml_and_crop_invalidation",
             "inherited",
             "inherited_with_xml_invalidation",
+            "inherited_with_crop_quality_invalidation",
+            "inherited_with_xml_and_crop_invalidation",
         }:
             raise ValueError(
                 f"Existing output lacks authoritative label contract: {output_dir}"
@@ -145,33 +153,33 @@ def _existing_summary(
         )
         cvat_mask_frames = int(summary.get("cvat_mask_frames", -1))
         suppressed_frames = int(summary.get("suppressed_cvat_mask_frames", 0))
-        if authority == "cvat_snapshot" and (
-            authoritative_frames != int(summary["num_frames"])
-            or cvat_mask_frames != authoritative_frames
-        ):
-            raise ValueError(
-                f"Existing output does not cover every authoritative frame: {output_dir}"
+        if str(authority).startswith("cvat_snapshot"):
+            expected_suppressed = int(summary.get("xml_invalidation_frames", 0)) + int(
+                summary.get("crop_invalidation_frames", 0)
             )
-        if authority == "cvat_snapshot_with_xml_invalidation" and (
-            authoritative_frames != int(summary["num_frames"])
-            or cvat_mask_frames + suppressed_frames != authoritative_frames
-            or suppressed_frames != int(summary["xml_invalidation_frames"])
-        ):
-            raise ValueError(
-                "Existing output does not suppress exactly the invalidated "
-                f"CVAT frames: {output_dir}"
-            )
-        if authority in {"inherited", "inherited_with_xml_invalidation"} and (
+            if (
+                authoritative_frames != int(summary["num_frames"])
+                or cvat_mask_frames + suppressed_frames != authoritative_frames
+                or suppressed_frames != expected_suppressed
+            ):
+                raise ValueError(
+                    "Existing output does not suppress exactly all invalidated "
+                    f"CVAT frames: {output_dir}"
+                )
+        if str(authority).startswith("inherited") and (
             authoritative_frames != 0 or cvat_mask_frames != 0
         ):
             raise ValueError(
                 f"Inherited output unexpectedly contains CVAT frames: {output_dir}"
             )
     if require_xml_invalidation:
-        if summary.get("contour_teacher_schema") != (
-            "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
-        ):
-            raise ValueError(f"Existing output is not v6 XML invalidation: {output_dir}")
+        if summary.get("contour_teacher_schema") not in {
+            "bboxrank_v6_cvat_authoritative_xml_invalidation_v1",
+            "bboxrank_v7_cvat_authoritative_crop_quality_v1",
+        }:
+            raise ValueError(
+                f"Existing output lacks v6 XML invalidation history: {output_dir}"
+            )
         for name in (
             "xml_invalidation_manifest_sha256",
             "xml_invalidation_fingerprint",
@@ -180,6 +188,19 @@ def _existing_summary(
                 raise ValueError(
                     f"Existing output lacks {name}: {output_dir}"
                 )
+    if require_crop_quality_invalidation:
+        if summary.get("contour_teacher_schema") != (
+            "bboxrank_v7_cvat_authoritative_crop_quality_v1"
+        ):
+            raise ValueError(
+                f"Existing output is not v7 crop-quality invalidation: {output_dir}"
+            )
+        for name in (
+            "crop_invalidation_manifest_sha256",
+            "crop_invalidation_fingerprint",
+        ):
+            if not str(summary.get(name, "")):
+                raise ValueError(f"Existing output lacks {name}: {output_dir}")
     if summary.get("annotated_h5_sha256") != file_sha256(input_h5):
         raise ValueError(f"Existing output input checksum mismatch: {output_dir}")
     pseudo3d_h5 = Path(str(summary.get("pseudo3d_h5", "")))
@@ -263,6 +284,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     require_cvat_masks=args.cvat_review_root is not None,
                     require_cvat_authoritative=args.require_cvat_authoritative,
                     require_xml_invalidation=args.require_xml_invalidation,
+                    require_crop_quality_invalidation=(
+                        args.require_crop_quality_invalidation
+                    ),
                 )
                 status = "skipped_verified"
             else:
@@ -285,15 +309,31 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 status = "processed"
             if args.require_xml_invalidation:
-                if summary.get("contour_teacher_schema") != (
-                    "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
-                ):
+                if summary.get("contour_teacher_schema") not in {
+                    "bboxrank_v6_cvat_authoritative_xml_invalidation_v1",
+                    "bboxrank_v7_cvat_authoritative_crop_quality_v1",
+                }:
                     raise ValueError(
-                        f"Visualization input is not v6 XML invalidation: {path}"
+                        f"Visualization input lacks XML invalidation history: {path}"
                     )
                 for name in (
                     "xml_invalidation_manifest_sha256",
                     "xml_invalidation_fingerprint",
+                ):
+                    if not str(summary.get(name, "")):
+                        raise ValueError(
+                            f"Visualization summary lacks {name}: {path}"
+                        )
+            if args.require_crop_quality_invalidation:
+                if summary.get("contour_teacher_schema") != (
+                    "bboxrank_v7_cvat_authoritative_crop_quality_v1"
+                ):
+                    raise ValueError(
+                        f"Visualization input is not v7 crop invalidation: {path}"
+                    )
+                for name in (
+                    "crop_invalidation_manifest_sha256",
+                    "crop_invalidation_fingerprint",
                 ):
                     if not str(summary.get(name, "")):
                         raise ValueError(
@@ -336,6 +376,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "xml_invalidation_fingerprint": summary.get(
                     "xml_invalidation_fingerprint", ""
                 ),
+                "crop_invalidation_frames": summary.get(
+                    "crop_invalidation_frames", 0
+                ),
+                "crop_invalidation_manifest_sha256": summary.get(
+                    "crop_invalidation_manifest_sha256", ""
+                ),
+                "crop_invalidation_fingerprint": summary.get(
+                    "crop_invalidation_fingerprint", ""
+                ),
                 "positive_outside_cvat_mask_points": summary.get(
                     "positive_outside_cvat_mask_points", 0
                 ),
@@ -377,6 +426,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "xml_invalidation_frames": "",
                 "xml_invalidation_manifest_sha256": "",
                 "xml_invalidation_fingerprint": "",
+                "crop_invalidation_frames": "",
+                "crop_invalidation_manifest_sha256": "",
+                "crop_invalidation_fingerprint": "",
                 "positive_outside_cvat_mask_points": "",
                 "cvat_point_mask_mismatch_points": "",
                 "source_counts_json": "",
@@ -410,6 +462,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             for row in rows
             if row["status"] != "failed"
         ),
+        "crop_invalidation_frames": sum(
+            int(row["crop_invalidation_frames"])
+            for row in rows
+            if row["status"] != "failed"
+        ),
+        "crop_invalidation_videos": sum(
+            int(row["crop_invalidation_frames"]) > 0
+            for row in rows
+            if row["status"] != "failed"
+        ),
         "suppressed_cvat_mask_frames": sum(
             int(row["suppressed_cvat_mask_frames"])
             for row in rows
@@ -432,7 +494,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         len(manifest_hashes) != 1 or len(fingerprints) != 1
     ):
         raise RuntimeError(
-            "v6 visualization inputs do not share one invalidation manifest"
+            "Visualization inputs do not share one XML invalidation manifest"
+        )
+    crop_manifest_hashes = {
+        str(row["crop_invalidation_manifest_sha256"])
+        for row in rows
+        if row["status"] != "failed"
+        and str(row["crop_invalidation_manifest_sha256"])
+    }
+    crop_fingerprints = {
+        str(row["crop_invalidation_fingerprint"])
+        for row in rows
+        if row["status"] != "failed"
+        and str(row["crop_invalidation_fingerprint"])
+    }
+    if args.require_crop_quality_invalidation and (
+        len(crop_manifest_hashes) != 1 or len(crop_fingerprints) != 1
+    ):
+        raise RuntimeError(
+            "v7 visualization inputs do not share one crop invalidation manifest"
         )
     if (
         args.expected_xml_invalidated_frames >= 0
@@ -453,6 +533,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "XML invalidation video count mismatch: "
             f"{result['xml_invalidation_videos']} != "
             f"{args.expected_xml_invalidated_videos}"
+        )
+    if (
+        args.expected_crop_invalidated_frames >= 0
+        and result["crop_invalidation_frames"]
+        != args.expected_crop_invalidated_frames
+    ):
+        raise RuntimeError(
+            "Crop invalidation frame count mismatch: "
+            f"{result['crop_invalidation_frames']} != "
+            f"{args.expected_crop_invalidated_frames}"
+        )
+    if (
+        args.expected_crop_invalidated_videos >= 0
+        and result["crop_invalidation_videos"]
+        != args.expected_crop_invalidated_videos
+    ):
+        raise RuntimeError(
+            "Crop invalidation video count mismatch: "
+            f"{result['crop_invalidation_videos']} != "
+            f"{args.expected_crop_invalidated_videos}"
         )
     if (
         args.expected_suppressed_cvat_frames >= 0
@@ -499,8 +599,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cvat_mask_alpha", type=float, default=0.35)
     parser.add_argument("--require_cvat_authoritative", action="store_true")
     parser.add_argument("--require_xml_invalidation", action="store_true")
+    parser.add_argument("--require_crop_quality_invalidation", action="store_true")
     parser.add_argument("--expected_xml_invalidated_frames", type=int, default=-1)
     parser.add_argument("--expected_xml_invalidated_videos", type=int, default=-1)
+    parser.add_argument("--expected_crop_invalidated_frames", type=int, default=-1)
+    parser.add_argument("--expected_crop_invalidated_videos", type=int, default=-1)
     parser.add_argument("--expected_suppressed_cvat_frames", type=int, default=-1)
     parser.add_argument("--skip_existing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")

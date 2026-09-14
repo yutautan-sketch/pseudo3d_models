@@ -22,6 +22,8 @@ from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
 from stage5.models import build_stage5_model
 from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
 from stage5.training import SegmentationMetricAccumulator, build_loss
+from stage5.utils.h5_io import load_stage5_pointcloud_h5
+from stage5.utils.label_policy import DEFAULT_LABEL_POLICY, SUPPORTED_LABEL_POLICIES, summarize_label_policy_for_arrays
 
 
 def parse_feature_list(value: str) -> tuple[str, ...]:
@@ -132,6 +134,45 @@ def resolve_class_weight(
         "normalize": bool(args.normalize_auto_class_weight),
         "resolved": resolved,
     }
+
+
+def write_label_policy_diagnostics_csv(path: Path, *, split: str, per_file: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not per_file:
+        path.write_text("", encoding="utf-8")
+        return
+    fieldnames = ["split", *[key for key in per_file[0].keys()]]
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in per_file:
+            writer.writerow({"split": split, **row})
+
+
+def compute_label_policy_diagnostics(h5_paths: Iterable[Path], *, policy: str) -> dict[str, Any]:
+    """Aggregate source/effective label counts and BBox non-contour conversion
+    stats across a split, for config.json / startup logging (S5-12). Reads each
+    H5 independently of the training Dataset (mirrors resolve_class_weight's
+    existing separate-scan style)."""
+    totals: dict[str, int] = {}
+    per_file: list[dict[str, Any]] = []
+    for h5_path in h5_paths:
+        data = load_stage5_pointcloud_h5(h5_path)
+        stats = summarize_label_policy_for_arrays(
+            policy,
+            source_point_label=data["point_label"],
+            source_valid_mask=data["valid_mask"],
+            frame_order=data.get("frame_order"),
+            pixel_xy=data.get("pixel_xy"),
+            bbox_frame_order=data.get("bbox_frame_order"),
+            bbox_local_xyxy=data.get("bbox_local_xyxy"),
+            context=f"label_policy={policy!r} for {h5_path}",
+        )
+        for key, value in stats.items():
+            if isinstance(value, (int, float)):
+                totals[key] = totals.get(key, 0) + value
+        per_file.append({"h5_path": str(h5_path), **stats})
+    return {"policy": policy, "totals": totals, "num_files": len(per_file), "per_file": per_file}
 
 
 def collect_h5_paths_from_dir(
@@ -319,6 +360,7 @@ def make_dataset(
         include_tail_window=args.include_tail_window,
         seed=seed,
         cache_data=cache_data,
+        label_policy=args.label_policy,
     )
 
 
@@ -817,12 +859,46 @@ def train(args: argparse.Namespace) -> None:
 
     class_weight, class_weight_info = resolve_class_weight(args, train_paths)
 
+    train_label_policy_diagnostics = compute_label_policy_diagnostics(train_paths, policy=args.label_policy)
+    val_label_policy_diagnostics = (
+        compute_label_policy_diagnostics(val_paths, policy=args.label_policy) if val_paths else None
+    )
+    write_label_policy_diagnostics_csv(
+        output_dir / "label_policy_diagnostics.csv",
+        split="train",
+        per_file=train_label_policy_diagnostics["per_file"],
+    )
+    if val_label_policy_diagnostics is not None:
+        with (output_dir / "label_policy_diagnostics.csv").open("a", encoding="utf-8", newline="") as f:
+            if val_label_policy_diagnostics["per_file"]:
+                writer = csv.DictWriter(
+                    f, fieldnames=["split", *val_label_policy_diagnostics["per_file"][0].keys()]
+                )
+                for row in val_label_policy_diagnostics["per_file"]:
+                    writer.writerow({"split": "val", **row})
+
     feature_dim = train_dataset.num_feature_channels
     config = build_config(args, feature_dim=feature_dim, class_weight_info=class_weight_info)
     config["num_train_files"] = len(train_paths)
     config["num_val_files"] = len(val_paths)
     config["num_train_samples"] = len(train_dataset)
     config["num_val_samples"] = len(val_dataset) if val_dataset is not None else 0
+    config["label_policy_diagnostics"] = {
+        "train": {
+            "policy": train_label_policy_diagnostics["policy"],
+            "num_files": train_label_policy_diagnostics["num_files"],
+            "totals": train_label_policy_diagnostics["totals"],
+        },
+        "val": (
+            {
+                "policy": val_label_policy_diagnostics["policy"],
+                "num_files": val_label_policy_diagnostics["num_files"],
+                "totals": val_label_policy_diagnostics["totals"],
+            }
+            if val_label_policy_diagnostics is not None
+            else None
+        ),
+    }
     with (output_dir / "config.json").open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
@@ -863,6 +939,12 @@ def train(args: argparse.Namespace) -> None:
         print(f"val files: {len(val_paths)}")
         print(f"val samples: {len(val_dataset)}")
     print(f"feature_dim: {feature_dim}")
+    print(f"label_policy: {args.label_policy}")
+    train_converted = train_label_policy_diagnostics["totals"].get("converted_point_count", 0)
+    print(f"label_policy train converted points (-1 -> 0): {train_converted}")
+    if val_label_policy_diagnostics is not None:
+        val_converted = val_label_policy_diagnostics["totals"].get("converted_point_count", 0)
+        print(f"label_policy val converted points (-1 -> 0): {val_converted}")
     print(f"physical batch size: {args.batch_size}")
     print(f"gradient accumulation steps: {args.gradient_accumulation_steps}")
     print(
@@ -1026,6 +1108,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame_window_size", type=int, default=None)
     parser.add_argument("--exclude_ignore_in_sampling", action="store_true")
     parser.add_argument("--positive_oversample_ratio", type=float, default=0.0)
+    parser.add_argument(
+        "--label_policy",
+        choices=sorted(SUPPORTED_LABEL_POLICIES),
+        default=DEFAULT_LABEL_POLICY,
+        help=(
+            "Effective training label for BBox non-contour points (S5-12). "
+            "'bbox_noncontour_ignore' is the historical default (no-op). "
+            "'bbox_noncontour_background' converts audited BBox non-contour "
+            "ignore points to background."
+        ),
+    )
     parser.add_argument("--window_mode", default="none", choices=["none", "overlap"])
     parser.add_argument("--window_size_frames", type=int, default=12)
     parser.add_argument("--window_stride_frames", type=int, default=6)

@@ -101,7 +101,11 @@ def load_stage5_pointcloud_h5(path: str | Path) -> dict[str, Any]:
                 data[key] = point_cloud[key][:]
 
         if "frame_annotation" in f:
-            data["frame_annotation_attrs"] = dict(f["frame_annotation"].attrs)
+            frame_annotation = f["frame_annotation"]
+            data["frame_annotation_attrs"] = dict(frame_annotation.attrs)
+            if "frame_order" in frame_annotation and "bbox_local_xyxy" in frame_annotation:
+                data["bbox_frame_order"] = frame_annotation["frame_order"][:].astype(np.int64)
+                data["bbox_local_xyxy"] = frame_annotation["bbox_local_xyxy"][:].astype(np.float64)
         data["file_attrs"] = dict(f.attrs)
 
     num_points = data["points"].shape[0]

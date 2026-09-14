@@ -43,9 +43,14 @@ from pseudo3d.annotation.import_cvat_segmentation_mask_corrections import (
 from pseudo3d.annotation.stage4_manual_review import (
     ManualReviewError,
     apply_corrected_frame_mask,
+    bbox_bounds,
+    bbox_union_mask,
     file_sha256,
     load_manual_review_config,
     read_csv_rows,
+)
+from pseudo3d.batch.annotation.batch_import_stage4_phase5_fullvideo_cvat import (
+    apply_authoritative_frame_mask,
 )
 from pseudo3d.batch.export.batch_export_stage4_manual_review_cvat import (
     CVAT_CLIPPED_BBOX_COLOR_BGR,
@@ -222,6 +227,39 @@ def test_pure_label_contract() -> None:
     else:
         raise AssertionError("Empty manual BBox correction must be rejected")
     print("[OK] strict mask-to-point labels, BBox union, and empty correction")
+
+
+def test_degenerate_bbox_is_not_a_one_pixel_ignore_line() -> None:
+    shape = (6, 6)
+    invalid = (
+        (5.0, 1.0, 5.0, 4.0),
+        (2.2, 1.0, 2.2, 4.0),
+        (1.0, 3.0, 4.0, 3.0),
+        (4.0, 1.0, 2.0, 4.0),
+    )
+    for bbox in invalid:
+        assert bbox_bounds(bbox, shape) is None, bbox
+        assert not np.any(bbox_union_mask(shape, [bbox])), bbox
+
+    valid = (4.0, 1.0, 5.0, 4.0)
+    assert bbox_bounds(valid, shape) == (4, 1, 5, 4)
+    assert np.any(bbox_union_mask(shape, [valid]))
+
+    labels = np.asarray([-1, -1, -1], dtype=np.int8)
+    frame_orders = np.zeros(3, dtype=np.int32)
+    pixel_xy = np.asarray([[4, 2], [5, 2], [2, 2]], dtype=np.float32)
+    rebuilt, stats = apply_authoritative_frame_mask(
+        labels=labels,
+        frame_orders=frame_orders,
+        pixel_xy=pixel_xy,
+        frame_order=0,
+        corrected_mask=np.zeros(shape, dtype=np.uint8),
+        frame_bboxes=[(5.0, 1.0, 5.0, 4.0)],
+    )
+    np.testing.assert_array_equal(rebuilt, [0, 0, 0])
+    assert stats["ignore_points"] == 0
+    assert stats["background_points"] == 3
+    print("[OK] zero-area BBox cannot create a one-pixel ignore line")
 
 
 def test_cvat_review_image_bbox_overlay() -> None:
@@ -799,6 +837,7 @@ def test_config_contract() -> None:
 
 def main() -> None:
     test_pure_label_contract()
+    test_degenerate_bbox_is_not_a_one_pixel_ignore_line()
     test_cvat_review_image_bbox_overlay()
     test_full_video_crop_metrics_and_rendering()
     with tempfile.TemporaryDirectory(prefix="stage4_cvat_manual_roundtrip_") as temporary:

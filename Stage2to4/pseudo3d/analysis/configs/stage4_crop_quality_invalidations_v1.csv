@@ -1,0 +1,2 @@
+schema_version,video_name,frame_order,frame_index,frame_stem,expected_saved_bbox_rows,expected_stray_ignore_points,expected_crop_status,expected_visible_fraction,action,reason_code,recoverable,notes
+1,20250625_161030_0550,51,51,20250625_161030_0550__fo00051__fi00000051,1,6,fully_outside_crop,0.0,invalidate_entire_frame,local_crop_fully_outside,true,Rightward tracking drift places the complete strict XML BBox outside the local crop; retain source XML H5 and CVAT provenance for future recropping.

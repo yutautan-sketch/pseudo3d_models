@@ -4,10 +4,10 @@ set -euo pipefail
 # ------------------------------------------------------------
 # Run Stage 5 inference on collected annotated pseudo-3D point-cloud H5 files.
 #
-# This script expects the accepted Stage 4 teacher v6 H5 files collected into
+# This script expects the accepted Stage 4 teacher v7 H5 files collected into
 # one flat directory by:
 #
-#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
+#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v7_crop_quality.sh
 #
 # Edit the path/parameter blocks below, then run:
 #
@@ -46,7 +46,7 @@ EX_DATE="${EX_DATE:-260908}"
 # ------------------------------------------------------------
 DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
 STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
-STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
+STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v7_cvat_authoritative_crop_quality_v1}"
 STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
 INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
 
@@ -86,7 +86,7 @@ POINTNEXT_SA_USE_RES=1
 # ------------------------------------------------------------
 RUN_ROOT="${RUN_ROOT:-/mnt/data/3d_projects/stage5_runs}"
 MODEL="pointnext_s"
-PREFIX="${PREFIX:-w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
+PREFIX="${PREFIX:-w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_bboxrankv7_cvatcropq_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
 EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
 CHECKPOINT_NAME="${CHECKPOINT_NAME:-best.pt}"
 CHECKPOINT="${CHECKPOINT:-${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}}"
@@ -115,7 +115,7 @@ fi
 
 if [[ ! -d "${INPUT_DIR}" ]]; then
   echo "Input directory not found: ${INPUT_DIR}" >&2
-  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh first." >&2
+  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v7_crop_quality.sh first." >&2
   exit 1
 fi
 

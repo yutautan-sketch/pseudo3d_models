@@ -33,12 +33,21 @@ LABEL_BACKGROUND = 0
 LABEL_FEMUR_CANDIDATE = 1
 AUTHORITATIVE_SCHEMA = "bboxrank_v5_cvat_authoritative_v1"
 XML_INVALIDATION_SCHEMA = "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
-AUTHORITATIVE_SCHEMAS = {AUTHORITATIVE_SCHEMA, XML_INVALIDATION_SCHEMA}
+CROP_INVALIDATION_SCHEMA = "bboxrank_v7_cvat_authoritative_crop_quality_v1"
+AUTHORITATIVE_SCHEMAS = {
+    AUTHORITATIVE_SCHEMA,
+    XML_INVALIDATION_SCHEMA,
+    CROP_INVALIDATION_SCHEMA,
+}
 AUTHORITATIVE_LABEL_AUTHORITY = "cvat_snapshot"
 XML_INVALIDATION_LABEL_AUTHORITY = "xml_deletion_manifest"
 XML_INVALIDATION_ACTION = "invalidate_entire_frame"
 XML_INVALIDATION_REASON = "deleted_incorrect_bbox_xml"
 SUPPRESSED_CVAT_STATUS = "suppressed_by_xml_invalidation"
+CROP_INVALIDATION_LABEL_AUTHORITY = "crop_quality_invalidation_manifest"
+CROP_INVALIDATION_ACTION = "invalidate_entire_frame"
+CROP_INVALIDATION_REASON = "local_crop_fully_outside"
+SUPPRESSED_CROP_CVAT_STATUS = "suppressed_by_crop_quality_invalidation"
 CVAT_MASK_STATUSES = {"positive", "empty", "omitted_as_empty"}
 KNOWN_EXACT_SOURCES = {
     "",
@@ -66,6 +75,9 @@ FRAME_FIELDS = (
     "xml_invalidated",
     "xml_invalidation_action",
     "xml_invalidation_reason_code",
+    "crop_invalidated",
+    "crop_invalidation_action",
+    "crop_invalidation_reason_code",
     "cvat_mask_applied",
     "cvat_mask_suppressed",
     "cvat_mask_status",
@@ -227,15 +239,19 @@ def _read_xml_invalidations(
         "reason_code": np.asarray([], dtype=object),
         "attrs": {},
     }
+    schemas_with_xml_history = {
+        XML_INVALIDATION_SCHEMA,
+        CROP_INVALIDATION_SCHEMA,
+    }
     if group is None:
-        if schema == XML_INVALIDATION_SCHEMA:
+        if schema in schemas_with_xml_history:
             raise ValueError(
-                "v6 H5 lacks xml_annotation_invalidation provenance"
+                "v6/v7 H5 lacks xml_annotation_invalidation provenance"
             )
         return empty
-    if schema != XML_INVALIDATION_SCHEMA:
+    if schema not in schemas_with_xml_history:
         raise ValueError(
-            "Non-v6 H5 unexpectedly contains xml_annotation_invalidation"
+            "Non-v6/v7 H5 unexpectedly contains xml_annotation_invalidation"
         )
     text_fields = ("video_name", "frame_stem", "action", "reason_code")
     integer_fields = ("frame_order", "frame_index")
@@ -314,6 +330,101 @@ def _read_xml_invalidations(
     return result
 
 
+def _read_crop_invalidations(
+    group: h5py.Group | None,
+    *,
+    schema: str,
+    video_name: str,
+) -> dict[str, Any]:
+    empty = {
+        "frame_order": np.asarray([], dtype=np.int32),
+        "frame_index": np.asarray([], dtype=np.int64),
+        "frame_stem": np.asarray([], dtype=object),
+        "action": np.asarray([], dtype=object),
+        "reason_code": np.asarray([], dtype=object),
+        "attrs": {},
+    }
+    if group is None:
+        if schema == CROP_INVALIDATION_SCHEMA:
+            raise ValueError("v7 H5 lacks crop_quality_invalidation provenance")
+        return empty
+    if schema != CROP_INVALIDATION_SCHEMA:
+        raise ValueError(
+            "Non-v7 H5 unexpectedly contains crop_quality_invalidation"
+        )
+    text_fields = ("video_name", "frame_stem", "action", "reason_code")
+    integer_fields = ("frame_order", "frame_index")
+    for name in (*text_fields, *integer_fields):
+        _required_dataset(group, name, "crop_quality_invalidation")
+    result: dict[str, Any] = {"attrs": dict(group.attrs)}
+    for name in text_fields:
+        result[name] = _read_text_array(group[name])
+    result["frame_order"] = group["frame_order"][:].astype(np.int32)
+    result["frame_index"] = group["frame_index"][:].astype(np.int64)
+    lengths = {
+        value.shape[0]
+        for value in result.values()
+        if isinstance(value, np.ndarray)
+    }
+    if len(lengths) != 1:
+        raise ValueError(
+            "crop_quality_invalidation datasets have different row counts"
+        )
+    count = int(result["frame_order"].size)
+    keys = list(
+        zip(
+            result["frame_order"].tolist(),
+            result["frame_index"].tolist(),
+            strict=True,
+        )
+    )
+    if len(keys) != len(set(keys)):
+        raise ValueError("crop_quality_invalidation contains duplicate frame keys")
+    if set(str(value) for value in result["video_name"]) not in ({video_name}, set()):
+        raise ValueError("Crop invalidation video_name differs from H5 video")
+    if set(str(value) for value in result["action"]) not in (
+        {CROP_INVALIDATION_ACTION},
+        set(),
+    ):
+        raise ValueError("Unknown crop invalidation action")
+    if set(str(value) for value in result["reason_code"]) not in (
+        {CROP_INVALIDATION_REASON},
+        set(),
+    ):
+        raise ValueError("Unknown crop invalidation reason code")
+    expected_attrs = {
+        "schema_version": 1,
+        "teacher_version": CROP_INVALIDATION_SCHEMA,
+        "source_teacher_version": XML_INVALIDATION_SCHEMA,
+        "policy": "fully-outside local-crop frame -> all background",
+        "frame_authority": CROP_INVALIDATION_LABEL_AUTHORITY,
+    }
+    for name, expected in expected_attrs.items():
+        actual = group.attrs.get(name)
+        if isinstance(expected, str):
+            actual = _decode(actual)
+        else:
+            actual = int(actual) if actual is not None else None
+        if actual != expected:
+            raise ValueError(
+                f"Crop invalidation provenance mismatch for {name}: "
+                f"{actual!r} != {expected!r}"
+            )
+    for name in ("source_h5_sha256", "manifest_sha256", "manifest_fingerprint"):
+        if not _attr_text(group.attrs, name):
+            raise ValueError(f"Crop invalidation provenance lacks {name}")
+    if "removed_frame_annotation" not in group:
+        raise ValueError("Crop invalidation provenance lacks removed BBox archive")
+    archive = group["removed_frame_annotation"]
+    if "frame_order" not in archive:
+        raise ValueError("Crop removed BBox archive lacks frame_order")
+    if int(archive["frame_order"].shape[0]) < count:
+        raise ValueError(
+            "Crop removed BBox archive is smaller than invalidation inventory"
+        )
+    return result
+
+
 def load_stage4_point_label_visualization_input(
     annotated_h5: Path,
     *,
@@ -389,6 +500,13 @@ def load_stage4_point_label_visualization_input(
         xml_invalidations = _read_xml_invalidations(
             handle["xml_annotation_invalidation"]
             if "xml_annotation_invalidation" in handle
+            else None,
+            schema=schema,
+            video_name=video_name,
+        )
+        crop_invalidations = _read_crop_invalidations(
+            handle["crop_quality_invalidation"]
+            if "crop_quality_invalidation" in handle
             else None,
             schema=schema,
             video_name=video_name,
@@ -551,13 +669,71 @@ def load_stage4_point_label_visualization_input(
             raise ValueError(
                 f"XML-invalidated frame retains manual BBox: {expected_stem}"
             )
-    if schema == XML_INVALIDATION_SCHEMA:
+    if schema in {XML_INVALIDATION_SCHEMA, CROP_INVALIDATION_SCHEMA}:
         expected_count = int(
             attrs.get("xml_annotation_invalidation_frame_count", -1)
         )
         if expected_count != len(invalidation_keys):
             raise ValueError(
                 "Root XML invalidation frame count differs from provenance"
+            )
+    crop_invalidation_keys = set(
+        zip(
+            crop_invalidations["frame_order"].tolist(),
+            crop_invalidations["frame_index"].tolist(),
+            strict=True,
+        )
+    )
+    if invalidation_keys & crop_invalidation_keys:
+        raise ValueError("XML and crop invalidation frame inventories overlap")
+    crop_invalidation_orders = {
+        int(order) for order, _ in crop_invalidation_keys
+    }
+    for row_index, (order, index, stem) in enumerate(
+        zip(
+            crop_invalidations["frame_order"],
+            crop_invalidations["frame_index"],
+            crop_invalidations["frame_stem"],
+            strict=True,
+        )
+    ):
+        order = int(order)
+        index = int(index)
+        expected_stem = f"{video_name}__fo{order:05d}__fi{index:08d}"
+        if order < 0 or order >= num_frames:
+            raise ValueError("Crop invalidation frame order is outside frame range")
+        if index != int(frame_indices[order]) or str(stem) != expected_stem:
+            raise ValueError(
+                f"Crop invalidation frame identity mismatch: {video_name}/{row_index}"
+            )
+        frame_labels = point_label[point_frame_order == order]
+        if frame_labels.size == 0 or not np.all(
+            frame_labels == LABEL_BACKGROUND
+        ):
+            raise ValueError(
+                f"Crop-invalidated frame is not all background: {expected_stem}"
+            )
+        if np.any(
+            (frame_annotation["frame_order"] == order)
+            & (frame_annotation["frame_index"] == index)
+        ):
+            raise ValueError(
+                f"Crop-invalidated frame retains saved BBox: {expected_stem}"
+            )
+        if np.any(
+            (manual_review["frame_order"] == order)
+            & (manual_review["frame_index"] == index)
+        ):
+            raise ValueError(
+                f"Crop-invalidated frame retains manual BBox: {expected_stem}"
+            )
+    if schema == CROP_INVALIDATION_SCHEMA:
+        expected_count = int(
+            attrs.get("crop_quality_invalidation_frame_count", -1)
+        )
+        if expected_count != len(crop_invalidation_keys):
+            raise ValueError(
+                "Root crop invalidation frame count differs from provenance"
             )
     frame_provenance_orders = manual_review_frames["frame_order"]
     if frame_provenance_orders.size:
@@ -610,7 +786,9 @@ def load_stage4_point_label_visualization_input(
         ):
             key = (int(order), int(index))
             expected_authority = (
-                XML_INVALIDATION_LABEL_AUTHORITY
+                CROP_INVALIDATION_LABEL_AUTHORITY
+                if key in crop_invalidation_keys
+                else XML_INVALIDATION_LABEL_AUTHORITY
                 if key in invalidation_keys
                 else AUTHORITATIVE_LABEL_AUTHORITY
             )
@@ -628,7 +806,13 @@ def load_stage4_point_label_visualization_input(
         )
         if invalidation_keys and not invalidation_keys.issubset(provenance_keys):
             raise ValueError(
-                "Reviewed v6 video lacks invalidated-frame provenance rows"
+                "Reviewed v6/v7 video lacks XML-invalidated frame provenance rows"
+            )
+        if crop_invalidation_keys and not crop_invalidation_keys.issubset(
+            provenance_keys
+        ):
+            raise ValueError(
+                "Reviewed v7 video lacks crop-invalidated frame provenance rows"
             )
         if np.any(
             manual_review_frames["positive_outside_cvat_mask_points"] != 0
@@ -729,6 +913,8 @@ def load_stage4_point_label_visualization_input(
         "manual_review_frames": manual_review_frames,
         "xml_invalidations": xml_invalidations,
         "xml_invalidation_orders": invalidation_orders,
+        "crop_invalidations": crop_invalidations,
+        "crop_invalidation_orders": crop_invalidation_orders,
         "cvat_authoritative": authoritative,
     }
 
@@ -742,7 +928,25 @@ def load_applied_cvat_masks(
     manual = data["manual_review"]
     manual_frames = data["manual_review_frames"]
     authoritative = bool(data["cvat_authoritative"])
-    invalidation_orders = set(data.get("xml_invalidation_orders", set()))
+    xml_invalidation_orders = set(
+        data.get("xml_invalidation_orders", set())
+    )
+    crop_invalidation_orders = set(
+        data.get("crop_invalidation_orders", set())
+    )
+    if xml_invalidation_orders & crop_invalidation_orders:
+        raise ValueError("XML and crop invalidation frame orders overlap")
+    invalidation_orders = xml_invalidation_orders | crop_invalidation_orders
+
+    def authority_name(prefix: str) -> str:
+        if xml_invalidation_orders and crop_invalidation_orders:
+            return f"{prefix}_with_xml_and_crop_invalidation"
+        if crop_invalidation_orders:
+            return f"{prefix}_with_crop_quality_invalidation"
+        if xml_invalidation_orders:
+            return f"{prefix}_with_xml_invalidation"
+        return prefix
+
     num_rows = int(manual["frame_order"].size)
     num_frame_rows = int(manual_frames["frame_order"].size)
     provenance = manual_frames if authoritative else manual
@@ -750,9 +954,7 @@ def load_applied_cvat_masks(
         return {}, {
             "reviewed_video": bool(provenance["reviewed_video"]),
             "label_authority": (
-                "inherited_with_xml_invalidation"
-                if authoritative and invalidation_orders
-                else "inherited"
+                authority_name("inherited")
                 if authoritative
                 else "legacy"
             ),
@@ -901,9 +1103,15 @@ def load_applied_cvat_masks(
             frame_labels = data["point_label"][point_selector]
             status_counts[actual_status] += 1
             if order in invalidation_orders:
+                invalidation_kind = (
+                    "crop-quality"
+                    if order in crop_invalidation_orders
+                    else "XML"
+                )
                 if not np.all(frame_labels == LABEL_BACKGROUND):
                     raise ValueError(
-                        "XML-invalidated CVAT frame is not all background: "
+                        f"{invalidation_kind}-invalidated CVAT frame is not all "
+                        "background: "
                         f"{video_name}/{stem}"
                     )
                 expected_counts = {
@@ -915,14 +1123,20 @@ def load_applied_cvat_masks(
                 for name, expected in expected_counts.items():
                     if int(manual_frames[name][row_index]) != expected:
                         raise ValueError(
-                            "XML-invalidated frame provenance count mismatch: "
+                            f"{invalidation_kind}-invalidated frame provenance "
+                            "count mismatch: "
                             f"{video_name}/{stem}/{name}"
                         )
-                statuses_by_order[order] = SUPPRESSED_CVAT_STATUS
+                suppressed_status = (
+                    SUPPRESSED_CROP_CVAT_STATUS
+                    if order in crop_invalidation_orders
+                    else SUPPRESSED_CVAT_STATUS
+                )
+                statuses_by_order[order] = suppressed_status
                 outside_by_order[order] = 0
                 mismatch_by_order[order] = 0
                 suppressed_by_order[order] = positive_pixels
-                rendered_status_counts[SUPPRESSED_CVAT_STATUS] += 1
+                rendered_status_counts[suppressed_status] += 1
                 continue
             sampled_mask = (
                 mask[frame_xy[:, 1], frame_xy[:, 0]]
@@ -971,11 +1185,7 @@ def load_applied_cvat_masks(
             "annotation_zip_sha256": annotation_sha,
             "applied_bbox_rows": num_rows,
             "applied_frame_stems": dict(sorted(stems_by_order.items())),
-            "label_authority": (
-                "cvat_snapshot_with_xml_invalidation"
-                if invalidation_orders
-                else AUTHORITATIVE_LABEL_AUTHORITY
-            ),
+            "label_authority": authority_name(AUTHORITATIVE_LABEL_AUTHORITY),
             "authoritative_frame_count": num_frame_rows,
             "cvat_mask_status_counts": dict(sorted(status_counts.items())),
             "rendered_cvat_mask_status_counts": dict(
@@ -1276,6 +1486,19 @@ def export_stage4_point_label_visualization(
                 strict=True,
             )
         }
+        crop_invalidations = data["crop_invalidations"]
+        crop_invalidation_by_order = {
+            int(order): {
+                "action": str(action),
+                "reason_code": str(reason),
+            }
+            for order, action, reason in zip(
+                crop_invalidations["frame_order"],
+                crop_invalidations["action"],
+                crop_invalidations["reason_code"],
+                strict=True,
+            )
+        }
         frame_authority_by_order = {
             int(order): str(authority)
             for order, authority in zip(
@@ -1332,7 +1555,9 @@ def export_stage4_point_label_visualization(
                 "background_points": int(np.sum(labels == LABEL_BACKGROUND)),
                 "label_authority": frame_authority_by_order.get(
                     frame_order,
-                    XML_INVALIDATION_LABEL_AUTHORITY
+                    CROP_INVALIDATION_LABEL_AUTHORITY
+                    if frame_order in crop_invalidation_by_order
+                    else XML_INVALIDATION_LABEL_AUTHORITY
                     if frame_order in invalidation_by_order
                     else "inherited",
                 ),
@@ -1341,6 +1566,15 @@ def export_stage4_point_label_visualization(
                     frame_order, {}
                 ).get("action", ""),
                 "xml_invalidation_reason_code": invalidation_by_order.get(
+                    frame_order, {}
+                ).get("reason_code", ""),
+                "crop_invalidated": int(
+                    frame_order in crop_invalidation_by_order
+                ),
+                "crop_invalidation_action": crop_invalidation_by_order.get(
+                    frame_order, {}
+                ).get("action", ""),
+                "crop_invalidation_reason_code": crop_invalidation_by_order.get(
                     frame_order, {}
                 ).get("reason_code", ""),
                 "cvat_mask_applied": int(cvat_mask is not None),
@@ -1460,6 +1694,13 @@ def export_stage4_point_label_visualization(
             ),
             "xml_invalidation_fingerprint": _attr_text(
                 xml_invalidations["attrs"], "manifest_fingerprint"
+            ),
+            "crop_invalidation_frames": len(crop_invalidation_by_order),
+            "crop_invalidation_manifest_sha256": _attr_text(
+                crop_invalidations["attrs"], "manifest_sha256"
+            ),
+            "crop_invalidation_fingerprint": _attr_text(
+                crop_invalidations["attrs"], "manifest_fingerprint"
             ),
             "point_radius": int(point_radius),
             "point_alpha": float(point_alpha),

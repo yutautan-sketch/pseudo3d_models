@@ -1018,9 +1018,458 @@ pilotが抱えていた「validationの半数以上でTPが0」という崩壊�
 2つから、判定基準（12章）に基づく最終判断はStep D7の5 epoch pilot（BatchNorm controlと同じ
 epoch数）を待って行う。
 
+**Step D7 実H5 5 epoch pilot結果（2026-09-12、ユーザー実機）:** Step D6と同一の
+`INIT_CHECKPOINT`（GroupNorm転移checkpoint）・split・seed・window・class weight・lossで
+`EPOCHS=5`まで学習した。
+
+```text
+pointnext_s_EX260912_260711_w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep5_bs1_acc8_nopad
+```
+
+全5 epochでpadding点0、empty-valid window 0、microbatch 729、optimizer step 92を維持し、class
+weight`[0.05963856, 1.94036150]`もBatchNorm controlと完全一致した。データ経路・勾配蓄積・metrics
+集計に不具合は検出されなかった。
+
+| epoch | train loss | train F1 | train IoU | val loss | val F1 | val IoU | val predicted positive率 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.5678 | 0.0368 | 0.0187 | 0.5394 | 0.0491 | 0.0252 | 8.23% |
+| 2 | 0.5005 | 0.0729 | 0.0378 | 0.5088 | 0.0824 | 0.0429 | 9.14% |
+| 3 | 0.4668 | 0.0846 | 0.0442 | 0.5070 | 0.0696 | 0.0361 | 12.66% |
+| 4 | 0.4398 | 0.0920 | 0.0482 | 0.4801 | 0.0865 | **0.0452** | 8.75% |
+| 5 | 0.4313 | 0.0961 | 0.0505 | 0.4996 | 0.0764 | 0.0397 | 12.27% |
+
+`best_metric=iou_femur`によりGroupNormの`best.pt`もepoch 4となり、BatchNorm control（epoch 4）と
+同一epoch数での比較が成立する。9.4節のBatchNorm control表と比べ、最も大きな違いはvalidation
+lossの挙動である。BatchNorm controlはvalidation lossが5 epoch全てで単調増加した
+（0.5985→0.9208）のに対し、GroupNormのvalidation lossは0.539〜0.509の範囲で安定し、単調な
+悪化を示さなかった。
+
+`evaluate_stage5.sh`で固定train sanity 3動画+validation 18動画の`eval()`・mean aggregation評価を
+実行した（BatchNorm controlと完全に同一の評価pipeline・同一epoch数の`best.pt`）。
+
+| split | model | TP | FP | precision | recall | F1 | IoU | TP0動画数 | video median F1 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| train_sanity | BatchNorm control | 407 | 16,602 | 2.39% | 4.17% | 0.0304 | 0.0154 | 1/3 | — |
+| train_sanity | GroupNorm | 4,130 | 42,589 | 8.84% | 42.33% | 0.1463 | 0.0789 | **0/3** | — |
+| validation | BatchNorm control | 2,691 | 85,785 | 3.04% | 3.87% | 0.0341 | 0.0173 | 10/18 | 0 |
+| validation | GroupNorm | 23,687 | 446,335 | 5.04% | 34.11% | 0.0878 | 0.0459 | **0/18** | **0.0818** |
+
+GroupNormはBatchNorm controlと同じepoch数（4）で、validation aggregated F1
+（0.0341→0.0878、+2.57倍）、IoU（0.0173→0.0459、+2.65倍）、recall（3.87%→34.11%、+8.8倍）の
+いずれも上回った。FPは85,785→446,335（+5.2倍）へ増加したが、precisionは低下せずむしろ
+3.04%→5.04%へ改善しており、recallの増加率（+8.8倍）がFPRの増加率（1.32%→6.86%、+5.2倍）を
+上回っている。これはS5-09のtrain-modeやS5-10のrecalibrationで見られた「recallとFPがほぼ
+同じ比率で動く」パターンとは異なり、単純な確率校正の一様シフトでは説明しにくい。
+
+video-level では、validationのTP0動画数が**10/18から0/18へ**、median F1が**0から0.0818へ**
+改善し、18動画全てで最低限のTP（93点以上）を検出した。train_sanityもTP0動画数が1/3から0/3へ
+改善し（歴史的にTP0だった動画も含む）、崩壊は確認されなかった。
+
+**仮説判断:** 12章の判定基準に照らすと、「GroupNormが構造testを満たし、train sanity/validation
+双方で有望」（分岐1）に該当する事実が確認された。TP0動画数の解消、video-level median F1/IoUの
+改善、precisionとrecallの同時改善、validation lossの安定化（BatchNorm controlで見られた単調増加が
+消失）は、いずれも構造的な改善を支持する。FP/FPRの増加（+5.2倍）は小さくないが、recallの増加が
+上回りprecisionも改善しているため、S5-09/S5-10で確認された「recallだけが増えFPが同等以上に急増する
+calibration shift」パターンとは異なる。
+
+**未確定事項:** FP/FPRの増加が実運用（Stage 6の入力として）許容できる範囲かどうかは、本checkerの
+範囲では判定しない。5 epochのみの比較であり、200 epochまで学習した場合の挙動、Label policy・
+class weightとの相互作用は未検証。GroupNormのgroup数（8）や学習率など、正規化方式変更後の
+再チューニングも行っていない。
+
+**productionへの影響:** なし。production既定値は引き続き`batchnorm`のままであり、
+`train_stage5.py`/`infer_stage5.py`/`evaluate_stage5.py`の既定挙動、production aggregation
+（mean probability）は変更していない。GroupNormをnormalization候補として暫定採用するかどうかは
+方針管理チャットの判断に委ねる。
+
 ### 9.6 Label policy ablation
 
-BBox内かつcontour外をbackgroundとするrunと、ignoreのままにするrunを、同一の固定評価データで比較する。
+#### 実装事項E: GroupNorm固定のBBox non-contour label policy比較 実装計画（2026-09-13）
+
+**状態:** completed（2026-09-14）。teacher v7を用いて2条件を各5 epochで比較し、共通target評価まで
+完了した。結果に基づく方針管理チャットの判断は本節末尾に記録する。production label policy、
+normalization既定値、thresholdは変更していない。
+
+**方針管理チャットの判断（2026-09-13）:** S5-11でGroupNormはtrain/eval logits完全一致、
+validation TP0動画数10/18から0/18、video median F1 0から0.0818、precision/recall同時改善を示したため、
+S5-12以降の実験用normalizationとして暫定採用する。production既定値はS5-15まで`batchnorm`のまま
+維持する。GroupNormで増加したFP/FPR（validation FP 85,785から446,335、FPR 1.32%から6.86%）は
+production上許容済みとは判断せず、S5-12/S5-13で原因と抑制可能性を調べる。ただしlabel policyと
+class weightがscore分布を変えるため、thresholdは0.5に固定し、この時点ではtuningしない。
+200 epochへ直接進まず、S5-12/S5-13を各5 epoch、必要なS5-14診断、5〜10 epoch最終pilot、50 epoch
+中間判定を経てから100〜200 epochの可否を決める。
+
+**問題:** 現行teacher v6では、CVAT/teacher contourのpositive点以外に、BBox内かつcontour外の点を
+`point_label=-1`、`valid_mask=False`として保存している。この領域はlossへ入らないため、輪郭線周辺の
+点をpositiveと予測しても直接のpenaltyがない。GroupNormは大腿骨検出を大幅に改善した一方でvalid
+background上のFPも増加しており、BBox non-contour hard negativeを学習へ含めることでFPを抑制できるかを
+切り分ける必要がある。ただし従来集計ではignore上のpositive予測はFPに含まれないため、異なる
+`valid_mask`の通常F1だけを比較してはいけない。
+
+**目的:** GroupNorm、初期parameter、split、seed、window、loss、class weight、threshold、aggregationを
+固定し、BBox内かつcontour外の点をignoreのままにする場合とbackgroundとして学習する場合を比較する。
+positive contourの検出能力を維持しながら、BBox周辺および既存valid background上のFPが減少するかを
+測る。
+
+**比較するlabel policy:** 同じteacher v6 H5を入力とし、元H5自体は書き換えない。
+
+| Run | training時のBBox内かつcontour外 | その他のlabel |
+| --- | --- | --- |
+| A: `bbox_noncontour_ignore` | `point_label=-1`、`valid_mask=False`を維持 | source teacher v6のまま |
+| B: `bbox_noncontour_background` | `point_label=0`、`valid_mask=True`へ変換 | source teacher v6のまま |
+
+Run Bで変更してよいのは、teacher v6のprovenance上「BBox内かつpositive contour外」と確認できた点だけと
+する。CVAT authoritative maskのpositive点はBBox外またはno-BBox frameに存在する場合も含めてpositiveの
+まま維持し、no-BBoxという理由だけでbackgroundへ上書きしない。XML invalidationによりbackground化された
+frame、既存background、positive contour、frame metadataは変更しない。
+
+**label policy実装方針:** Stage 4 H5の複製・破壊的変更は行わず、Stage 5のDatasetでsource labelから
+effective training labelを作る。policy名は対象領域が明確なものとし、全てのignore理由を一括変換する
+一般的な`ignore_to_background`にはしない。policy未指定時は既存挙動の`ignore`を既定値とし、既存run/
+checkpointとの後方互換性を維持する。変換処理はDataset、class count/debug集計、checkerから共通利用できる
+一つのhelperへ集約し、入力配列をin-place変更しない。
+
+実データ適用前にteacher v6全H5をpreflightし、少なくとも次をassertする。
+
+1. `valid_mask == (point_label != -1)`である。
+2. policy対象maskとsourceのignore点の関係を件数付きで記録する。
+3. policy対象点が保存BBox内かつauthoritative/teacher positive外である。
+4. Run Bでpositive点数とpositive indexがRun Aから変化しない。
+5. Run Bで変更されるのは対象点の`-1 -> 0`と`False -> True`だけである。
+6. points、features、frame_order、point_indices、window一覧は両runで完全一致する。
+7. 対象外のignore理由が存在する場合、それらをbackgroundへ変換せずfail-fastまたは別区分として残す。
+
+H5 schemaだけでignore理由を一意に識別できない場合は、`frame_annotation/bbox_local_xyxy`と
+`point_cloud/pixel_xy`、authoritative positive labelから対象maskを再構築して検証する。全ignoreが
+BBox non-contourであることを監査で証明できた場合に限り、`point_label == -1`を対象maskの簡略表現として
+利用できる。
+
+**CLI / config要件:** training CLIへBBox non-contour policyを明示するoptionを追加し、checkpointの
+`config`、`config.json`、起動ログ、metrics debug fieldへ保存する。Runごとにsource/effectiveのpositive、
+background、ignore点数、変換点数、対象frame/window数を出力する。inferenceはlabelをmodel入力に使わない
+ため予測動作を変更しないが、評価側はcheckpointがどのpolicyで学習されたかを表示できるようにする。
+
+**class weightの固定:** Run Bでは有効background点が増えるため、`auto`を各runで再計算するとlabel policyと
+class weightの2要因が同時に変わる。S5-12では両runとも、S5-11 GroupNorm controlで解決済みの同一weight
+`[0.05963856, 1.94036150]`を明示指定する。source/effective class countは診断値として記録するが、weightの
+再計算には使わない。class weight自体の比較はS5-13で行う。
+
+**固定比較条件:** Run A/Bは次を完全に揃える。
+
+| 項目 | 固定値 |
+| --- | --- |
+| teacher | Stage 4 teacher v6、同一H5 |
+| train / validation split | 既存GroupNorm pilotと同じ163 / 18 files |
+| initialization | S5-11で作成した同一GroupNorm S3DIS部分転移checkpoint |
+| normalization | GroupNorm、8 groups |
+| seed | 42 |
+| window | size 16 / stride 8 / tailあり |
+| physical batch | 1 window |
+| gradient accumulation | 8 windows、point-weighted normalization |
+| features | `intensity,confidence` |
+| loss | CrossEntropyLoss |
+| class weight | `[0.05963856, 1.94036150]` |
+| label smoothing | 0.0 |
+| optimizer | AdamW、lr `1e-3`、weight decay `1e-4` |
+| dropout | 0.0 |
+| epochs | 5 |
+| inference | `model.eval()` |
+| aggregation / threshold | mean probability / 0.5 |
+
+既存S5-11 GroupNorm pilotは外部referenceとして残すが、S5-12の主比較では同じコードrevisionと実行環境で
+Run A/Bを両方再実行する。file listを再splitせず、既存`train_files.txt`/`val_files.txt`を明示的に再利用
+する。window数とshuffle順がpolicy間で一致することを検査する。
+
+**共通評価label:** native validation loss/F1はRun Aではignoreを除外し、Run Bでは同じ点をbackgroundとして
+含めるため、直接比較しない。両checkpointを同一動画・同一point prediction・同一aggregationで推論し、
+次の共通targetを両方へ適用する専用ablation evaluator/checkerを用意する。
+
+1. `canonical_v6`: source teacher v6のvalid点だけを評価し、従来metricsとのparityを確認する。
+2. `bbox_noncontour_as_background`: 監査済みBBox non-contour点をbackgroundかつvalidとして加えた共通target
+   で両modelを評価する。S5-12の主比較targetとする。
+3. `bbox_noncontour_region`: 対象領域だけについてpredicted positive count/rate、mean/percentile
+   `prob_femur`、FP/FPR相当値を記録する。
+
+positive contourのGT indexは全targetで同一とする。通常metricsに加え、既存valid backgroundとBBox
+non-contourを分けて集計し、FP減少が単なるpositive予測全体の抑制か、対象hard negativeで選択的に
+起きたかを確認する。既存`evaluate_stage5.py`のcanonical mean baseline parityを維持し、不一致時は停止する。
+
+**checkpoint比較:** policyごとにnative validation targetが異なるため、各run固有の`best.pt`だけを主比較に
+しない。primary comparisonは同じ学習量の`checkpoint_epoch_0005.pt`または同等のepoch 5固定checkpointと
+する。各runの`best.pt`もsecondaryとして保存・評価し、best epoch、選択metric、native targetの違いを
+明記する。必要なら`save_every=1`として全epoch checkpointを残す。
+
+**実装・検証手順:** 次の順序で進める。
+
+1. synthetic H5でRun Aが完全なno-opであること、Run Bが対象ignoreだけをbackground化すること、
+   positive/points/windowが不変であることをtestする。
+2. teacher v6全181 source H5またはtrain/validation対象全件をpreflightし、policy対象maskとlabel契約を
+   監査する。対象外ignoreが見つかった場合は実学習へ進まず報告する。
+3. Dataset sample、class count、window、collateを両policyで比較するcheckerを実行する。
+4. 既存GroupNorm checkpoint/configのstrict reloadとRun A backward parityを確認する。
+5. Run Bで1 epoch smokeを実行し、変換件数、loss normalizer、gradient、metrics、checkpointがfiniteで
+   あることを確認する。
+6. 同じ初期checkpointとseedからRun A/Bを各5 epoch実行し、毎epoch checkpointを保存する。
+7. 両runのepoch 5とbest checkpointを固定train sanity 3動画・validation 18動画へ適用する。
+8. 3種類の共通評価target、video-level集計、BBox non-contour region診断を出力する。
+9. 固定train sanityと代表validationについて、GT、両modelの全prediction、positive-only PLYを同じ座標で
+   書き出し、輪郭周辺FPと大腿骨positive欠損を目視確認できるようにする。
+
+**評価項目:** 共通targetごとにTP、FP、TN、FN、precision、recall、F1、femur IoU、FPR、FNR、predicted
+positive率、TP0動画数、video-level mean/median F1・IoUを記録する。BBox non-contour regionについては
+点数、predicted positive count/rate、probability mean、p50/p90/p95/p99、動画別値を記録する。
+Run Bで追加されたbackground点がloss denominatorへ占める割合、source/effective class比、ignore比も
+split別に残す。
+
+**判定基準:** Run Bは、共通`bbox_noncontour_as_background` targetでBBox non-contour regionのpositive
+予測率と全体FP/FPRを低下させつつ、canonical positive contourのrecall、TP0動画数、video median F1/IoUを
+大きく悪化させない場合に有望とする。FPが減ってもrecall低下またはTP0再発が大きい場合は採用しない。
+Run A/B差が小さい場合はBBox non-contour ignoreをGroupNormの主要FP原因から下げ、既存ignore policyを
+維持してS5-13へ進む。split集約だけ改善しvideo別符号が揃わない場合は系統的改善と判断しない。
+
+**結果による分岐:** Run Bが有望ならBBox non-contour backgroundをS5-13以降の暫定training policyとして
+固定する。有望でなければRun Aのignoreを維持する。いずれの場合も、同じ採用policyとGroupNormを固定して
+S5-13のclass weight比較へ進む。threshold tuningはS5-13後、最終score分布が定まってからS5-15で行う。
+各後続設定は5〜10 epoch pilotで確認し、長期学習は50 epoch中間判定を通過した場合だけ100〜200 epochへ
+進める。
+
+**非対象:** 本事項ではGroupNorm group数、学習率、class weight、threshold、aggregation、window、入力
+feature、Stage 4 teacherを変更しない。Dice/Focal/Hard Negative Mining、座標augmentation、center-only
+loss、overlap回数weight、200 epoch学習を追加しない。source H5とproduction既定値を上書きせず、
+checkerの完走、仮説判断、production採否を分けて報告する。
+
+**実装進捗（2026-09-13）:** helper/CLI/preflight/parity/evaluatorのコード実装、および
+GPU非依存の静的検証まで完了した。GPU実行（Step E5〜E7）とsynthetic self-test（Step E2）は未実行。
+
+- `Stage5/stage5/utils/label_policy.py`（新規）: `compute_bbox_inside_mask()`
+  （`Stage2to4/checks/stage4/check_stage4_bbox_ranked_label_policy.py`と同じ幾何ロジック
+  ——pixel_xyの丸め込み、frame単位のBBox union判定——をStage 5側へ移植し、両stageの
+  「BBox内」定義を一致させた）、`apply_bbox_noncontour_label_policy()`
+  （`bbox_noncontour_ignore`は完全no-op、`bbox_noncontour_background`は監査済み対象点のみ変換し、
+  入力配列を破壊しない）、`require_no_stray_ignore_outside_bbox()`
+  （BBox外のignore点が1点でもあればfail-fast）を実装した。
+- `Stage5/stage5/utils/h5_io.py`: `frame_annotation/frame_order`・`frame_annotation/bbox_local_xyxy`
+  の読み込みを追加した（既存の`OPTIONAL_POINT_CLOUD_KEYS`パターンと同様、存在する場合のみ）。
+- `Stage5/stage5/datasets/pseudo3d_pointcloud_dataset.py`: `label_policy`引数を追加し、`_load()`内で
+  一度だけ変換を適用する。sourceの`point_label`/`valid_mask`は`source_point_label`/`source_valid_mask`
+  として別keyに保持し、診断に使えるようにした。
+- `Stage5/train_stage5.py`: `--label_policy`（既定`bbox_noncontour_ignore`、後方互換）を追加し、
+  `config.json`へsource/effective点数・変換点数を記録する`label_policy_diagnostics`を追加した
+  （`resolve_class_weight`のauto経路とは独立した別スキャン。S5-12はclass weightを明示指定するため
+  autoスキャンは実行されない）。
+- `Stage5/train_stage5.sh`: `LABEL_POLICY`環境変数knobを追加し、`CLASS_WEIGHT`を
+  env override可能にした（既定値は変更していないため既存runの挙動は不変）。
+- `Stage5/checks/dummy/check_dummy_label_policy.py/.sh`（新規、Step E2相当）: pure array test
+  （`compute_bbox_inside_mask`の幾何、no-op保証、対象外ignoreのfail-fast、独立copy保証）と、
+  手動構築した4-frame合成H5によるDataset統合test（Run Aが生H5と完全一致、Run Bが監査済み対象点
+  だけを変換しpositive/points/features/window構造を変えないこと、対象外ignoreを含むH5でのfail-fast）
+  を実装した。CUDA/PointNeXtのimportが一切ないため、torchさえあればGPU無しで実行できる。
+- `Stage5/checks/real_h5/check_stage5_label_policy_bbox_preflight.py/.sh`（新規、Step E3）:
+  teacher v6のtrain/validation全H5を監査し、`valid_mask == (point_label != -1)`、BBox外ignore点数
+  （0であることを既定でfail-fast gate）、no-BBoxフレーム上のlabel内訳、schema属性
+  （`label_mode`等、実データでの値は未確認のため診断表示のみ）を記録する。CPU/h5pyのみで実行できる。
+- `Stage5/checks/real_h5/check_stage5_label_policy_dataset_parity.py/.sh`（新規、Step E4）:
+  実teacher v6 H5上でRun A/B Datasetを比較し、points/features/frame_order/point_indices/window境界の
+  hash一致、labelsの差分が監査済み対象点に限られること、positive集合が不変であることを検証する。
+  CPU/h5pyのみで実行できる。
+- `Stage5/checks/real_h5/check_stage5_label_policy_ablation_eval.py/.sh`（新規、Step E7）:
+  既存`evaluate_stage5.predict_h5`を1回forwardし、同じ`aggregated_probability`/`pred_label`を
+  `canonical_v6`（既存`evaluate_stage5.py`とのmean baseline parity gate付き）、
+  `bbox_noncontour_as_background`（共通比較target）、`bbox_noncontour_region`
+  （対象領域のみのprobability分布・predicted positive率）の3種類の target label/valid_maskへ
+  適用する設計とした（追加のGPU forwardなし）。`--export_ply_alias`/`--ply_output_dir`で
+  Step E8のGT/prediction診断PLY（`write_diagnostic_segmentation_ply`を再利用）も出力できる。
+
+Step E5（1 epoch smoke）・Step E6（Run A/B 5 epoch）は、既存`train_stage5.sh`へ`LABEL_POLICY=
+bbox_noncontour_background`を指定するだけで実行できる（追加のcheckerは不要）。`last.pt`は
+5 epoch run終了時点でepoch 5と一致するため、Step E6が要求する「epoch 5固定checkpoint」は
+`save_every`変更なしに`last.pt`で満たされる。
+
+静的検証（devコンテナ、`torch`非搭載のため`py_compile`/`bash -n`/`git diff --check`のみ）:
+すべて合格。
+
+**Step E3 preflight結果（2026-09-13、ユーザー実機）:** teacher v6の全181 H5（train 163 + validation
+18）を`check_stage5_label_policy_bbox_preflight.py`で監査した。checkerは設計通り動作し、
+`valid_mask == (point_label != -1)`、no-BBoxフレーム上のignore点0件（no_bbox_ignore_count=0）、
+schema属性（`label_mode=bbox_ranked_global_local`、
+`contour_teacher_schema=bboxrank_v6_cvat_authoritative_xml_invalidation_v1`、
+`bbox_inside_non_contour_label=ignore`）は想定通りだったが、次のfail-fast条件に該当した。
+
+| 項目 | 値 |
+| --- | ---: |
+| 全体ignore点数 | 262,347 |
+| stray ignore点数（BBox外） | 16（0.006%） |
+| 該当ファイル数 | 2/181 |
+
+| video | ignore点数 | bbox内（target）点数 | stray点数 | stray率 |
+| --- | ---: | ---: | ---: | ---: |
+| train_068 | 97 | 87 | 10 | 10.3% |
+| val_009 | 843 | 837 | 6 | 0.7% |
+
+データセット全体（69,849,282点）に対しては16点（0.00002%）と無視できる規模だが、
+train_068単体ではignore点の10.3%を占める。3つの対応案（(1) 該当2ファイル除外、(2) stray点を
+ignoreのまま残しRun Bの変換対象から明示的に除いて続行、(3) 実データ精査で原因特定してから決定）を
+提示し、方針管理チャットは(3)を選択した。
+
+**原因判明とStage 4側修正（2026-09-13〜14）:** 該当2動画のannotation可視化frameを目視確認した
+結果、丸め誤差ではなく、Stage 2のcrop窓（動画単位で固定）と被写体（femur）の相対移動による
+ずれ——既存除外事例`20250626_090758_8000`（`local_crop_tracking_drift`）と同型のパターン——と
+判明した。詳細調査依頼を`.tmp/stage5_s5_12_stage4_crop_quality_investigation_request.md`として
+Stage 4管理チャットへ提出し、次の修正を受領した
+（`.tmp/stage5_s5_12_stage4_crop_quality_correction_report.md`）。
+
+- train_068（実video `20250626_090652_6340`）: 動画全体をcrop品質不良として除外
+  （既存除外1動画と合わせ計2動画除外）。
+- val_009（実video `20250625_161030_0550`）: frame order 51のみを無効化し全pointをbackground化
+  （CVAT確認済みframe 47-50は維持）。
+- 退化BBox（幅または高さ0）を1 pixel領域として誤って有効扱いしていた境界条件バグを修正
+  （`right > left and bottom > top`へ統一）。Stage 5側`stage5/utils/label_policy.py`の
+  `compute_bbox_inside_mask()`にも同じ修正を反映した。
+- 補正済みteacher v7（`bboxrank_v7_cvat_authoritative_crop_quality_v1`、180 H5）を構築し、
+  全180 H5でstray ignore・no-BBox ignore・BBox内background・CVAT mask外positiveが
+  いずれも0であることを確認した。
+- `train_stage5.sh`/`infer_stage5.sh`/`evaluate_stage5.sh`の既定入力をteacher v7へ切り替え済み。
+
+Stage 5側の対応（未実施、次に行う）:
+
+1. `check_stage5_label_policy_bbox_preflight.py`をv7の180 H5へ再実行し、stray ignore=0を
+   独立に確認する。
+2. v7 inventory（180ファイル）でtrain/validation listを新規生成する。旧v6の163/18 splitは
+   再利用しない（v6/v7でファイル構成が異なるため、単純な使い回しは不整合を生む）。
+3. v7で改めてStep E2（既に完了）・E4（Dataset parity）・E5（1 epoch smoke）・E6（Run A/B
+   5 epoch）・E7（共通target評価）を実行する。
+
+`label_policy.py`のfail-fast設計自体は変更しない（緩めない）。今回、入力側の契約違反が
+解消されたため、stray pointを黙って変換するworkaroundは不要という判断をStage 4・Stage 5双方で
+共有している。S5-07〜S5-11（teacher v6ベース）は既存結果として保持し、v6/v7を指標比較時に
+明記する。
+
+**teacher v7でのStep E2〜E4再実行結果（2026-09-14、ユーザー実機）:** v7 inventory（180 H5）から
+`train_stage5.py`の`collect_h5_paths_from_dir`/`split_train_val_paths`（val_fraction 0.1、seed 42）
+を直接呼び出し、実際の学習開始時と同一ロジックでtrain 162 / val 18のfile listを新規生成した上で、
+Step E2〜E4を再実行した。
+
+| Step | 結果 |
+| --- | --- |
+| E2（synthetic test） | 合格 |
+| E3（v7 180 H5監査） | 合格。stray ignore points = **0**（Stage 4修正をStage 5側からも独立確認）。ignore点総数262,244 = BBox内target点数262,244で完全一致。schema属性も`contour_teacher_schema=bboxrank_v7_cvat_authoritative_crop_quality_v1`で想定通り |
+| E4（Dataset parity、180ファイル全件） | 合格。総window数802、BBox non-contour target点数262,244（E3の集計と一致） |
+
+v6時点のignore点総数262,347から262,244への減少（-103点）は、除外2動画分のignore点と、
+val_009 frame 51の6点がbackground化された分の合計として整合する。E3/E4がいずれもGPU非依存
+（CPU/h5pyのみ）で完走したことも確認できた。
+
+**Step E5結果（2026-09-14、ユーザー実機）:** Run B（`bbox_noncontour_background`）を1 epoch
+smoke実行した（`EX260914smoke_..._ep1_bs1_acc8_nopad`）。train 162 files/715 samples、
+val 18 files/87 samplesで実際のsplitと一致した。変換点数はtrain 238,377点、val 23,867点
+（`-1 -> 0`）で、class weightは固定値`[0.05963856, 1.9403615]`（auto再計算なし）を確認した。
+epoch 1: train loss/F1/IoU `0.5801/0.0319/0.0162`、val loss/F1/IoU `0.5651/0.0428/0.0218`で、
+finite値かつcheckpoint保存まで完走した。
+
+**Step E6結果（2026-09-14、ユーザー実機）:** teacher v7・v7 split（162/18）・GroupNorm・
+class weight固定値`[0.05963856, 1.94036150]`で、Run A（`bbox_noncontour_ignore`、
+`EX260914_..._ep5`）とRun B（`bbox_noncontour_background`、`EX260915_..._ep5`）を各5 epoch
+学習した。
+
+| run | epoch | train loss | train F1 | train IoU | val loss | val F1 | val IoU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A | 1 | 0.5786 | 0.0329 | 0.0167 | 0.5596 | 0.0294 | 0.0149 |
+| A | 2 | 0.5043 | 0.0719 | 0.0373 | 0.5253 | 0.0535 | 0.0275 |
+| A | 3 | 0.4709 | 0.0809 | 0.0421 | 0.4998 | 0.0679 | 0.0351 |
+| A | 4 | 0.4494 | 0.0902 | 0.0472 | 0.5003 | 0.0674 | 0.0349 |
+| A | 5 | 0.4323 | 0.0995 | 0.0523 | 0.4735 | 0.0727 | **0.0377** |
+| B | 1 | 0.5800 | 0.0323 | 0.0164 | 0.5685 | 0.0222 | 0.0112 |
+| B | 2 | 0.5091 | 0.0705 | 0.0366 | 0.5291 | 0.0550 | 0.0283 |
+| B | 3 | 0.4785 | 0.0810 | 0.0422 | 0.5187 | 0.0490 | 0.0251 |
+| B | 4 | 0.4529 | 0.0882 | 0.0461 | 0.4947 | 0.0607 | 0.0313 |
+| B | 5 | 0.4376 | 0.0955 | 0.0501 | 0.4963 | 0.0680 | **0.0352** |
+
+両runとも全epochでloss/F1/IoUが有限で、val IoUはepoch 5で最大（Run A 0.0377、Run B 0.0352）
+だった。`best_metric=iou_femur`により`best.pt`・`last.pt`はいずれも同一epochを指す見込みで
+あり、Step E7で確認する。ここでのF1/IoUはRun A/Bそれぞれの実効label（Run Bはvalid_maskが
+異なる）に対するwindow単位集計であるため、この時点でA/Bを直接比較しない
+（Step E7の共通targetで比較する）。
+
+**Step E7結果（2026-09-14、ユーザー実機）:** Run A・Run Bとも`last.pt`（epoch 5、Step E6で
+val IoU最大epochと一致）に対し、既存`evaluate_stage5.sh`でcanonical参照値を取得した後、
+`check_stage5_label_policy_ablation_eval.py`で3 target評価を実行した。`canonical_v6`の
+mean baseline parity gateはRun A/Bとも合格し、既存`evaluate_stage5.py`との数値一致を確認した。
+
+実行中に、本checker（`check_stage5_label_policy_ablation_eval.sh`）の`RUN_DIR`/`EVALUATION_DIR`
+既定値が、teacher v7導入前に設定した旧v6 S5-11 GroupNorm pilot run（`EX260912`）のpathへ
+ハードコードされたままになっているバグを発見した。`CHECKPOINT`/`REFERENCE_H5_METRICS_CSV`を
+明示指定してもこの既定値が使われた結果、`VAL_LIST`が修正前v6の`val_files.txt`（val_009の
+frame 51 stray点を含む）を指してしまい、Run Aの評価中にfail-fastした。`RUN_DIR`/
+`EVALUATION_DIR`を`CHECKPOINT`/`REFERENCE_H5_METRICS_CSV`の親ディレクトリから自動導出する
+よう修正し、以後は評価対象のrunと矛盾しないpathが常に使われるようにした。
+
+**主要metrics（`canonical_v6` target、window/point集約後）:** `canonical_v6`はcheckerに残る
+historicalな評価target IDであり、本評価の入力はteacher v7である。実体はteacher v7 H5のnative valid
+labelで、teacher v6の181-file inventoryを評価したものではない。
+
+| split | run | TP | FP | recall | precision | F1 | IoU | FPR | TP0動画数 | video median F1 | video median IoU |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| train_sanity | A（ignore） | 5,682 | 82,901 | 58.24% | 6.41% | 0.1156 | 0.0613 | 13.42% | 0/3 | 0.0568 | 0.0292 |
+| train_sanity | B（background） | 6,405 | 79,822 | 65.65% | 7.43% | 0.1335 | 0.0715 | 12.93% | 0/3 | 0.0555 | 0.0632 |
+| validation | A（ignore） | 33,531 | 830,987 | 44.69% | 3.88% | 0.0714 | 0.0370 | 11.71% | 1/18 | 0.0530 | 0.0272 |
+| validation | B（background） | 32,376 | 864,239 | 43.15% | 3.61% | 0.0666 | 0.0345 | 12.17% | 1/18 | 0.0623 | 0.0322 |
+
+train_sanityはF1・IoU・recallいずれもRun Bが上回り、FPも減少した。一方validationの
+aggregated指標はRun Aがわずかに上回り、FPR はRun Bでむしろ悪化した（11.71%→12.17%）。
+video単位のcanonical F1では18動画中Run Aが12勝、Run Bが5勝、1引き分けだったが、
+median F1/IoUはRun Bが上回った（分布の裾（F1が低い動画が多い）と中央値の位置が異なるため。
+矛盾ではなく、Run Aの勝ちが小差で多く、Run Bの勝ちが中央付近に位置することによる）。
+TP0動画数は両runとも1/18で差がない。
+
+**BBox non-contour region診断（`bbox_noncontour_region`、対象点でのpredicted positive率）:**
+
+| split | run | target点数 | predicted positive数 | predicted positive率 |
+| --- | --- | ---: | ---: | ---: |
+| train_sanity | A | 4,966 | 2,202 | 44.34% |
+| train_sanity | B | 4,966 | 2,026 | 40.80% |
+| validation | A | 23,867 | 9,697 | 40.63% |
+| validation | B | 23,867 | 7,429 | **31.13%** |
+
+対象領域のpositive予測率はRun Bで明確に低下した（validation: 40.63%→31.13%、相対-23%）。
+video別では21動画中12動画で改善、6動画で悪化、3動画で同値だった。これはRun Bの学習が、
+狙い通りBBox non-contour領域でのpositive予測を抑制する方向に働いたことを支持する。ただし
+9.6節冒頭で述べた通り、この領域抑制は全体FP/FPRの低下には直結しなかった（該当領域点数が
+valid background全体（約720万点）に対して0.3%程度と少なく、領域内の改善が全体指標に埋もれた
+可能性がある）。
+
+**仮説判断:** 9.6節の判定基準（「BBox non-contour regionのpositive予測率**と**全体FP/FPRを
+低下させつつ、canonical positive contourのrecall・TP0動画数・video median F1/IoUを大きく
+悪化させない場合に有望」）に照らすと、領域内positive予測率の低下という核心メカニズムは支持
+されたが、全体FP/FPRの低下は確認されず、validation aggregatedのrecall/F1/IoUはRun Aがやや
+上回った。これは判定基準の「分岐1（有望）」「分岐2（悪化）」のいずれにも明確には該当せず、
+「分岐3（差が小さい）」または「分岐4（判定不能）」に近い。5 epochという短い学習量、
+teacher v7移行後で初めての比較であること、split集約とvideo別勝敗数・medianが一致しない点も
+踏まえ、production採否を実装チャット側では決定しない。詳細な判断材料は
+`.tmp/stage5_s5_12_report_to_policy_chat.md`にまとめ、方針管理チャットへ返す。
+
+**結果解析と方針管理チャットの判断（2026-09-14）:** Run Bは意図した局所的なlabel mechanismを
+学習できた一方、それがStage 5全体のFP問題を解決するという仮説は支持されなかった。validationの
+BBox non-contour positive予測率は40.63%から31.13%へ低下したが、対象点はvalid background約720万点の
+約0.3%であり、全体FPRは11.71%から12.17%へ改善しなかった。canonical aggregated F1/IoUとvideo別F1の
+勝敗はRun Aが優位で、Run Bのvideo median F1/IoUが高いことは一部動画への有効性を示すものの、TP0
+動画数は同じである。したがって、Run Bを次段階の標準policyとする一貫した根拠には不足する。
+
+以上から次を正式判断とする。
+
+1. S5-13ではRun A（`bbox_noncontour_ignore`）を暫定label policyとして採用する。これはRun Bの局所効果を
+   否定する判断ではなく、global validationを改善しなかった変更を固定せず、後方互換なpolicyで
+   class weightの影響を単独評価するための保守的な選択である。Run Bは診断用alternateとして保持する。
+2. S5-12のA/Bを長期学習へ延長せず、両policyを200 epochまで持ち越さない。対象領域が全backgroundの
+   約0.3%である以上、学習期間の延長だけで局所抑制がglobal FP改善へ転じる見込みは限定的である。
+   threshold 0.5、mean aggregationを維持し、次にglobalなpositive/negative trade-offへ直接作用する
+   S5-13 class weight比較を行う。
+3. teacher v7への修正だけを理由にS5-07〜S5-11を一律再実行しない。S5-11までの構造診断はteacher v6の
+   履歴結果として保持し、teacher v7のS5-12 Run Aを今後の比較baselineとする。特定の仮説の解釈に
+   teacher差が交絡する場合だけ、対応するcheckerまたはpilotをv7で個別再実行する。
+
+この判断によりS5-12は完了とし、次段階をteacher v7、GroupNorm 8 groups、Run A label policy、
+threshold 0.5、mean aggregation固定のS5-13 class weight ablationとする。GroupNormおよびlabel policyの
+production既定値は引き続き変更せず、最終採否はS5-15で判断する。
 
 ### 9.7 Class weightと座標依存の比較
 

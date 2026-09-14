@@ -170,11 +170,16 @@ def bbox_bounds(
     x1, y1, x2, y2 = (float(value) for value in values)
     if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
         return None
+    # Keep the saved-BBox contract aligned with LocalBBox.valid and the
+    # Stage 4/5 point-label audits. A zero-area xyxy box is not a drawable
+    # one-pixel line, even when its coordinates happen to land on an integer.
+    if x2 <= x1 or y2 <= y1:
+        return None
     left = int(math.floor(max(0.0, x1)))
     top = int(math.floor(max(0.0, y1)))
     right = int(math.ceil(min(float(width - 1), x2)))
     bottom = int(math.ceil(min(float(height - 1), y2)))
-    if right < left or bottom < top:
+    if right <= left or bottom <= top:
         return None
     return left, top, right, bottom
 
