@@ -1575,6 +1575,69 @@ recallが崩壊する場合、W-Bは採用しない」という9章の不採用�
 **W-Bは不採用、W-A（強いauto由来weight）を維持**という明確な結論が得られた。production反映は
 方針管理チャットの判断を待つ。詳細な報告は`.tmp/stage5_s5_13_report_to_policy_chat.md`。
 
+#### S5-13補足: Threshold-free診断と中間Class Weight（W-C）検証結果（2026-09-14）
+
+方針管理チャットはW-A維持を正式決定（D-023）した上で、S5-14前の限定的な補足検証（D-024/D-025）を
+指示した。新規checker`check_stage5_class_weight_threshold_free.py/.sh`は`evaluate_stage5.py`が
+`SAVE_PREDICTIONS=1`で既に保存したprediction `.npz`（`prob_femur`）とH5 GTのみを使い、モデル再推論
+・CUDA・torchを一切使わずに実装した（threshold-0.5 TP/FP/TN/FNが既存`h5_metrics.csv`と完全一致する
+ことをfail-fast gateとして検証）。
+
+**補足検証1（threshold-free診断、保存済みW-A/B再利用、再学習なし、2026-09-14）:**
+
+| split | run | AUPRC | AUROC | max F1 |
+| --- | --- | ---: | ---: | ---: |
+| train_sanity | W-A | 0.0860 | 0.8519 | 0.1849 |
+| train_sanity | W-B | 0.0707 | 0.8368 | 0.1566 |
+| validation | W-A | 0.0574 | 0.8018 | 0.1162 |
+| validation | W-B | 0.0367 | 0.7652 | 0.0885 |
+
+validation positive比率は約1.05%であり、W-A/Bとも対応するランダム基準を大きく上回る。固定FPRでの
+recall（validation）はFPR 1%でW-A 11.60%/W-B 8.40%、FPR 5%でW-A 28.35%/W-B 22.54%、FPR 10%で
+W-A 41.16%/W-B 34.24%と、いずれもW-Bが一貫してW-Aを下回った。W-AのFPR（11.71%）以下で達成可能な
+最大recallは、W-A 44.70%（threshold≈0.500、元のthreshold 0.5結果とほぼ一致し整合性チェックとして
+機能）に対し、W-B 37.59%（threshold≈0.107）。video-level（validation 18動画）のAUPRC win countは
+W-A 12・W-B 6だが、median AUPRCはW-A 0.0422・W-B 0.0427とほぼ同値（meanはW-A優位）で、S5-12でも
+見られたmean/median不一致が再度現れた。
+
+**判定:** 「discrimination消失」（ランダム水準への崩壊）にも「W-Aに近い」にも該当しない中間的結果。
+W-Bのthreshold 0.5全negativeは主にcalibration shiftが原因（threshold再設定でrecall 37.59%まで
+回復する）だが、discrimination自体も中程度（相対15〜35%程度）に劣化しており、純粋なcalibration
+shiftだけでは説明しきれない。D-023（W-Bを現行threshold 0.5のS5-14 controlに採用しない）は維持し、
+この結果はS5-15のthreshold診断用履歴候補として保持する。production thresholdの変更は本補足でも
+行わない。
+
+**補足検証2（W-C 5 epoch pilot、weight比16、新規5 epoch pilot1/2回、2026-09-14）:** W-A/Bと同一の
+teacher v7・GroupNorm・`bbox_noncontour_ignore`・split・seed・初期checkpointで、
+`class_weight=[0.11764706, 1.88235294]`を5 epoch学習した。config parityは
+`check_stage5_class_weight_ablation.sh`で合格（class weight以外の差分なし）。
+
+threshold 0.5固定評価（`evaluate_stage5.sh`、split aggregate）:
+
+| split | run | recall | precision | F1 | IoU | FPR | TP0動画数 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| validation | W-A | 44.69% | 3.88% | 0.0714 | 0.0370 | 11.71% | 1/18 |
+| validation | W-C | 17.52% | 6.70% | 0.0969 | 0.0509 | **2.58%** | **5/18** |
+
+video-level（validation 18動画）: F1/IoU win countはW-A 9・W-C 8・1引き分けとほぼ互角だが、FPRは
+18動画すべてでW-Cが低い。一方recallはmean 47.41%→21.25%、**median 44.68%→9.70%**と大幅に悪化し、
+TP0動画数もW-Aの1/18からW-Cの5/18へ増加した。
+
+threshold-free診断（保存済みprediction再利用、再学習なし）: validation AUPRC 0.0574(A)→0.0445(C)、
+AUROC 0.8018(A)→0.7588(C)といずれもW-Cが下回った。さらに**同一FPRに揃えて比較すると、1%/5%/10%/
+11.71%のすべての水準でW-AがW-Cのrecallを上回った**（例: FPR 11.71%でA 44.70% vs C 38.75%）。
+これは、W-Cのthreshold 0.5での見かけ上のF1/precision/IoU改善が、識別能力（ROC/PR curveそのもの）の
+向上ではなく、より保守的な暗黙operating pointへ移動した結果であることを示す。train_sanity
+（3動画のみ、高分散）ではFPR 10%以上で逆転が見られたが、動画数が少なく信頼性は低い。
+
+**仮説判断:** handoff文書9章の基準に照らし、FP/FPR低下は明確に満たすが、recall・TP0動画数の
+明確な悪化、および同一FPR比較でのW-A優位（AUPRC/AUROC含む）により、「W-Aを維持する条件」に
+複数該当する。video-level F1/IoU win countがほぼ互角である点も「改善が動画別傾向でも支持される」
+とは言えない。**W-Cは不採用、W-A（強いauto由来weight）を維持**と判断し、結果が明確なため2回目の
+新規5 epoch pilotは実施しなかった。S5-13本比較の結論（W-A維持）はこの補足でも変わらない。
+production反映は方針管理チャットの判断を待つ。詳細な報告は
+`.tmp/stage5_s5_13_supplement_report_to_policy_chat.md`。
+
 ## 10. 結論
 
 - PointNeXt-Sはtrain sanityで大腿骨周辺を学習しているが、valid background上のFPが多く、memorization確認としても未解決である。

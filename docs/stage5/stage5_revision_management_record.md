@@ -8,7 +8,7 @@
 | 作成日 | 2026-09-10 |
 | 最終更新日 | 2026-09-14 |
 | 対象 | pseudo-3D point cloudからのpoint-wise大腿骨segmentation |
-| 現在の段階 | S5-13本比較完了。W-Aを暫定採用し、S5-14前のS5-13補足（threshold-free診断と中間weightの限定確認）へ進む |
+| 現在の段階 | S5-13本比較・補足とも完了。W-Aを暫定class weightとして確定し、S5-14の座標依存・frame-level・overlap exposure診断へ進む |
 | production readiness | 未到達。診断中 |
 
 本書は、Stage 5の目的、現在状態、過去の改修、検証結果、次の実施順を一か所から追えるように
@@ -158,7 +158,8 @@ S5-12以降はcrop品質修正済みteacher v7（`bboxrank_v7_cvat_authoritative
 | S5-11 | 2026-09-12 | GroupNorm normalization比較 | checker accepted。方針管理チャットが実験用normalizationとして暫定採用 |
 | S5-12 | 2026-09-13〜2026-09-14 | GroupNorm固定Label policy ablation | completed。Run A（ignore）をS5-13の暫定policyとして採用 |
 | S5-13 | 2026-09-14 | GroupNorm固定Class weight ablation | completed。W-B（弱い固定weight）は不採用、W-A（強いauto由来weight）を暫定採用 |
-| S5-13補足 | 2026-09-14〜 | Threshold-free診断と中間class weight限定確認 | planned。S5-14前に実施し、新規5 epoch pilotは最大2回 |
+| S5-13補足 | 2026-09-14 | Threshold-free診断と中間class weight限定確認 | completed。W-C（比16）不採用、W-A維持。新規5 epoch pilot 1/2回で終了 |
+| S5-14 | 2026-09-14〜 | 座標依存・frame-level・overlap exposure診断 | planned。core診断は再学習なし、結果後に必要なablationを1件ずつ判断 |
 
 ## 5. 段階別の改修記録
 
@@ -877,14 +878,169 @@ threshold-free識別が残っていても現行threshold 0.5のS5-14 controlに�
 group数、learning rate、scheduler、window、sampling、feature、augmentation、loss形式は変更しない。
 補足完了後に結果と採用判断を評価レポートおよび本管理記録へ追記してからS5-14へ進む。
 
-### S5-14 座標依存・frame-level・overlap loss診断
+**補足検証1結果（2026-09-14、ユーザー実機、再学習なし）:** 新規checker
+`check_stage5_class_weight_threshold_free.py/.sh`（`evaluate_stage5.py`の既存prediction `.npz`と
+H5 GTのみ使用、モデル再推論・CUDA不要）で、保存済みW-A/Bのthreshold-0.5 TP/FP/TN/FNが既存
+`h5_metrics.csv`と完全一致することを確認した上で、AUPRC/AUROC/固定FPR別recall/precisionを算出した。
 
-状態: deferred。
+| split | run | AUPRC | AUROC | max F1 |
+| --- | --- | ---: | ---: | ---: |
+| train_sanity | W-A | 0.0860 | 0.8519 | 0.1849 |
+| train_sanity | W-B | 0.0707 | 0.8368 | 0.1566 |
+| validation | W-A | 0.0574 | 0.8018 | 0.1162 |
+| validation | W-B | 0.0367 | 0.7652 | 0.0885 |
 
-似たXY位置のpositive反復について、frame単位TP/FP/FN、GT/predicted positive重心、動画内相対位置を
-記録する。必要になった場合に限り、座標augmentationまたは座標feature ablationを一因ずつ比較する。
-center-only lossやoverlap出現回数の逆数weightは、最終normalizationとaggregation評価が固まるまで
-実装しない。
+W-AのFPR（11.71%）以下で達成可能な最大recall（validation）はW-A 44.70%に対しW-B 37.59%
+（thresholdを0.5から約0.107へ下げた場合）。video-level AUPRC win countはW-A 12・W-B 6（validation
+18動画）だが、median AUPRCはW-A 0.0422・W-B 0.0427とほぼ同値（meanはW-A優位）で、S5-12と同様の
+mean/median不一致が見られた。
+
+**判定:** 「discrimination消失」（ランダム水準への崩壊）にも「W-Aに近い」にも該当しない中間的結果。
+W-Bのthreshold 0.5全negativeは主にcalibration shiftが原因（threshold再設定でrecall 37.59%まで
+回復）だが、discrimination自体も中程度（相対15〜35%程度）に劣化しており、純粋なcalibration
+shiftだけでは説明しきれない。D-023の判断（W-Bを現行threshold 0.5のS5-14 controlに採用しない）は
+維持し、この結果はS5-15のthreshold診断用履歴候補として保持する。詳細は
+`stage5_pointnext_s_training_evaluation_report.md` 9.7節、報告は
+`.tmp/stage5_s5_13_supplement_report_to_policy_chat.md`。
+
+**補足検証2結果（W-C、weight比16、新規5 epoch pilot 1/2回、2026-09-14、ユーザー実機）:**
+config parityは合格（class weight以外の差分なし）。threshold 0.5固定評価（validation aggregate）は
+recall 44.69%(A)→17.52%(C)、FPR 11.71%(A)→**2.58%(C)**、F1 0.0714(A)→0.0969(C)、
+IoU 0.0370(A)→0.0509(C)。video-levelではF1/IoU win countがW-A 9・W-C 8・1引き分けとほぼ互角な
+一方、FPRは18動画すべてでW-Cが低く、recall medianは44.68%→**9.70%**と大幅悪化、TP0動画数は
+W-Aの1/18からW-Cの**5/18へ増加**した。threshold-free診断ではvalidation AUPRC 0.0574(A)→0.0445(C)、
+AUROC 0.8018(A)→0.7588(C)といずれもW-Cが下回り、**同一FPRに揃えて比較すると1%/5%/10%/11.71%の
+すべての水準でW-AがW-Cのrecallを上回った**。これは、W-Cのthreshold 0.5での見かけ上のF1/precision/
+IoU改善が識別能力そのものの向上ではなく、より保守的な暗黙operating pointへ移動した結果であることを
+示す。
+
+**判定:** handoff文書9章の「W-Aを維持する条件」（TP0動画数またはrecallの明確な悪化、
+threshold-free指標とvideo-level結果がW-Cを支持しない、結果が混合的）に複数該当し、
+**W-Cは不採用、W-A（強いauto由来weight）を維持**と判断した。結果が明確なため2回目の新規5 epoch
+pilotは実施しなかった。S5-13本比較の結論（W-A維持）はこの補足でも変わらない。production反映は
+方針管理チャットの判断を待つ。
+
+**方針管理チャットの完了判断（2026-09-14）:** S5-13補足を完了とし、W-Cは不採用、W-A
+（`[0.05963856,1.94036150]`）をS5-14の暫定class weightとして確定する。W-B/W-Cのcheckpoint・config・
+prediction・threshold-free metricsはS5-15で参照可能な診断履歴として保持するが、activeなproduction
+候補にはしない。W-Cは同一FPRでW-Aよりrecallが低く、AUPRC/AUROCも悪化したため、weight比24などの
+追加中間weight探索は行わない。未使用の2回目の5 epoch枠は消化せず、S5-14へ進む。threshold 0.5と
+mean aggregationは維持し、production threshold tuningはS5-15まで延期する。
+
+### S5-14 座標依存・frame-level・overlap exposure診断
+
+状態: planned。core診断は再学習なしで実施し、結果に基づくtraining ablationは別途方針判断する。
+
+**背景:** train sanityのpositive-only PLYを側面から見たとき、同じようなXY位置のpositive集合が
+異なるframe群（pseudo-3DのZ方向）へ2〜3回反復して見えた。S5-04のbatch integrity検証により、GTや
+point cloudが別sampleへ流用されるDataset/collate/shuffle上の不具合は強く除外されている。一方、
+現在のwindow学習ではunique pointのwindow出現倍率がbackground約1.69倍、positive約1.90倍で、
+frame位置によりlossへの露出回数が異なる。S5-08ではwindow境界距離とdisagreementの相関はなかったが、
+動画内相対位置の後半ほどdisagreement率が高い傾向があった。座標事前分布、時間的な見え方の変化、
+overlapによる不均一なtraining exposureをまだ分離できていない。
+
+**目的:** W-A baselineの予測をsource point・frameへ戻し、次の3仮説を再学習なしで切り分ける。
+
+1. **座標事前分布:** GTの位置と無関係に、modelが動画間で似たXY位置をpositiveにしやすい。
+2. **時間位置・frame phase:** 誤検出または見逃しが動画内の特定区間、GT-positive区間の前後、
+   no-GT frameへ偏る。
+3. **overlap exposure:** windowへの出現回数またはwindow間disagreementが、point/frame単位の
+   probability・FP・FN・反復構造と対応する。
+
+**固定baseline:** teacher v7、GroupNorm 8 groups、`bbox_noncontour_ignore`、W-A class weight
+`[0.05963856,1.94036150]`、window 16/stride 8/tailあり、mean probability aggregation、threshold 0.5、
+`model.eval()`を固定する。対象checkpointはS5-12/S5-13で再利用したW-A epoch 5（`best.pt`と
+`last.pt`が同一epoch）とする。aggregate評価はvalidation 18動画全件と固定train sanity 3動画を使う。
+GT/exposureだけで完結するdataset監査はteacher v7全180 H5へ拡張する。
+
+**座標系の分離:** H5のraw `pixel_xy`、raw pseudo-3D `points`、modelへ渡される`normalize_xyz(points)`、
+`frame_order`を別項目として保持する。現行DatasetはH5全体のpointsを一度center/scaleしてからwindowを
+選ぶため、windowごとの再centerではない。したがってmodel入力には動画全体中心に対する相対XY/Z位置が
+残る。PLY上のraw座標反復とmodel入力座標上の依存を同一視せず、両方を報告する。動画間XY比較はStage 4
+schemaに記録されたcrop/image寸法で0〜1へ正規化し、寸法が利用できない場合は推測で補わず、その動画を
+cross-video heatmapから除外して件数を報告する。
+
+**Step H1: synthetic/parity test。** 小さな合成videoでframe集計、重心、空のpositive class、
+contiguous frame run、XY bin、window exposure count、source `point_indices`への復元を検証する。
+W-Aのthreshold 0.5 aggregate TP/FP/TN/FNが既存`evaluate_stage5.py`の結果と完全一致することを
+real-data fail-fast gateにする。point数、frame_order、label、valid_mask、vote countの欠落・重複、
+nonfinite値があれば停止する。
+
+**Step H2: teacher v7全件のGT/exposure監査（CPU）。** 全180 H5について、frameごとのGT positive/
+background/ignore点数、BBox/GT-positive有無、各source pointのwindow出現回数、class別出現倍率、
+frame相対位置decile別のexposureを記録する。unique-point集計とwindow-occurrence集計を分け、train/val
+splitおよび動画別に出力する。これにより、反復がteacher GT自体またはwindow構成だけで生じ得る程度を
+model predictionと独立に確認する。
+
+**Step H3: aggregate predictionのframe/XY診断（再推論不要を優先）。** 保存済みW-A prediction
+`.npz`とteacher v7 H5を使い、固定21動画についてframe単位のTP/FP/TN/FN、precision、recall、F1、IoU、
+FPR、predicted positive率、GT/predicted positive点数を出力する。GT positiveとpredicted positiveの
+XY重心・分散・重心距離は、両集合が存在するframeだけで計算し、undefinedを0で埋めない。no-GT frame
+ではFP数、positive probability、直近GT-positive frameまでの距離を記録する。動画内相対位置decile、
+GT-positive区間の前/中/後、train sanity/validationを分けて集計する。
+
+normalized XY grid上にGT positive density、predicted positive density、FP density、FN densityの
+heatmap用CSV/NPZを作り、GTとpredictionの位置相関、predicted centroidの動画間集中度、no-GT frameで
+同じXY binが繰り返しactiveになる率を計測する。XY binごとのpositive frameを連続runへ分解し、GT runと
+重ならないpredicted run数・長さ・frame間隔を記録することで、PLYで見えた「同じXY位置の複数frame群」
+を定量化する。grid解像度やrun定義は設定と出力へ保存し、単一の恣意的なgridだけで仮説を確定しない。
+
+**Step H4: per-window context診断（固定21動画のみ、必要な1回の再推論）。** 既存S5-08 overlap
+checkerのaccumulatorとsource point alignmentを再利用し、teacher v7・GroupNorm・W-Aでwindowごとの
+`prob_femur`を取得する。同じforward結果からmean aggregateを再構成し、既存W-A predictionとの
+TP/FP/TN/FN parityを要求する。source point/frameごとにvote count、probability min/max/mean/std、
+positive vote ratio、window間class disagreement、各window内の中心/境界距離を記録する。
+
+point/frame errorをvote count、training exposure、動画内相対位置、GT class、no-GT/GT-positive frameで
+層別化する。特に、同じXY binのunmatched predicted runが高いexposureまたは高いdisagreementへ集中するか、
+positiveがbackgroundより多く重複することがFP/FNのどちらと対応するかを確認する。S5-08で棄却した
+「window境界ほど不一致が多い」仮説は、teacher v7/W-A上のparity確認を除き、根拠なく再設計しない。
+
+**Step H5: 可視化と出力。** shareable出力は匿名video aliasを使用し、少なくとも次を作成する。
+
+```text
+frame_metrics.csv
+frame_position_deciles.csv
+gt_overlap_exposure.csv
+point_overlap_error_statistics.csv
+xy_density_bins.csv または同等のNPZ
+xy_temporal_recurrence.csv
+video_summary.csv
+stage5_s5_14_summary.json
+```
+
+固定train sanityと代表validationについて、GT/prediction/FP/FNの全点およびpositive-only PLYを任意出力
+できるようにする。PLYと実video mappingはprivate出力とし、匿名化bundleへ含めない。既存のprivacy
+self-check、mean baseline parity、同じpoint setの検証を維持する。
+
+**仮説の判定:** 単一のsplit aggregateだけで判断せず、validation動画別勝敗・median・no-GT frame・
+train sanityとの方向一致を確認する。
+
+- GT densityが低い共通XY領域へprediction/FPが動画横断で集中し、centroidがGTよりglobal priorへ近い場合、
+  座標事前分布仮説を支持する。
+- errorが動画内相対位置またはGT-positive区間からの距離と一貫して変化し、XY集中だけでは説明できない
+  場合、時間位置・frame phase仮説を支持する。
+- error/recurrenceがsource pointのwindow出現回数またはdisagreementと一貫して増え、GT class・時間位置で
+  層別化しても残る場合、overlap exposure仮説を支持する。
+- train sanity 3動画だけの傾向、少数動画、raw point density差だけで全体仮説を採用しない。
+
+**結果による分岐:** core S5-14ではtraining code、loss、sampling、augmentationを変更しない。
+
+1. 座標事前分布が支持された場合は、座標変換に対するprediction equivarianceの再学習なし診断を先に
+   提案し、その後に限りrotation/mirror等のaugmentationを1要因ずつ5 epoch比較する。
+2. overlap exposureが支持された場合は、inverse-occurrence loss weightingを第一候補、center-only lossを
+   第二候補として、同時導入せず1方式だけの5 epoch比較案を提示する。
+3. 時間位置だけが支持された場合は、window文脈とframe phaseの関係を追加診断し、座標augmentationや
+   overlap lossを根拠なく導入しない。
+4. いずれも支持されない、または効果が小さい場合は構造変更を追加せず、W-A baselineを維持して
+   S5-15の5〜10 epoch最終pilot計画へ進む。
+
+いずれの分岐でも、S5-14 core結果の報告前に再学習を開始しない。追加ablationは1回に1要因、最大5 epoch
+とし、方針管理チャットの承認を別途得る。threshold tuning、aggregation変更、長期学習はS5-14の対象外
+とする。
+
+**productionへの影響:** なし。GroupNorm、W-A class weight、`bbox_noncontour_ignore`は引き続き実験用の
+暫定条件であり、production既定値は変更しない。mean aggregationとthreshold 0.5を維持する。
 
 ### S5-15 長期学習とproduction候補確定
 
@@ -923,6 +1079,10 @@ aggregation 4方式を再評価し、production aggregation、normalization、th
 | D-023 | 2026-09-14 | W-B（`[0.5,1.5]`）を不採用とし、W-A（`[0.05963856,1.94036150]`）をS5-13補足およびS5-14の暫定class weightとして採用する | W-Bはthreshold 0.5でvalidation recall 0%、TP0 18/18へ完全崩壊し、W-Aは検出能力を維持したため |
 | D-024 | 2026-09-14 | S5-14前にS5-13補足としてthreshold-free診断と中間weight W-C（比16）の限定確認を行う | W-A/W-Bの間隔が広く、固定threshold結果だけではdiscrimination消失とcalibration shiftを分離できないため |
 | D-025 | 2026-09-14 | S5-13補足の新規5 epoch pilotを原則1回、最大2回に制限する | 補足検証を広いweight sweepや長期学習へ拡大せず、S5-14前の判断に必要な最小量へ抑えるため |
+| D-026 | 2026-09-14 | W-C（`[0.11764706,1.88235294]`、比16）を不採用とし、W-AをS5-14の暫定class weightとして確定する | W-CはFPRを下げたがrecall medianとTP0が悪化し、AUPRC/AUROCおよび同一FPRでのrecallもW-Aを下回ったため |
+| D-027 | 2026-09-14 | W-B/W-CはS5-15で参照可能な診断履歴として保持するが、activeなproduction候補にはしない | calibration shiftの資料にはなるが、両者ともW-Aよりdiscriminationが低く、現行thresholdで検出不足が大きいため |
+| D-028 | 2026-09-14 | weight比24などの追加中間weightを試さず、未使用の2回目の5 epoch枠を消化しない | W-Cは同一FPRの全比較点でW-Aよりrecallが低く、追加のweight弱化を支持する根拠が得られなかったため |
+| D-029 | 2026-09-14 | S5-14 coreを再学習なしの座標・frame・overlap exposure診断として開始し、結果報告前にloss/augmentationを変更しない | PLY上のXY反復について座標事前分布、時間位置、window重複露出の3仮説が未分離であり、先に原因を定量化する必要があるため |
 
 ## 8. 文書更新ルール
 
