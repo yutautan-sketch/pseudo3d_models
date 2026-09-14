@@ -81,9 +81,43 @@ OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
 EPOCHS="${EPOCHS:-200}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-8}"
-PREFIX="w16_s8_bboxrankv7_cvatcropq_glocal_ce_smooth00_auto_weight_lr1e3_ep${EPOCHS}_bs${BATCH_SIZE}_acc${GRADIENT_ACCUMULATION_STEPS}_nopad"
-EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
-OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
+
+# Loss knobs.
+# CLASS_WEIGHT:
+#   ""       : no class weight
+#   "auto"   : PointNeXt-style 1 / (class_frequency + epsilon), normalized to mean 1
+#   "1,4"    : manual class weights
+CLASS_WEIGHT="${CLASS_WEIGHT:-auto}"
+
+# Filesystem-safe tag distinguishing auto/manual/none class weight in the run
+# name and startup log (S5-13). "auto" intentionally stays unresolved here
+# (no numeric suffix): the resolved values depend on the train split computed
+# inside train_stage5.py (seed-dependent), so duplicating that split/count
+# logic here would require re-reading every H5 file a second time. The
+# resolved auto weight is already recorded in config.json/checkpoint config
+# (class_weight_info) and in label_policy_diagnostics.csv.
+class_weight_tag() {
+  local value="$1"
+  local lower
+  lower="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  if [[ -z "${lower}" ]]; then
+    echo "cw_none"
+    return
+  fi
+  if [[ "${lower}" == "auto" || "${lower}" == "pointnext_auto" ]]; then
+    echo "cw_auto"
+    return
+  fi
+  local sanitized
+  sanitized="$(printf '%s' "${value}" | tr -d '[:space:]' | tr ',' '_' | tr '.' 'p' | tr -c 'A-Za-z0-9_' '_')"
+  echo "cw_manual_${sanitized}"
+}
+CLASS_WEIGHT_TAG="$(class_weight_tag "${CLASS_WEIGHT}")"
+
+PREFIX="${PREFIX:-w16_s8_bboxrankv7_cvatcropq_glocal_ce_smooth00_${CLASS_WEIGHT_TAG}_lr1e3_ep${EPOCHS}_bs${BATCH_SIZE}_acc${GRADIENT_ACCUMULATION_STEPS}_nopad}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${OUTPUT_ROOT}/${EXPERIMENT_NAME}}"
+ALLOW_EXISTING_OUTPUT_DIR="${ALLOW_EXISTING_OUTPUT_DIR:-0}"
 
 # ------------------------------------------------------------
 # Model / training parameters.
@@ -146,11 +180,8 @@ POSITIVE_OVERSAMPLE_RATIO=0.0
 EXCLUDE_IGNORE_IN_SAMPLING=0
 
 # Loss knobs.
-# CLASS_WEIGHT:
-#   ""       : no class weight
-#   "auto"   : PointNeXt-style 1 / (class_frequency + epsilon), normalized to mean 1
-#   "1,4"    : manual class weights
-CLASS_WEIGHT="${CLASS_WEIGHT:-auto}"
+# CLASS_WEIGHT/CLASS_WEIGHT_TAG are resolved earlier (output path info block)
+# because PREFIX/EXPERIMENT_NAME/OUTPUT_DIR depend on the tag.
 AUTO_CLASS_WEIGHT_EPSILON=0.02
 NORMALIZE_AUTO_CLASS_WEIGHT=1
 LABEL_SMOOTHING=0.0
@@ -165,6 +196,10 @@ if [[ "${GRADIENT_ACCUMULATION_STEPS}" -le 0 ]]; then
 fi
 if [[ "${PREFLIGHT_ONLY}" != "0" && "${PREFLIGHT_ONLY}" != "1" ]]; then
   echo "PREFLIGHT_ONLY must be 0 or 1; got ${PREFLIGHT_ONLY}" >&2
+  exit 1
+fi
+if [[ "${ALLOW_EXISTING_OUTPUT_DIR}" != "0" && "${ALLOW_EXISTING_OUTPUT_DIR}" != "1" ]]; then
+  echo "ALLOW_EXISTING_OUTPUT_DIR must be 0 or 1; got ${ALLOW_EXISTING_OUTPUT_DIR}" >&2
   exit 1
 fi
 
@@ -507,6 +542,13 @@ if [[ "${PREFLIGHT_ONLY}" == "1" ]]; then
   exit 0
 fi
 
+if [[ -d "${OUTPUT_DIR}" ]] && [[ -n "$(find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  if [[ "${ALLOW_EXISTING_OUTPUT_DIR}" != "1" ]]; then
+    echo "Output directory already exists and is not empty: ${OUTPUT_DIR}" >&2
+    echo "Set ALLOW_EXISTING_OUTPUT_DIR=1 to explicitly resume/overwrite it, or pick a different EX_DATE/OUTPUT_DIR/EXPERIMENT_NAME." >&2
+    exit 1
+  fi
+fi
 mkdir -p "${OUTPUT_DIR}"
 
 echo "Stage5 padding-free training"
@@ -530,7 +572,7 @@ echo "  grad clip norm : ${GRAD_CLIP_NORM:-none}"
 echo "  save every     : ${SAVE_EVERY}"
 echo "  device         : ${DEVICE}"
 echo "  val fraction   : ${VAL_FRACTION}"
-echo "  class weight   : ${CLASS_WEIGHT:-none}"
+echo "  class weight   : ${CLASS_WEIGHT:-none} (tag=${CLASS_WEIGHT_TAG})"
 echo "  label smoothing: ${LABEL_SMOOTHING}"
 echo "  init checkpoint: ${INIT_CHECKPOINT:-none}"
 if [[ "${CLASS_WEIGHT}" == "auto" || "${CLASS_WEIGHT}" == "pointnext_auto" ]]; then

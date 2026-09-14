@@ -1477,6 +1477,104 @@ production既定値は引き続き変更せず、最終採否はS5-15で判断�
 
 Hard Negative Mining、Dice loss、Focal lossなどは、上記のデータ経路とbatch処理を確認するまでは導入しない。
 
+#### 実装事項F: Class weight ablation（GroupNorm固定、teacher v7）実装・検証結果（2026-09-14）
+
+**目的:** S5-12でRun A（`bbox_noncontour_ignore`）を暫定採用した後、teacher v7・GroupNorm・
+`bbox_noncontour_ignore`を固定し、class weightだけを変えてglobal FP/FPRとpositive recallの
+trade-offを調べる。比較armは次の2つ。
+
+| Arm | class weight | positive:background weight比 |
+| --- | --- | ---: |
+| W-A（control、S5-12 Run Aを再利用） | `[0.05963856, 1.94036150]` | 約32.54 |
+| W-B | `[0.5, 1.5]` | 3.0 |
+
+**実装内容:** `train_stage5.sh`の`PREFIX`が実際の`CLASS_WEIGHT`に関わらず文字列`auto_weight`を
+固定で含んでいた不具合を修正し、`CLASS_WEIGHT`からfilesystem-safeなtag（`cw_auto`/
+`cw_manual_<値>`/`cw_none`）を生成してrun名・起動ログへ反映、`OUTPUT_DIR`/`EXPERIMENT_NAME`の
+明示override、非emptyな既存出力先への書き込みガード（`ALLOW_EXISTING_OUTPUT_DIR`）を追加した
+（production既定値`CLASS_WEIGHT=auto`は変更していない）。新規checker
+`checks/real_h5/check_stage5_class_weight_ablation.py/.sh`を追加し、2 run directory間で
+config.json（class weight関連キーと意図的に異なり得るrun/output由来キーを除く全一致）、
+train_files.txt/val_files.txt、resolved class weight、history.jsonのepoch数・finite性、
+初期checkpointのpath/SHA-256、（任意で）評価対象point集合の一致をfail-fastで検証する
+（CPU/JSON/CSVのみ、torch/h5py/CUDA不要）。合成テスト
+（`checks/dummy/check_dummy_class_weight_tag.sh`8ケース、
+`checks/dummy/check_dummy_class_weight_ablation.py/.sh`11ケース）はすべて合格した。
+
+```text
+Stage5/train_stage5.sh                                          (変更)
+Stage5/checks/real_h5/check_stage5_class_weight_ablation.py/.sh (新規)
+Stage5/checks/dummy/check_dummy_class_weight_tag.sh              (新規)
+Stage5/checks/dummy/check_dummy_class_weight_ablation.py/.sh    (新規)
+```
+
+**Step F4（W-A再利用判定）:** S5-12 Run Aの学習時revisionと現revisionの`git diff`は上記
+`train_stage5.sh`の命名/衝突ガード変更のみで、`train_stage5.py`への引数構築や`train_stage5.py`
+本体・`stage5/`配下は無変更であることを確認した（学習挙動に影響する差分なし）。S5-12 Run A
+（`EX260914`、teacher v7、GroupNorm、`bbox_noncontour_ignore`、`class_weight=[0.05963856,
+1.9403615]`）の`config.json`を確認し、6節の固定条件をすべて満たすことを確認したため、これを
+W-Aとして再利用した。
+
+**Step F5〜F6結果（2026-09-14、ユーザー実機）:** W-B（`CLASS_WEIGHT=0.5,1.5`、同一初期checkpoint・
+split・seed）で1 epoch smoke・5 epoch pilotとも完走した。train 162 files/715 samples、val 18
+files/87 samplesはW-Aと一致、`label_policy: bbox_noncontour_ignore`（変換点数0、no-op）、
+`class weight: [0.5, 1.5]`を確認した。output_dir名に`cw_manual_0p5_1p5`タグが正しく反映され、
+既存runと衝突しなかった（naming修正の実run確認）。
+
+epoch別のwindow単位running metrics（5 epoch pilot）:
+
+| epoch | train loss | train F1 | train FP | train FN | val loss | val F1 | val FP | val FN |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.3089 | 0.0291 | 4,514,560 | 1,209,511 | 0.1565 | 0.0000 | 0 | 142,147 |
+| 2 | 0.1506 | 0.0000 | 0 | 1,295,189 | 0.1396 | 0.0000 | 0 | 142,147 |
+| 3 | 0.1386 | 0.0000 | 0 | 1,295,189 | 0.1362 | 0.0000 | 0 | 142,147 |
+| 4 | 0.1322 | 0.0000 | 0 | 1,295,189 | 0.1344 | 0.0000 | 0 | 142,147 |
+| 5 | 0.1281 | 0.0000 | 0 | 1,295,189 | 0.1370 | 0.0000 | 0 | 142,147 |
+
+epoch 2以降、train/valともFP=0かつFNが一定値に固定されており、positive予測が完全に消失した
+（全点をbackgroundと予測）。valはepoch 1終了時点で既に崩壊している。
+
+**Step F4本比較・Step F7結果（2026-09-14、ユーザー実機）:** `check_stage5_class_weight_ablation.sh`
+をW-A（`EX260914`）・W-B（`EX260916`）に対して実行し、config parity（file list、resolved weight、
+history finite性・epoch数、初期checkpoint path一致）はすべて合格した。既存`evaluate_stage5.sh`
+（train sanity 3動画+validation 18動画、mean probability aggregation、threshold 0.5、`last.pt`=
+`best.pt`＝epoch 5）で両armを評価した結果、W-Bの崩壊は学習ループのrunning metricsだけでなく、
+公式の集計評価でも完全に再現された。
+
+| split | run | TP | FP | FN | recall | precision | F1 | IoU | FPR | predicted positive数 | TP0動画数 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| train_sanity | W-A | 5,682 | 82,901 | 4,074 | 58.24% | 6.41% | 0.1156 | 0.0613 | 13.42% | 88,583 | 0/3 |
+| train_sanity | W-B | 0 | 0 | 9,756 | 0.00% | 0.00% | 0.0000 | 0.0000 | 0.00% | 0 | **3/3** |
+| validation | W-A | 33,531 | 830,987 | 41,502 | 44.69% | 3.88% | 0.0714 | 0.0370 | 11.71% | 864,518 | 1/18 |
+| validation | W-B | 0 | 0 | 75,033 | 0.00% | 0.00% | 0.0000 | 0.0000 | 0.00% | 0 | **18/18** |
+
+video-level（validation 18動画）: F1勝敗はW-A 17勝・W-B 0勝・1引き分け（全動画でW-Bの
+predicted_positive_count=0）。W-A meanF1=0.0672/medianF1=0.0530に対しW-B mean/median F1とも0.0000。
+train_sanity（3動画）も同様に3/3動画でTP0。
+
+**Weighted CE denominatorの内訳（epoch 1、train split、既存`debug_*`診断を再利用、再実装なし）:**
+
+| arm | weight比(pos:bg) | 生の点数比(bg:pos) | positiveが占める重み付きloss denominator比率 |
+| --- | ---: | ---: | ---: |
+| W-A | 32.54 | 79.55 | **29.03%** |
+| W-B | 3.00 | 79.55 | **3.63%** |
+
+background点はvalid点の約98.8%を占める（raw比 約79.5:1）。W-Aの重み比32.5はこの不均衡を部分的に
+相殺し、positiveがweighted lossの約29%を占める状態を保つ。W-Bの重み比3.0では相殺が全く不十分で、
+positiveはweighted lossのわずか3.6%しか占めず、CE lossを最小化する最も簡単な解が「常にbackgroundと
+予測する」になったと考えられる。実際、W-Bのval側`debug_mean_logit_margin_positive_minus_background`
+はepoch 1時点で-2.618（W-A: -0.991）と大きく負に振れており、崩壊が学習初期から起きていたことと
+整合する。optimizer step数・empty-valid window数は両armとも正常（W-A/Bともepoch毎90 step、
+empty-valid sample 0件）で、機構上の不具合ではなく重み設定そのものが原因と判断できる。
+
+**仮説判断:** 依頼書9章の判定基準に対し、(1) FP/FPR・predicted positive率はW-Bで明確に低下した
+（trivially、predicted positiveが0のため）が、(2) precision/F1/IoUは改善せず0へ落ち込んだ、
+(3) recallがW-Aの44.69%(validation)から0%へ完全に崩壊した、(4) TP0動画数がW-Aの1/18から18/18へ
+増加した、(6) video別勝敗・medianもW-B側の系統的改善を全く支持しない。「FP低下と引き換えに
+recallが崩壊する場合、W-Bは採用しない」という9章の不採用分岐に明確に該当し、判定不能ではなく
+**W-Bは不採用、W-A（強いauto由来weight）を維持**という明確な結論が得られた。production反映は
+方針管理チャットの判断を待つ。詳細な報告は`.tmp/stage5_s5_13_report_to_policy_chat.md`。
+
 ## 10. 結論
 
 - PointNeXt-Sはtrain sanityで大腿骨周辺を学習しているが、valid background上のFPが多く、memorization確認としても未解決である。

@@ -8,7 +8,7 @@
 | 作成日 | 2026-09-10 |
 | 最終更新日 | 2026-09-14 |
 | 対象 | pseudo-3D point cloudからのpoint-wise大腿骨segmentation |
-| 現在の段階 | S5-12完了。teacher v7・GroupNorm・`bbox_noncontour_ignore`を実験条件としてS5-13 class weight比較へ進む |
+| 現在の段階 | S5-13本比較完了。W-Aを暫定採用し、S5-14前のS5-13補足（threshold-free診断と中間weightの限定確認）へ進む |
 | production readiness | 未到達。診断中 |
 
 本書は、Stage 5の目的、現在状態、過去の改修、検証結果、次の実施順を一か所から追えるように
@@ -116,7 +116,7 @@ annotation前H5は実運用推論に使用できる。
 | physical batch | 1 window | accepted |
 | gradient accumulation | 8 windows、point-weighted normalization | accepted |
 | padding | PointNeXt入力へ入れない | accepted |
-| loss | auto class weight付きCrossEntropyLoss、smoothing 0.0 | diagnostic baseline |
+| loss | auto class weight付きCrossEntropyLoss、smoothing 0.0。S5-13で弱い固定weight`[0.5,1.5]`（比3.0）はpositive予測が完全崩壊（recall 0%、TP0動画数18/18）し不採用、強いauto由来weight（比32.5）を維持 | diagnostic baseline |
 | optimizer | AdamW、lr `1e-3`、weight decay `1e-4` | diagnostic baseline |
 | production aggregation | mean probability | 維持。ただし性能上の問題あり |
 | alternate aggregation | max / center-nearest / center-weighted | diagnostic only |
@@ -157,6 +157,8 @@ S5-12以降はcrop品質修正済みteacher v7（`bboxrank_v7_cvat_authoritative
 | S5-10 | 2026-09-10〜2026-09-12 | BatchNorm recalibration診断 | checker accepted。production変更は未実施 |
 | S5-11 | 2026-09-12 | GroupNorm normalization比較 | checker accepted。方針管理チャットが実験用normalizationとして暫定採用 |
 | S5-12 | 2026-09-13〜2026-09-14 | GroupNorm固定Label policy ablation | completed。Run A（ignore）をS5-13の暫定policyとして採用 |
+| S5-13 | 2026-09-14 | GroupNorm固定Class weight ablation | completed。W-B（弱い固定weight）は不採用、W-A（強いauto由来weight）を暫定採用 |
+| S5-13補足 | 2026-09-14〜 | Threshold-free診断と中間class weight限定確認 | planned。S5-14前に実施し、新規5 epoch pilotは最大2回 |
 
 ## 5. 段階別の改修記録
 
@@ -740,15 +742,140 @@ S5-13では後方互換なRun A（`bbox_noncontour_ignore`）を暫定採用し�
 の一律再実行も行わず、必要な仮説だけ個別に再検証する。checker出力名`canonical_v6`はhistoricalな
 target IDであり、本比較の実データはteacher v7 native labelである。
 
+### S5-13 GroupNorm固定Class weight ablation
+
+| メタ情報 | 内容 |
+| --- | --- |
+| 方針決定日 | 2026-09-14 |
+| 状態 | 完了。W-Bは不採用、W-A（強いauto由来weight）をS5-13補足およびS5-14の暫定controlとして採用 |
+| production変更 | 禁止。W-Aが従来のauto既定値と同じ値のため、既定`CLASS_WEIGHT=auto`は変更していない |
+
+**問題:** S5-12で採用したteacher v7・GroupNorm・`bbox_noncontour_ignore`のもとでも、validation FPR
+（11.71%）は未解決のまま残っている。S5-12で使ったauto由来weight`[0.05963856, 1.94036150]`
+（positive:background比約32.5）が、minority positiveの学習とTP0抑制に役立つ一方でFP/FPRを
+増やしている可能性がある。
+
+**目的:** teacher v7・GroupNorm・`bbox_noncontour_ignore`・split・seed・初期checkpointを固定し、
+class weightだけを変えてglobal FP/FPRとpositive recallのtrade-offを比較する。
+
+| Arm | class weight | positive:background weight比 |
+| --- | --- | ---: |
+| W-A（control、S5-12 Run Aを再利用） | `[0.05963856, 1.94036150]` | 約32.54 |
+| W-B | `[0.5, 1.5]` | 3.0 |
+
+**実装内容（Step F1〜F3）:** `train_stage5.sh`のrun命名不具合（`PREFIX`が実際の`CLASS_WEIGHT`に
+関わらず`auto_weight`固定）を修正し、`CLASS_WEIGHT`からfilesystem-safeなtag（`cw_auto`/
+`cw_manual_<value>`/`cw_none`）を生成してrun名・起動ログへ反映、`OUTPUT_DIR`/`EXPERIMENT_NAME`の
+明示override、非emptyな既存出力先への`ALLOW_EXISTING_OUTPUT_DIR`ガードを追加した
+（production既定値`CLASS_WEIGHT=auto`は変更していない）。新規checker
+`checks/real_h5/check_stage5_class_weight_ablation.py/.sh`を追加し、2つのrun directory間で
+config.json（class weight関連キーとrun/output由来キーを除く全一致）・train_files.txt/val_files.txt・
+resolved class weight・history.jsonのepoch数/finite性・初期checkpointのpath/SHA-256・（任意で）
+evaluate_stage5.pyのh5_metrics.csvによる評価対象point集合の一致を検証する（CPU/JSON/CSVのみ、
+torch/h5py/CUDA不要）。静的検証として`checks/dummy/check_dummy_class_weight_tag.sh`（8ケース）と
+`checks/dummy/check_dummy_class_weight_ablation.py/.sh`（11ケース）を追加し、いずれも合格した。
+
+```text
+Stage5/train_stage5.sh                                          (変更)
+Stage5/checks/real_h5/check_stage5_class_weight_ablation.py/.sh (新規)
+Stage5/checks/dummy/check_dummy_class_weight_tag.sh              (新規)
+Stage5/checks/dummy/check_dummy_class_weight_ablation.py/.sh    (新規)
+```
+
+**Step F4（W-A再利用判定）:** S5-12 Run Aの学習時revision（コミット`4b55e55`）と現revisionの
+`git diff`は`train_stage5.sh`の命名/衝突ガード変更のみで、`train_stage5.py`への引数構築や
+`train_stage5.py`本体・`stage5/`配下は無変更（学習挙動に影響する差分なし）。S5-12 Run A
+（`EX260914`、teacher v7、GroupNorm 8 groups、`bbox_noncontour_ignore`、`class_weight=
+[0.05963856, 1.9403615]`、seed 42、window 16/8、batch 1、grad accum 8、lr 1e-3、weight decay
+1e-4、dropout 0.0）のconfig.jsonを確認し、6節の固定条件をすべて満たすためW-Aとして再利用した。
+
+**Step F5〜F6結果（2026-09-14、ユーザー実機）:** W-B（`CLASS_WEIGHT=0.5,1.5`、同一初期checkpoint・
+split・seed）は1 epoch smoke・5 epoch pilotとも完走した。train 162 files/715 samples、val 18
+files/87 samplesはW-Aと一致、label policy変換点数0（no-op）、`class weight: [0.5, 1.5]`を確認、
+output_dir名に`cw_manual_0p5_1p5`タグが正しく反映され既存runと衝突しなかった。ただしepoch 2以降、
+train/valとも`fp=0`かつ`fn`が一定値に固定される（positive予測の完全崩壊）window単位running metrics
+が観測された。val側はepoch 1終了時点で既に崩壊していた。
+
+**Step F4本比較・Step F7結果（2026-09-14、ユーザー実機）:** `check_stage5_class_weight_ablation.sh`
+をW-A（`EX260914`）・W-B（`EX260916`）に対して実行し、config parityはすべて合格した。既存
+`evaluate_stage5.sh`（train sanity 3動画+validation 18動画、mean probability aggregation、
+threshold 0.5、`last.pt`=`best.pt`＝epoch 5）による公式評価でも、W-Bの崩壊が完全に再現された。
+
+| split | run | recall | precision | F1 | IoU | FPR | predicted positive数 | TP0動画数 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| train_sanity | W-A | 58.24% | 6.41% | 0.1156 | 0.0613 | 13.42% | 88,583 | 0/3 |
+| train_sanity | W-B | 0.00% | 0.00% | 0.0000 | 0.0000 | 0.00% | 0 | **3/3** |
+| validation | W-A | 44.69% | 3.88% | 0.0714 | 0.0370 | 11.71% | 864,518 | 1/18 |
+| validation | W-B | 0.00% | 0.00% | 0.0000 | 0.0000 | 0.00% | 0 | **18/18** |
+
+video-level（validation 18動画）: F1勝敗はW-A 17勝・W-B 0勝・1引き分け（全動画でW-B側
+predicted_positive_count=0）。既存`debug_*`診断（再実装なし）から、positiveがweighted CE
+denominatorに占める割合はW-A 29.03%に対しW-B 3.63%と算出され、raw点数比（background:positive
+約79.5:1）に対してW-Bの重み比3.0では不均衡を全く相殺できず、CE lossを最小化する解が
+「常にbackgroundと予測する」になったことを裏付けた。optimizer step数・empty-valid window数は
+両armとも正常で、機構上の不具合ではなくweight設定自体が原因と判断できる。詳細な数値は
+`stage5_pointnext_s_training_evaluation_report.md` 9.7節の実装事項F。
+
+**仮説判断:** 依頼書9章の判定基準に対し、FP/FPR低下は起きたが（predicted positiveが0のため
+trivial）、precision/F1/IoUは改善せず0へ、recallはW-Aの44.69%(validation)から0%へ完全崩壊、
+TP0動画数はW-Aの1/18から18/18へ増加、video別勝敗もW-B側の改善を支持しない。「FP低下と引き換えに
+recallが崩壊する場合、W-Bは採用しない」という9章の不採用分岐に明確に該当し、判定不能ではなく
+**W-Bは不採用、W-A（強いauto由来weight）を維持**という明確な結論が得られた。production反映
+（`CLASS_WEIGHT`既定値の変更）は行わず、方針管理チャットの判断を待つ。方針管理チャットへの報告は
+`.tmp/stage5_s5_13_report_to_policy_chat.md`。
+
 ## 6. 次の改修フロー
 
-### S5-13 Class weight比較
+### S5-13補足 Threshold-free診断と中間class weight限定確認
 
-状態: next。S5-12で採用したteacher v7・GroupNorm・`bbox_noncontour_ignore`を固定して実施する。
+状態: planned。S5-13の必須2-arm比較は完了とし、S5-14へ進む前の限定的な補足検証として実施する。
 
-auto weightと、より弱い固定weightを同じ教師・normalization条件で比較する。positive recallだけでなく、
-FP/FPR、predicted positive率、TP 0動画数、video-level medianを重視する。threshold tuningや複雑なlossは
-この比較へ混ぜない。
+**背景:** S5-13ではW-B（`[0.5,1.5]`、positive:background weight比3）がthreshold 0.5で全点を
+backgroundと予測し、validation recall 0%、TP0動画数18/18となったため不採用とした。一方、class
+weightの変更はlogitの基準位置とcalibrationも変える。今回の固定threshold評価だけでは、W-Bでpositive/
+backgroundの順位識別まで消失したのか、scoreが0.5未満へ移動した影響が中心なのかを分離できない。
+また、weight比32.54のW-Aと比3のW-Bは間隔が広く、W-Aが最適であることまでは2点比較から確定しない。
+
+**目的:** 追加計算を抑えながら、(1) 保存済みW-A/W-Bの識別能力とcalibration shiftを分離し、
+(2) W-Aより弱いがW-Bほどpositive寄与を失わない中間weightでglobal FP/FPRを抑えられる余地を一度だけ
+確認する。結果からS5-14以降で固定する暫定class weightを決める。production thresholdの選定は
+S5-15まで行わない。
+
+**補足検証1（再学習なし）:** 保存済みW-A/W-Bの同一validation 18動画・train sanity 3動画に対し、
+集約後`prob_femur`からAUPRCを主指標、AUROCを補助指標として計算する。GT class別score分布・percentile、
+PR curve、threshold別TP/FP/FN、最大F1、recall at fixed FPRなども記録する。これはdiscriminationと
+calibrationを診断するためのsweepであり、production thresholdを変更する操作ではない。従来の
+threshold 0.5 metricsもprimary operating-point結果として維持する。
+
+**補足検証2（中間weight、原則1 run）:** teacher v7、GroupNorm 8 groups、
+`bbox_noncontour_ignore`、S5-12/S5-13と同一split・seed・初期checkpoint・window・optimizer・lossを
+固定し、次のW-Cを5 epochだけ学習・評価する。
+
+```text
+W-C class weight = [0.11764706, 1.88235294]
+positive:background weight比 = 16
+想定positive weighted-denominator占有率 = 約16.7%
+```
+
+W-CはW-Aの約29.0%とW-Bの約3.6%の中間のpositive loss寄与を狙う。epoch 5固定checkpointをW-A/W-Bと
+同じtrain sanity・validationへ適用し、threshold 0.5のTP/FP/TN/FN、precision、recall、F1、IoU、FPR、
+predicted positive率、TP0動画数、video-level mean/medianと勝敗に加えてthreshold-free指標を比較する。
+
+**検証量の上限:** 本段階はS5-13の補足でありclass-weight sweepへ拡大しない。新規5 epoch pilotは
+**原則W-Cの1回、最大でも合計2回まで**とする。2回目は、W-Cが明確な不具合なく境界的結果となり、
+もう1点で採否を確定できる合理的根拠がある場合、または比較公平性を損なう実行上の問題により再実行が
+必要な場合に限る。no-weight、複数seed、広いweight grid、50〜200 epoch学習は行わない。保存済み
+W-A/W-Bは再学習せず再利用する。
+
+**判定:** threshold 0.5でW-CがW-AよりFP/FPRを下げ、recall・TP0・video median F1/IoUを大きく
+損なわず、改善方向がthreshold-free指標と動画別結果でも支持される場合に限りW-Cを暫定採用候補とする。
+W-Cが全negativeへ崩壊する、TP0が増える、または改善が一貫しない場合はW-Aを維持する。W-Bは
+threshold-free識別が残っていても現行threshold 0.5のS5-14 controlには採用せず、S5-15のthreshold診断で
+参照可能な履歴候補としてのみ保持する。
+
+**固定事項:** production既定値、threshold 0.5、mean aggregation、teacher、label policy、GroupNorm
+group数、learning rate、scheduler、window、sampling、feature、augmentation、loss形式は変更しない。
+補足完了後に結果と採用判断を評価レポートおよび本管理記録へ追記してからS5-14へ進む。
 
 ### S5-14 座標依存・frame-level・overlap loss診断
 
@@ -793,6 +920,9 @@ aggregation 4方式を再評価し、production aggregation、normalization、th
 | D-020 | 2026-09-14 | S5-13の暫定label policyにRun A（`bbox_noncontour_ignore`）を採用し、Run Bは診断用alternateとして保持する | Run Bは対象領域を抑制したがglobal FPRを改善せず、validation aggregated F1/IoUと動画別勝敗はRun Aが優位だったため |
 | D-021 | 2026-09-14 | S5-12のA/Bを長期化せず、teacher v7・GroupNorm・Run A固定でS5-13 class weight比較へ進む | BBox non-contour領域はvalid backgroundの約0.3%であり、global FPにはclass weightの方が直接的に作用すると考えられるため |
 | D-022 | 2026-09-14 | teacher v7移行だけを理由にS5-07〜S5-11を一律再実行せず、必要な診断のみ個別に再実行する | 構造診断を履歴として保持しつつ、teacher v7 S5-12 Run Aを今後の比較baselineにできるため |
+| D-023 | 2026-09-14 | W-B（`[0.5,1.5]`）を不採用とし、W-A（`[0.05963856,1.94036150]`）をS5-13補足およびS5-14の暫定class weightとして採用する | W-Bはthreshold 0.5でvalidation recall 0%、TP0 18/18へ完全崩壊し、W-Aは検出能力を維持したため |
+| D-024 | 2026-09-14 | S5-14前にS5-13補足としてthreshold-free診断と中間weight W-C（比16）の限定確認を行う | W-A/W-Bの間隔が広く、固定threshold結果だけではdiscrimination消失とcalibration shiftを分離できないため |
+| D-025 | 2026-09-14 | S5-13補足の新規5 epoch pilotを原則1回、最大2回に制限する | 補足検証を広いweight sweepや長期学習へ拡大せず、S5-14前の判断に必要な最小量へ抑えるため |
 
 ## 8. 文書更新ルール
 
