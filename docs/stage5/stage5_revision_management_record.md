@@ -6,9 +6,9 @@
 | --- | --- |
 | 文書種別 | Stage 5の進捗・意思決定・改修履歴を管理する正本 |
 | 作成日 | 2026-09-10 |
-| 最終更新日 | 2026-09-14 |
+| 最終更新日 | 2026-09-15 |
 | 対象 | pseudo-3D point cloudからのpoint-wise大腿骨segmentation |
-| 現在の段階 | S5-13本比較・補足とも完了。W-Aを暫定class weightとして確定し、S5-14の座標依存・frame-level・overlap exposure診断へ進む |
+| 現在の段階 | S5-14全体（core・補足1〜3）完了・受入済み（2026-09-15、ユーザー判断）。回転感度は確認したが、座標暗記やaugmentation効果は未確定。追加GPU診断は終了。W-A・production設定を維持し、次候補の回転augmentation単独5 epoch比較は条件策定・承認待ち。S5-15長期学習は保留 |
 | production readiness | 未到達。診断中 |
 
 本書は、Stage 5の目的、現在状態、過去の改修、検証結果、次の実施順を一か所から追えるように
@@ -105,7 +105,16 @@ annotation前H5は実運用推論に使用できる。
 
 ## 3. 現在状態の要約
 
-基準日: 2026-09-10。
+最新方針（2026-09-15）: S5-14全体（core・補足1〜3）の完了をユーザー判断により受け入れた。
+次候補は回転augmentation単独5 epoch比較であり、学習条件と実行承認は別途決定する。
+以下は補足1の結果要約で、補足2・3と最終判断は6章を参照する。
+teacher v7全180 H5（train 162 / val 18）、W-A epoch 5、GroupNorm 8 groups、`bbox_noncontour_ignore`
+を固定し、保存済み予測で再集計した。分母補正・自己参照排除後も仮説A（座標事前分布）の偏りは
+残存し、仮説B（時間位置）の低下は動画内paired比較では再現されず、仮説C（overlap exposure）の
+効果は時間区分別でも小さいままだった。続く補足2の座標変換診断も完了したが、座標の直接的な
+記憶は確定しておらず、局所形状・輝度との交絡を留保する。
+
+以下は2026-09-10時点の基準runを含む履歴要約であり、補足の入力は6章の固定条件を優先する。
 
 | 項目 | 現在状態 | 状態 |
 | --- | --- | --- |
@@ -159,7 +168,10 @@ S5-12以降はcrop品質修正済みteacher v7（`bboxrank_v7_cvat_authoritative
 | S5-12 | 2026-09-13〜2026-09-14 | GroupNorm固定Label policy ablation | completed。Run A（ignore）をS5-13の暫定policyとして採用 |
 | S5-13 | 2026-09-14 | GroupNorm固定Class weight ablation | completed。W-B（弱い固定weight）は不採用、W-A（強いauto由来weight）を暫定採用 |
 | S5-13補足 | 2026-09-14 | Threshold-free診断と中間class weight限定確認 | completed。W-C（比16）不採用、W-A維持。新規5 epoch pilot 1/2回で終了 |
-| S5-14 | 2026-09-14〜 | 座標依存・frame-level・overlap exposure診断 | planned。core診断は再学習なし、結果後に必要なablationを1件ずつ判断 |
+| S5-14 | 2026-09-14〜2026-09-15 | 座標依存・frame-level・overlap exposure診断 | completed（core、Step H1〜H5）。成果物・parityを受入。仮説解釈はD-030に従い補足で再評価 |
+| S5-14補足 | 2026-09-15 方針決定、実装・実機再集計完了、受入 | 点密度補正と動画別・時間別再集計 | Aの空間的偏りは分母補正後も残存。Bの一般的な時間低下・Cのexposure対策は優先しない。学習・GPU再推論0回 |
+| S5-14補足2 | 2026-09-15 実装・実機再実行完了、受入 | 座標変換診断 | W-A固定・学習0回。自己除外・split分離を修正。回転感度を確認、既知のGPU実施量は計336動画条件相当 |
+| S5-14補足3 | 2026-09-15 CPU検証完了、受入 | 残存集計・記録確認 | pooled/動画別集計を分離し誤記を訂正。GPU・学習0回。core・補足1〜3を含むS5-14全体を完了 |
 
 ## 5. 段階別の改修記録
 
@@ -825,11 +837,9 @@ recallが崩壊する場合、W-Bは採用しない」という9章の不採用�
 （`CLASS_WEIGHT`既定値の変更）は行わず、方針管理チャットの判断を待つ。方針管理チャットへの報告は
 `.tmp/stage5_s5_13_report_to_policy_chat.md`。
 
-## 6. 次の改修フロー
-
 ### S5-13補足 Threshold-free診断と中間class weight限定確認
 
-状態: planned。S5-13の必須2-arm比較は完了とし、S5-14へ進む前の限定的な補足検証として実施する。
+状態: 完了。W-C（比16）不採用、W-A（強いauto由来weight）を維持。新規5 epoch pilotは1/2回で終了。
 
 **背景:** S5-13ではW-B（`[0.5,1.5]`、positive:background weight比3）がthreshold 0.5で全点を
 backgroundと予測し、validation recall 0%、TP0動画数18/18となったため不採用とした。一方、class
@@ -929,7 +939,10 @@ mean aggregationは維持し、production threshold tuningはS5-15まで延期�
 
 ### S5-14 座標依存・frame-level・overlap exposure診断
 
-状態: planned。core診断は再学習なしで実施し、結果に基づくtraining ablationは別途方針判断する。
+状態: 完了（core、Step H1〜H5）。3仮説の最終判定: 仮説A（座標事前分布）強く示唆（density正規化
+確認は残課題）、仮説B（時間位置）明確に支持、仮説C（overlap exposure）限定的に支持（主要因では
+ない）。次の改修（座標equivariance診断、inverse-occurrence loss weighting等）は方針管理チャットの
+判断待ち。
 
 **背景:** train sanityのpositive-only PLYを側面から見たとき、同じようなXY位置のpositive集合が
 異なるframe群（pseudo-3DのZ方向）へ2〜3回反復して見えた。S5-04のbatch integrity検証により、GTや
@@ -972,6 +985,68 @@ frame相対位置decile別のexposureを記録する。unique-point集計とwind
 splitおよび動画別に出力する。これにより、反復がteacher GT自体またはwindow構成だけで生じ得る程度を
 model predictionと独立に確認する。
 
+**実装状況（2026-09-14）:** `checks/real_h5/check_stage5_frame_spatial_overlap_diagnostics.py/.sh`
+（Step H2本体、CPU/h5py only）と`checks/dummy/check_dummy_frame_spatial_overlap_diagnostics.py/.sh`
+（Step H1のsynthetic test、8ケース＋合成H5でのaudit_h5()統合テスト）を実装し、すべて合格を確認した
+（`py_compile`/`bash -n`/`git diff --check`含む）。実装した共有primitiveは`find_runs`（contiguous
+frame run分割）、`per_frame_label_counts`、`window_occurrence_counts`（`generate_frame_order_windows`
+を再利用した純geometry、model forward不要）、`relative_frame_decile`、`class_exposure_summary`
+（unique point数とwindow occurrence総数を明示的に分離）、重複/欠落point・nonfinite値のfail-fast。
+Step H2の実行（teacher v7全180 H5）はGPU側（実際にはCPU/h5pyのみで動作するため、GPU機の
+Python環境でよい）での実行待ち。
+
+**既知の課題（Step H3.1のcross-video XY正規化について、2026-09-14調査）:** 座標系分離の方針
+（本節冒頭）が前提とする「Stage 4 schemaに記録されたcrop/image寸法」を調査したところ、
+**teacher v7を含むStage 5入力H5（`annotate_pseudo3d_point_cloud.py`が生成する最終combined H5）には
+crop/image寸法（幅・高さ）を示す属性が一切保存されていない**ことが判明した。crop offset・resize
+scale等は生成pipeline中間段階の個別動画h5（`pseudo3d_processing.py`が書き込む`local_crop_top`/
+`local_crop_left`/`local_resize_scale`等のroot属性）にのみ存在し、Stage 5が使う最終H5の`point_cloud`
+group属性には引き継がれていない。crop sizeそのものは`batch_infer_video_to_pseudo3d_h5.py`の
+`--local_crop_size`（既定256）という生成run全体で共有される外部定数であり、H5から読み取れる値では
+ない。したがって「寸法が利用できない動画をcross-video heatmapから除外する」という想定は、
+一部動画の欠落ではなく**全180動画がこの対象**になる。既存`stage5/utils/feature_normalization.py`の
+`normalize_pixel_xy()`は観測点のmax値で正規化しており、真のcrop寸法によるfixed-frame正規化ではない
+ため、handoff文書が禁止する「観測点のmax値を推測的に代用」に該当し使用できない。同一動画内の
+raw pixel座標での解析（handoff文書6節が許容する代替）は影響を受けない。この制約の扱い
+（cross-video正規化heatmapを断念するか、Stage 2/4側に外部定数として`local_crop_size`の確認を依頼するか）
+は方針管理チャットへ確認予定。
+
+**方針管理チャットの判断（2026-09-15）:** 諦めずに中間H5を遡って実寸法を回収できるか調査する
+Step H2.5（Stage 4 dataset inventoryとXY座標provenance監査）を実施する。詳細は
+`.tmp/stage5_s5_14_structural_diagnostics_implementation_handoff.md`の2026-09-15追記版。
+
+**Step H2.5実装（2026-09-15、実装・静的検証完了）。**
+`checks/real_h5/check_stage5_xy_coordinate_provenance.py/.sh`
+（H2.5-A dataset inventory scan、H2.5-B source provenance解決と中間H5属性読取、H2.5-C寸法決定の
+優先順位ロジック、H2.5-D正規化とbounds fail-fast、H2.5-E artifact出力）と
+`checks/dummy/check_dummy_xy_coordinate_provenance.py/.sh`（15件superset合成テスト、手作り
+final+intermediate H5ペアでの統合テスト含む）を実装し、すべて合格を確認した。事前調査
+（`Stage2to4/src/utils/pseudo3d_processing.py`のroot属性書込みと`annotate_pseudo3d_point_cloud.py`
+の`save_annotated_h5()`によるmeta属性継承を追跡）により、中間H5の`local_input_shape`属性
+（文字列化されたtensor shape、`(num_frames, 1, height, width)`）が各動画のlocal crop実寸法を
+直接与えること、かつ全前処理分岐でcrop出力が常に正方形（`local_crop_size`×`local_crop_size`、
+既定256）になることを確認し、これを寸法解決の一次情報源として実装した（依頼書H2.5-C選択肢3）。
+最終H5の`source_pseudo3d_h5`属性（絶対path）を第一の解決手段とし、解決できない場合は
+`pseudo3d_outputs/<date>/`配下でのbasename一致を第二の解決手段とする（両者は明示的に区別して
+記録し、暗黙に同一視しない）。`decide_dimension_policy()`は、全動画が個別解決できれば選択肢3、
+一部未解決でも解決済み動画が単一の共通寸法に一致しかつ未解決動画のpixel_xyがその寸法内に収まる
+場合のみ選択肢2として当該動画へ拡張し、それ以外は動画単位で除外する（推測による一律採用はしない）。
+
+**Step H2.5 GPU側実行結果（2026-09-15、ユーザー実機、CPU/h5pyのみで動作）。** teacher v7全180
+H5を監査し、**全180動画が`source_pseudo3d_h5`属性だけで中間H5を解決でき（basename fallback
+不要）、寸法は全180動画で(256, 256)に完全一致、`pixel_xy` boundsも全180動画で合格**した
+（除外0件、選択肢3で確定）。splitはtrain 162・val 18でS5-12/S5-13と一致。`local_crop_size`の
+生成CLI既定値256を推測採用したのではなく、全180動画それぞれの中間H5 provenanceから実測値として
+確認した結果である。これによりStep H3.1のcross-video XY正規化は`normalized_x = pixel_x / 255`、
+`normalized_y = pixel_y / 255`を**動画除外なしで**全180動画・固定21診断対象動画に適用できる。
+詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`。
+
+**管理チャット二重検査での指摘・修正（2026-09-15）:** `decide_dimension_policy()`が選択肢3判定時に
+`pixel_xy_bounds_ok`を条件に含めておらず、将来bounds違反があっても選択肢3として通り得るという指摘を
+受けた。dimension解決済みだがbounds違反の動画が1件でもあればfail-fastするよう修正し、policy-level
+のsynthetic testを追加、実際の監査結果CSVへ再適用しても結論（選択肢3、除外0件）が変わらないことを
+確認した。
+
 **Step H3: aggregate predictionのframe/XY診断（再推論不要を優先）。** 保存済みW-A prediction
 `.npz`とteacher v7 H5を使い、固定21動画についてframe単位のTP/FP/TN/FN、precision、recall、F1、IoU、
 FPR、predicted positive率、GT/predicted positive点数を出力する。GT positiveとpredicted positiveの
@@ -985,6 +1060,51 @@ heatmap用CSV/NPZを作り、GTとpredictionの位置相関、predicted centroid
 重ならないpredicted run数・長さ・frame間隔を記録することで、PLYで見えた「同じXY位置の複数frame群」
 を定量化する。grid解像度やrun定義は設定と出力へ保存し、単一の恣意的なgridだけで仮説を確定しない。
 
+**Step H3/H3.1実装（2026-09-15、実装・静的検証完了、実runはGPU側待ち）。**
+`checks/real_h5/check_stage5_frame_xy_diagnostics.py/.sh`と
+`checks/dummy/check_dummy_frame_xy_diagnostics.py/.sh`を実装し、すべて合格を確認した。
+`check_stage5_class_weight_threshold_free.py`の`load_prediction`/`safe_name`/
+`load_h5_metrics_rows`/`check_threshold_0p5_parity`/`binary_counts`と、
+`check_stage5_frame_spatial_overlap_diagnostics.py`の`find_runs`/`relative_frame_decile`、
+`check_stage5_xy_coordinate_provenance.py`の`normalize_pixel_xy_with_dimensions`を再利用し
+重複実装を避けた。GT/predicted positiveのXY重心・重心距離はどちらかが空のframeでは`None`とし
+0で埋めない（availability flag `centroid_distance_available`を別途出力）。frame単位で
+`classify_relative_to_runs()`によりGT-positive runに対するinside/before/after/no_gt_runを分類する。
+XY binごとのpositive frame活動は`bin_frame_activity()`（`(bin_row,bin_col,frame)`の重複除去による
+ベクトル化）で抽出し、`temporal_recurrence_for_bin()`でGT runとの重なり判定・unmatched run数・
+run間gapを計算する。grid解像度は既定で16・8の2種類を計算し、単一gridに依存しない設計とした。
+既存W-A predictionとのthreshold 0.5 parity gate（`check_threshold_0p5_parity`）を動画ごとに実行する。
+synthetic testは15件（frame混同行列、確率統計の空group処理、XY重心のNone可用性、frame間距離、
+run分類のinside/before/after/no_gt_run、grid bin境界値、density集計、bin_frame_activityの空mask
+処理、temporal recurrenceのmatched/unmatched/gap計算、availability flag統合テスト、手作りH5+
+predictionでのparity gate pass/fail）を実装し、この開発コンテナ内（一時venv）ですべて合格を確認した。
+
+**インシデント（2026-09-15、修正済み）:** GPU側初回実行の出力で`video_alias`に実video ID
+（タイムスタンプ形式）がそのまま書き込まれるバグを発見した。`main()`が匿名化前の生
+`h5_metrics.csv`の`video_name`をそのまま出力していたことが原因。実video名はpath解決にのみ内部
+使用し、出力には`{split}_{index:03d}`の列挙aliasのみを書き込むよう修正、タイムスタンプ形式の
+文字列がCLI出力に一切現れないことを検証する回帰テストを追加した。ユーザー側で漏洩済み4ファイル
+（`.tmp/`・GPU機`work_dirs/`双方）を削除し、修正版で再実行・再確認済み。
+
+**Step H3/H3.1 GPU側実行・分析結果（2026-09-15、ユーザー実機）:** 21動画・834 frame行・
+grid16/8で6720 density行・2917 recurrence行を生成し、全動画でparity gateに合格した。
+
+- **仮説B（時間位置）: 明確に支持。** validation動画のrecallは動画内相対decile 0（序盤）の64.2%
+  からdecile 8（終盤）の7.9%へ系統的に急落する一方、FPRはdecile間でほぼ一定（10.5%〜14.2%）。
+  時間位置による性能劣化はrecall側に集中し、FP側にはほぼ影響しないことが新たに分かった。
+- **仮説A（座標事前分布）: 強く示唆されるが正式な「支持」は未確定。** 個々の動画でGT positiveが
+  皆無のbinに限定しても、動画横断でGTが密集する「globally hot」binは「globally cold」binの
+  約8.7倍のpredicted positive/FP率を示した。ただしhandoff文書が求める
+  「density正規化後も傾向が残る」確認（bin単位point密度での正規化）は未実施であり、点群
+  サンプリング密度自体の交絡を排除できていないため留保する。
+- **仮説C（overlap exposure）: 未検証。** exposureとframe/bin単位誤り率を直接結びつける集計は
+  Step H4（per-window診断）が主要な検証手段であり、Step H3.1だけでは判定できない。
+- **PLY反復現象の定量化:** grid16でpositiveがactiveな2,192 binのうち36.1%が
+  GT runと重ならない複数の時間分離predicted run（multiple_unmatched_runs）を持ち、32.0%は
+  GT runと一度も重ならない。train sanity PLYで見えた反復現象を定量的に裏付けた。
+
+3仮説の最終判定はStep H4完了後に確定する。詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`。
+
 **Step H4: per-window context診断（固定21動画のみ、必要な1回の再推論）。** 既存S5-08 overlap
 checkerのaccumulatorとsource point alignmentを再利用し、teacher v7・GroupNorm・W-Aでwindowごとの
 `prob_femur`を取得する。同じforward結果からmean aggregateを再構成し、既存W-A predictionとの
@@ -995,6 +1115,79 @@ point/frame errorをvote count、training exposure、動画内相対位置、GT 
 層別化する。特に、同じXY binのunmatched predicted runが高いexposureまたは高いdisagreementへ集中するか、
 positiveがbackgroundより多く重複することがFP/FNのどちらと対応するかを確認する。S5-08で棄却した
 「window境界ほど不一致が多い」仮説は、teacher v7/W-A上のparity確認を除き、根拠なく再設計しない。
+
+**Step H4実装（2026-09-15、実装・静的検証完了、実runはGPU側待ち）。**
+`checks/real_h5/check_stage5_per_window_context_diagnostics.py/.sh`と
+`checks/dummy/check_dummy_per_window_context_diagnostics.py/.sh`を実装した。S5-08
+`check_stage5_overlap_aggregation.py`の`OverlapAccumulator`/`run_overlap_forward`/
+`classify_overlap`/`gt_class_masks`/`relative_frame_deciles`を再利用し（重複実装なし）、
+per-window forward自体が必要とするtorch importは`process_video_h4()`内のlocal importに限定し、
+それ以外のロジック（parity判定、層別集計、XY bin exposure/disagreement集計、Step H3.1
+recurrence CSVとのjoin）はtorch非依存で実装した。
+
+**parity gateはno-toleranceで実装**: (1) このrunのvote_countと保存済みW-A predictionの
+vote_countが完全一致すること、(2) Step H2と同じwindow構成で計算したtraining window occurrence
+countとこのrunのvote_countが完全一致すること（training exposureとinference vote countの内部
+整合性チェック）、(3) mean probability（threshold 0.5）から再導出したpredicted classと保存済み
+predictionのTP/FP/TN/FN・per-point predicted classが完全一致すること、の3点を1点でも満たさなければ
+即座にfail-fastする（CUDA非決定性が疑われる場合もtoleranceで通さない、というhandoff文書の要求通り）。
+
+synthetic test 15件（parity gateの正常系・4種の不一致系、vote countバケット境界、層別集計の
+scope_mask処理、TP/FP/FN/TN分類でのignore点除外、XY bin集計、Step H3.1 recurrenceとのjoin）を
+実装し、この開発コンテナ内（torch未インストール、モジュールがtorchに依存しないことも合わせて
+確認）ですべて合格を確認した。`py_compile`・`bash -n`・`git diff --check`も合格。
+
+**GPU側初回実行での不一致と対応（2026-09-15）:** validation_000でTP数が1点だけ不一致
+（recomputed=8456 vs 保存済み8455）し、fail-fastが正しく発動した。vote_count・training window
+occurrence countは完全一致していたため、window構成やcoverageの問題ではなく、1点のprobabilityが
+threshold 0.5境界の極近傍でrun間にわずかに揺れた可能性が高いと判断した。ただし当初の実装は
+fail-fastするだけで診断artifactを保存していなかった（handoff文書の要求を満たしていなかった）ため、
+`verify_h4_parity()`を拡張し、predicted class不一致が起きた場合はraiseする前に該当点のindex・
+GT label・両run のprobability・0.5境界からの距離・vote countを記録したCSVを保存するよう修正した
+（pass/fail判定自体へのtolerance追加ではない）。回帰テストを追加し、この開発コンテナ内で合格を
+確認した。
+
+**Step H4.1: 原因訂正と集約規約統一（2026-09-15）。** 上記「CUDA非決定性」という当初診断は
+誤りだった。方針管理チャットの精査（`.tmp/stage5_s5_14_step_h4_parity_boundary_case_decision_request.md`
+8節）とコード確認により、原因はH4 checkerの集約・判定規約が正本`evaluate_stage5.py:predict_h5()`と
+異なっていたことと判明した：(1) `predict_h5()`は両クラスの確率を集約するが、S5-08
+`run_overlap_forward()`はpositiveクラスのみ保持、(2) `predict_h5()`はwindow単位でfloat32化してから
+集約するが、S5-08はfloat64直接cast、(3) `predict_h5()`は2クラスargmax（同値はbackground）、H4は
+`mean_probability >= 0.5`（同値はpositive）。不一致点（point_index 290130）の確率は両run間で
+完全一致（`abs_probability_diff=0.0`）しており、純粋にタイブレーク規約の違いによる見かけ上の
+不一致だった。
+
+修正として、S5-08 `run_overlap_forward()`をpredicted class判定に使うのをやめ、新設した
+`run_h4_forward()`/`canonical_predicted_class()`が`predict_h5()`と同じ手順（window単位float32化→
+両クラスfloat64加算→最終float32変換→2クラスargmax、backgroundは`1-positive`で復元せずsoftmax
+実出力を保持）を再現するようにした。`verify_h4_parity()`・`classify_prediction()`はいずれも
+この正本互換の`pred_label`を受け取る形に統一し、per-window診断用の`p1 > 0.5`規約とは明確に
+区別した。方針管理チャット指定の3種の境界ケース（float64での厳密タイ、float64非タイだが
+float32変換後にタイになるケース、素朴な`>=0.5`と正しいargmaxが食い違うケース）を含む
+synthetic test 19件をこの開発コンテナ内ですべて合格を確認した。
+
+**GPU側再検証結果（2026-09-15）:** 修正版を再実行した結果、**全21動画でparity gateが完全一致**
+した（除外・tolerance追加なし、`max abs diff=0.000e+00`）。「CUDA非決定性」という当初診断は
+完全に誤りであり、原因はcheckerの集約・判定規約の不一致のみだったことが実証された。
+recurrence/exposure cross-checkでは、multiple unmatched runsのあるbin（791件）はないbin
+（1,401件）よりtraining window occurrence約+10%・disagreement rate約+8%高いが、仮説A
+（座標事前分布、8.7倍）と比べると効果は小さい。詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`
+のStep H4.1節。
+
+**Step H4層別分析と3仮説の最終判定（2026-09-15）。** `point_overlap_error_statistics.csv`の
+詳細分析により、window 16/stride 8ではvote_countが構造上1または2のみ（重複率50%）であることを
+確認した。vote_count 1/2間でFP率（background点中）はほぼ同一（11.88%→11.64%）で「exposureが
+多いほどFPが増える」という単純な関係は支持されなかったが、vote_count=2の中ではFPの
+disagreement rate（34.1%）がTNの4.7倍（7.2%）に達し、window間予測の食い違いがFPへ偏る
+限定的なメカニズムが見られた。またrelative_frame_decile別のdisagreement/exposureは動画中盤で
+ピーク・両端で低いという対称パターンを示し、Step H3で確認したrecallの単調な低下
+（decile0の64.2%→decile8の7.9%）とは形状が異なることから、後者は独立した時間効果と判断した。
+
+3仮説の最終判定: **仮説A（座標事前分布）は強く示唆される**（bin単位point密度での正規化確認が
+残課題）、**仮説B（時間位置）は明確に支持される**（recall低下、FPRへの影響なし）、
+**仮説C（overlap exposure）は限定的に支持される**（FP率の単純な押し上げ効果はないが、
+disagreementとの関連あり、主要因ではない）。単一の仮説に単純化できない複合的な結論となった。
+Step H5（集計・報告書作成）へ進む前に、この複合的な結論の扱いを方針管理チャットへ報告する。
 
 **Step H5: 可視化と出力。** shareable出力は匿名video aliasを使用し、少なくとも次を作成する。
 
@@ -1015,6 +1208,32 @@ self-check、mean baseline parity、同じpoint setの検証を維持する。
 
 **仮説の判定:** 単一のsplit aggregateだけで判断せず、validation動画別勝敗・median・no-GT frame・
 train sanityとの方向一致を確認する。
+
+**Step H5実装（2026-09-15、実装・静的検証完了、GPU側実run待ち）。** 方針管理チャットは
+Step H4.1の修正・parity検証を承認し、H4集計結果をS5-14の診断資料として採用した上で、Step H5で
+「Aの密度正規化とB/Cの層別結果を整理」してから次の改修を決定する方針を示した。
+`checks/real_h5/check_stage5_s5_14_summary_export.py/.sh`と対応する
+`checks/dummy/check_dummy_s5_14_summary_export.py/.sh`を実装した。既存のStep H2/H2.5/H3/H3.1/H4
+出力（すべてvideo_alias化済み）を入力とし、未生成だった`frame_position_deciles.csv`（frame単位
+recall/precision/F1/IoU/FPR/FNRをsplit×relative_frame_decileで集計、未定義値は0埋めせず除外）と
+`stage5_s5_14_summary.json`（3仮説の判定・headline数値・fileマニフェスト）を新規生成し、
+Step H3/H4で別々だった`video_summary.csv`を1本へmergeし、仮説Cの根拠となる
+`vote_count_error_rates.csv`（vote_count bucket別recall/FP率/disagreement rate、手計算で
+検算済み）も併せて出力する。bundle全体に対しtimestamp形式video ID・絶対host pathの
+privacy self-checkを実行する。synthetic test 5件（frame decile集計の未定義値除外、
+video_summary mergeのkey不一致拒否、vote count別error rateの検算一致、privacy self-checkの
+pass/fail）をこの開発コンテナ内ですべて合格を確認した。`py_compile`・`bash -n`・
+`git diff --check`も合格。
+
+**Step H5 GPU側実行結果（2026-09-15、ユーザー実機）。** 全21動画・privacy self-check合格
+（`files_checked: 9`、timestamp形式video ID・絶対host pathとも検出なし）で完了した。
+`vote_count_error_rates.csv`・`frame_position_deciles.csv`の値は、実装チャット側の手計算結果と
+完全に一致し、独立した集計経路での再現性を確認した。train_sanityでも同様の傾向
+（vote_count=2でFP disagreement rate 35.2% vs TN disagreement rate 6.7%）が見られ、仮説Cの
+限定的な支持はvalidationだけでなくtrain_sanityでも方向が一致した。**S5-14 core（Step H1〜H5）は
+これで完了とする。** 数値正本は`docs/stage5/stage5_pointnext_s_training_evaluation_report.md`
+9.8節、完了報告は`.tmp/stage5_s5_14_report_to_policy_chat.md`。次の改修（座標equivariance診断、
+inverse-occurrence loss weighting等）は方針管理チャットの判断を待つ。
 
 - GT densityが低い共通XY領域へprediction/FPが動画横断で集中し、centroidがGTよりglobal priorへ近い場合、
   座標事前分布仮説を支持する。
@@ -1042,9 +1261,258 @@ train sanityとの方向一致を確認する。
 **productionへの影響:** なし。GroupNorm、W-A class weight、`bbox_noncontour_ignore`は引き続き実験用の
 暫定条件であり、production既定値は変更しない。mean aggregationとthreshold 0.5を維持する。
 
+## 6. 次の改修フロー
+
+### S5-14補足 点密度補正と動画別・時間別再集計
+
+方針決定日: 2026-09-15。状態: 実装完了（Step S1〜S5、synthetic/static検証済み）、実機再集計完了。
+方針管理チャットによる完了受入済み（2026-09-15）。担当: Stage 5実装チャット。
+
+**実装状況（2026-09-15）:** `Stage5/checks/real_h5/check_stage5_s5_14_supplement.py/.sh`と
+`Stage5/checks/dummy/check_dummy_s5_14_supplement.py/.sh`を実装した。分母付きXY bin統計（Step S1）、
+train-onlyのXY prior・hot/cold FPR比較（Step S2、train sanity自身の寄与除外を含む）、frame_metrics.csv
+を再利用した動画内前半/後半paired recall比較（Step S3）、vote count 1/2のjoint層別FPR/recall
+（Step S4）を、保存済みprediction（`pred_label`、`vote_count`）とH5から再構成する。per-windowの
+disagreementはH4既存artifactの周辺集計からjoint層別を捏造できないため「未検証」として明記する実装
+とし、GPU再推論は行わない。`vote_count`は`window_occurrence_counts()`による純geometry再計算とも
+突き合わせ、一致しなければfail-fastする。py_compile・bash -n・git diff --checkと、h5py/numpyを
+導入した検証環境でのsynthetic統合テスト（13ケース、CLI end-to-endのprivacy/alias検証含む）は
+全て合格した。
+
+**実機再集計の結果（2026-09-15）:** ユーザー実機で21動画（train sanity 3 + validation 18）・
+train prior 162動画・grid 16/8で正常終了、`vote_count`の構造的再計算とのparity不一致0件、
+既存confusion countsとのbin合計parityも合格した。詳細な数値は
+`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`の「実施記録」に記載。要点:
+
+- **仮説A（座標事前分布）:** 分母補正・GT positive数0のbin限定・train sanity自己参照排除の
+  全てを適用した後も、hot bin FPRはcold bin FPRより一貫して高い（差にして約17〜36ポイント）。
+  grid16/8・prior 2定義（raw_count/rate）・train sanity/validation両split・比較可能な21動画
+  全てで方向が一貫し、例外は0件。当初の「8.7倍」という点数比の指摘は分母補正後も同方向の効果
+  として残った。
+- **仮説B（時間位置）:** 同一動画内の前半(decile 0-4)/後半(decile 5-9)paired比較では、
+  validation 18動画中12動画が比較可能で、7動画が低下・5動画が上昇と方向が割れ、
+  mean diff +1.2%・median diff -1.2%とほぼ0に収束した。強い一貫した低下（-46.0%、-48.5%、
+  -20.7%）が見られたのはtrain sanity 3動画（非代表サンプル、n=3）のみ。core報告の「単調急落」は
+  pooled集計の動画構成差を反映していた可能性が高く、動画横断の一般的な時間効果としては
+  本補足で再現されなかった。
+- **仮説C（overlap exposure）:** vote_count 1/2間のFPR差は、前半/後半で層別しても10.8%〜15.3%の
+  狭いレンジに収まり、S5-14 coreの結果と整合する形で小さいまま残った。per-windowの
+  disagreementのjoint層別（動画×時間区分×vote_count）は、既存H4 artifactの周辺集計から
+  復元不能なため実装せず「未検証」のまま維持した（捏造・追加GPU再推論なし）。
+
+依頼書8章の分岐に照らすと、Aのみが分母補正後も動画別・両gridで一貫して残ったため、
+再学習なしの座標変換診断を次案とする根拠が最も強い。Bは同一動画内では一般に再現されず、
+時間文脈の限定診断を同等優先度で進める根拠は得られなかった。Cのexposure固有効果も
+時間区分別で残らなかった。最終判断は方針管理チャットが行う。
+
+**実装理由:** core成果物の再現性・parity・privacy checkは受け入れるが、分析上の留保は残る。
+仮説Aの「8.7倍」はmean predicted点数320.8対36.8の比較であり、background点数を分母とするFPRではない。
+仮説Bのdecile別recallは対象動画・GT点数の構成差を含み得るうえ、decile 3の70.4%はdecile 0の64.2%を
+上回るため「単調低下」とは記述しない。仮説CのFP/disagreement関連は、training exposureがFPを増やす
+因果関係とは区別する。H5 JSONの固定判定文字列は、新たな検証結果ではない。
+
+**目的:** 点密度、動画構成、時間位置とexposureの交絡を限定的な再集計で確認し、座標変換診断、
+時間文脈診断、loss比較、またはS5-15 pilotのどれを次に行うか決定する。
+
+**固定条件:** teacher v7全180 H5（train 162 / val 18）、W-A epoch 5、GroupNorm 8 groups、
+class weight `[0.05963856,1.94036150]`、`bbox_noncontour_ignore`、window 16/stride 8/tailあり。
+予測評価は固定train sanity 3動画とvalidation 18動画。mean aggregationと保存済み2クラスargmaxの
+判定規約を維持する。XYはH2.5の実寸法256×256に従い`pixel_xy / 255`とする。
+
+**検証内容:**
+
+1. XY binへ全点数、valid positive/background数、ignore数、TP/FP/TN/FNを追加する。
+   主指標は`FP / valid background数`と`TP / valid positive数`。分母0は未定義とし、ignore予測は別記する。
+2. train 162動画のGTから共通XY分布を作り、validation 18動画へ適用する。train sanityでは対象動画自身を
+   prior作成から除く。grid 16/8でhot/cold領域のFPRを動画別、動画等重み、点数加重で比較する。
+   raw GT点数による分布とvalid点数で補正したGT率の分布を区別し、定義・分母・対象数を保存する。
+3. 各decileの動画数、GT-positive frame数・点数を併記し、同じ動画の前半/後半でrecallを比較する。
+   可能な範囲でvote count 1/2別にも比較し、比較不能・疎な層を明示する。
+4. Cは動画・時間位置で層別化したFPR/recallとdisagreementを分けて評価する。必要なjoint集計が既存H4
+   CSVにない場合は保存済みprediction、H5、既存per-point artifactから再構成できる範囲に限定する。
+   復元不能なdisagreement層別は未検証とし、再推論で補わない。
+
+**検証量の上限:** 一度の限定的な補足再集計とする。新規学習0回、GPU再推論0回、gridは16/8のみ。
+支持・不支持・データ不足のいずれでも報告して終了し、追加探索を自動で始めない。
+
+**完了条件:** 全件・split・point alignmentと既存confusion countsが整合し、分母付き数値、動画別の
+比較対象数・方向・median、未定義/未検証項目、privacy検証結果が揃うこと。3仮説の判定は固定文字列で
+自動確定せず、数値と留保を添えて方針管理チャットへ返す。単位・分母の異なる倍率から主要因を順位付けしない。
+
+**結果による分岐:** Aの偏りが密度補正後も残れば再学習なしの座標変換診断、Bの低下が動画内でも残れば
+時間文脈の限定診断、exposure固有の悪影響が残ればinverse-occurrence loss weightingの5 epoch比較案を
+検討する。強い構造的根拠が残らなければW-Aを維持しS5-15の5〜10 epoch pilotを計画する。
+いずれも本補足の完了報告後に判断する。
+
+**実機再集計後の分岐評価（2026-09-15、判断は方針管理チャットが行う）:** Aは分母補正後も
+動画別・grid16/8の両方で一貫して残ったため、座標変換診断の分岐条件を満たす。Bは同一動画内の
+paired比較では一般に残らなかった（train sanity n=3のみ）ため、時間文脈の限定診断を同等優先度で
+進める根拠は本補足の範囲では得られなかった。Cのexposure固有の悪影響も時間区分別のFPRでは
+残らなかった（disagreementのjoint層別は未検証のまま）ため、inverse-occurrence loss weighting
+比較案を優先する根拠も得られなかった。
+
+**productionへの影響:** なし。teacher・保存済みpredictionの変更、threshold tuning、loss変更、
+augmentation追加は対象外。
+
+**関連文書:** `.tmp/stage5_s5_14_supplement_implementation_handoff.md`（実装依頼）、
+`.tmp/stage5_s5_14_report_to_policy_chat.md`（core報告）、
+`docs/stage5/stage5_pointnext_s_training_evaluation_report.md` 9.8節（数値正本）。
+補足報告先は`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`。
+
+### S5-14補足2 座標変換診断
+
+方針決定日: 2026-09-15。状態: parity合格・実機実行は完了（修正後のコードで再実行済み）。
+分析仕様の残る確認事項はS5-14補足3として対応済み（次節）。2026-09-15にS5-14全体として受入済み。
+担当: Stage 5実装チャット。
+
+**実装状況（2026-09-15）:** `Stage5/checks/real_h5/check_stage5_coordinate_transform_
+diagnostics.py/.sh`と`Stage5/checks/dummy/check_dummy_coordinate_transform_diagnostics.py/.sh`
+を実装した。変換注入位置は`evaluate_stage5.predict_h5()`の`normalize_xyz()`直後・window抽出前
+（監査済み、10.2節の契約どおり）。8条件の変換適用、identity/repeat_identityのS5-14 core H4
+canonical parity再利用（no tolerance）、全条件でのvote_count構造的検算、前補足のhot/cold共通
+分類（`train_xy_prior.csv`）再利用によるFPR比較を実装した。py_compile・bash -n・
+git diff --checkと、synthetic test 13件（transform数学的性質、正規化前平行移動の相殺確認、
+per-point比較指標、hot/cold FPR再利用、条件別集計）は全て合格した。
+
+**実機実行結果（2026-09-15、旧集計・診断履歴として保持）:** ユーザー実機で21動画×8条件
+（168 video-forward相当）を実行し、正常終了を確認した。T2のidentity/repeat_identity
+canonical parityは全21動画でno-tolerance合格（`private_DO_NOT_SHARE` diff artifactは
+生成されず、この結果は下記の修正の影響を受けない）。T3/T4は平行移動でほぼ無反応・回転
+（特にhot bin）で明確な反応という非対称性を示したが、下記の通りhot/cold分類とsplit集計に
+仕様不一致があったため、この結果は旧集計として保持し、正式判断には使用しない。
+
+**集計仕様の修正（2026-09-15、管理チャット指摘への対応）:** 管理チャットの精査により、
+(1) train sanity 3動画のhot/cold分類が、S5-14補足1と同じleave-one-video-out自己除外を
+反映しておらず全train共通分類になっていたこと、(2) condition summary/hot_cold summaryが
+train sanityとvalidationを分離せず21動画混合になっていたこと、の2点が指摘された。
+`check_stage5_coordinate_transform_diagnostics.py`を修正し、`prior_excluding_video()`
+（補足1、無改変で再利用）による自己除外をtrain sanity動画へ適用し、split別の主集計
+（`condition_summary_by_split`等）と21動画混合の参考値（`*_all_videos_reference_mixes_
+splits`）を分離した。CLI引数も`--train_xy_prior_csv`から`--train_list`へ変更した。
+既存の保存済み出力には条件別・bin別のper-point/per-bin中間データがなく、train sanityの
+修正後hot/cold FPRはCPU再集計だけでは復元できないため、D-033承認範囲内（21動画×8条件）の
+再実行が必要と判断した。synthetic test 16件（追加3件含む）・static checkは全て合格。
+
+**修正後の実機再実行結果（2026-09-15、split別、正式集計）:** ユーザー実機で修正後のコードを
+再実行し、正常終了・privacy scan 0件を確認した。T2 parityは両splitとも差分0を維持。
+
+validation（n=18、train_sanityの自己参照問題を受けない代表的なサンプル）単独で、修正前と
+同じ質的パターンが再現された: 平行移動（±0.1）は全体・hot bin（grid16, rate）のFPR diff
+中央値がほぼ0（それぞれ+0.003pt、+0.009pt）で方向も一定しないのに対し、回転（±15度）は
+全体flip_rate中央値が平行移動の約25〜35倍、hot bin FPR diff中央値は`rotate_z_plus`で-2.88pt
+（2/18動画のみ増加）、`rotate_z_minus`で-3.82pt（18動画中18動画が減少）と、方向が強く
+一貫していた。train_sanity（n=3、自己除外適用後）も同方向だが、recallの低下幅（`rotate_z_
+plus`で中央値-4.58pt、`rotate_z_minus`で-9.59pt）がvalidationより大きく出た。
+**train sanityを分離した後もvalidation単独で同じ傾向が残ったことから、元の21動画混合の結果は
+train sanity（n=3）の外れ値的な影響で駆動されたものではないと確認できた。**一方、
+train sanityの自己除外適用により数値自体（hot bin FPR diffの大きさ等）は修正前から変化して
+おり、自己除外が数値に実質的な影響を与えたことも確認された。
+
+recallはvalidationで`rotate_z_plus`が中央値+0.16pt（9/18動画増加・9/18動画低下、ほぼ相殺）と
+ほぼ無変化だが、`rotate_z_minus`は中央値-1.94pt（14/18動画が低下）と明確に低下しており、
+hot bin FP減少を「回転による精度改善」と解釈しないよう留意した。正規化後の平行移動の低感度は
+`normalize_xyz()`の中心化（正規化前の平行移動にのみ働く別の性質）とは無関係の独立した観測と
+して記述し、hot/cold間の変化も「FPの再配分」ではなく別々の観測として扱った。
+
+詳細な動画別数値・split別テーブル・解釈上の留保は
+`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`を参照。
+
+**補足結果への正式判断:** 前補足の完了を受け入れる。全21動画・grid16/8でhot領域のFPRが
+cold領域より高く、background点数による分母の交絡だけでは説明できない。一方、局所的な点密度・
+形状・輝度と座標の関係は未分離であり、「絶対座標の暗記」とは断定しない。時間位置低下は
+train sanityでは残るがvalidation全体では一貫せず、exposure固有の悪影響も明確でないため、
+時間文脈診断・inverse-occurrence loss比較は優先しない。joint disagreementは未検証のまま保持する。
+
+**目的:** 同じ点の相対距離・特徴・GTを保ったままモデル入力XYZの位置・向きを変え、
+予測の変化を元点単位で比較する。再学習前に座標依存への対策を試す根拠があるか確認する。
+
+**固定条件と範囲:** teacher v7、W-A epoch5、GroupNorm8、元のsplit・train sanity3＋validation18、
+window16/8、physical batch1・paddingなし、features intensity/confidence、mean aggregationを維持する。
+全動画XYZ正規化の後・window抽出の前に一つの剛体変換を適用し、再正規化しない。
+`pixel_xy / 255`は元点の診断座標であり、モデル入力XYZと混同しない。
+
+**限定比較:** identityとrepeat identity、正規化XYZのX/Y各軸の±0.1平行移動（4条件）、
+原点を中心としたZ軸±15度回転（2条件）の計8条件。scale・reflection・shear・振幅探索は行わない。
+学習0回、最大21動画×8条件の168動画相当forward走査（各走査内で全windowを処理）とする。
+小規模preflightの正常出力は本集計へ再利用し、追加seed・checkpoint・動画探索は行わない。
+
+**検証と判定:** identityの既存保存値とのcanonical parityを先に確認する。点index・特徴・GT・
+window/vote対応と距離保存を検算し、元点ごとの確率差・判定反転・動画別FPR/recall/F1を記録する。
+変換感度そのものはバグや座標暗記の証明ではない。入力分布外への移動、方向性のある局所形状、
+浮動小数点・近傍選択の影響も留保し、translationとrotationを分けて解釈する。
+完了後、augmentationの単独5 epoch比較案またはW-AによるS5-15 pilotのどちらへ進むか再判断する。
+本委任に学習・production変更の承認は含めない。
+
+**関連文書:** `.tmp/stage5_s5_14_supplement_implementation_handoff.md` 10章が実装依頼の詳細。
+前補足報告は`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`。
+補足2報告先は`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`、
+数値は評価レポート9.8節へ別項目として追記する。
+
+### S5-14補足3 残存集計・記録の確認
+
+方針決定日: 2026-09-15。状態: 完了。担当: Stage 5実装チャット。GPU再推論・新規学習は
+一切行っていない（CPU専用のCSV再集計・記録確認）。
+
+**委任内容:** 補足2の split別修正後の結果を方針管理チャットが確認した際、(1) split合算の
+confusion countsから算出するpooled precision/recall/FPR/F1/IoU（動画別rateの平均とは別の
+統計）が未算出、(2) F1/IoUの動画別diff中央値と、split内中央値同士の差を区別していない、
+(3) 報告文に増減の取り違え等の誤記がある、(4) 再推論（初回・修正後の計336 video-condition相当）
+の事前承認記録が未確認、という4点が指摘され、補足2の最終受入を保留してS5-14補足3として
+委任された。
+
+**実装:** `Stage5/checks/real_h5/check_stage5_coordinate_transform_reconciliation.py/.sh`
+（既存`coordinate_transform_point_metrics.csv`のみを入力とするCPU専用の再集計）と
+`Stage5/checks/dummy/check_dummy_coordinate_transform_reconciliation.py/.sh`
+（synthetic test 7件）を新規実装した。この入力CSVはH5/checkpoint/torchを必要としないため、
+この実装環境内で実データに対して直接実行し、split別confusion counts整合性・identity自己diff=0
+の検算に合格した。
+
+**主な結果:** pooled（点数加重）recallは`rotate_z_minus`で両splitとも明確に低下した
+（train_sanity約-9.2pt、validation約-6.8pt。厳密な差分の転記留保は下記）。一方、動画等重みのF1中央値差分
+（median_of_per_video_diffs）はほぼ変化なし〜わずかに正（validation +0.06pt、18動画中11動画で
+F1改善）。pooled recallは各動画のGT positive数（TP+FN）を重みとするrecallの加重平均であり、
+背景点数や全点数を重みにするものではない。pooled FPRの重みはGT background数（FP+TN）である。
+この分母別のpooled統計と、動画ごとに均等な重みのF1統計とで異なる
+側面が見えており、precision改善（FPR低下）がrecall低下を動画単位では部分的に相殺している
+可能性がある。「hot bin FP減少」「pooled recall低下」「動画別F1はほぼ中立」はいずれも
+矛盾しない別々の観測として報告する。
+
+**報告文の訂正:** T2 parityの記述（利用可能動画数が0であるかのような誤記）、grid8・raw_count
+定義での増減の取り違え（train_sanityの「減少」を実際には「増加」の数値で記載していた）、
+train_sanity recall diffのmean/median取り違え（正しい中央値は`rotate_z_plus`-4.58pt、
+`rotate_z_minus`-9.59pt）の3件を本書・管理記録へ反映した。
+
+**再推論の承認経緯:** 方針管理チャットによる事前の明示的承認記録は本書上に存在しないため、
+「承認記録未確認」として報告する。実施量は初回・修正後の計2回、21動画×8条件=168
+video-condition相当×2＝336 video-condition相当。これは得られた数値を無効化する趣旨ではなく、
+運用上の記録確認である。
+
+詳細・全数値は`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`の
+「S5-14補足3 完了報告」を参照。
+
+### S5-14全体の完了判断と留保（2026-09-15）
+
+ユーザー判断によりcore（H1〜H5）・補足1〜3を完了として受け入れる。補足2のparity・自己除外・
+split別再集計、補足3のCPU集計と7件のsynthetic検証を完了記録とし、追加GPU診断は行わない。
+完了は診断工程の完了であり、精度問題の解消・座標暗記の確定・augmentation採用を意味しない。
+
+**数値転記の留保:** 補足3報告のvalidation recall表示値44.71%→37.88%は約-6.83ptだが、
+差分欄は-6.81ptで一致しない。他の差分欄も含め厳密な引用には生成CSVとの照合が必要であり、
+本書では約-6.8ptとして扱う。CSV未照合の値を確定値へ置換しない。これは文書整理上の留保であり、
+新規検証段階・追加推論の理由にはしない。
+
+回転感度とFP/recallのトレードオフはvalidation単独でも確認された。ただし正負回転で結果が異なり、
+変換の移動量と方向依存の局所特徴を分離できていない。＋15度だけを事後的に有利な設定として採用しない。
+次候補は回転augmentation単独5 epoch比較とし、条件を事前固定してW-Aと比較する方針を別途策定する。
+今回の完了判断は学習開始の承認ではない。production設定・W-Aを維持する。
+
+再推論の事前承認記録未確認は運用上の留保として保持し、ユーザー自身の実行と区別する。
+把握済みの2回・計336動画条件相当以外の実行有無は未確認。これをもって診断結果を無効とはしない。
+詳細な数値と留保の正本は評価レポート9.8.4〜9.8.5節。
+
 ### S5-15 長期学習とproduction候補確定
 
-状態: deferred。
+状態: deferred。S5-14全体は完了。次の回転augmentation比較またはpilotの条件・承認を別途決定する。
 
 S5-10〜S5-14のうち主要な構造問題が解消し、5〜10 epoch pilotでtrain sanityとvalidationの両方に
 改善根拠が得られた場合だけ、50 epochの中間判定を経て100〜200 epochへ進む。最終checkpointで
@@ -1083,6 +1551,11 @@ aggregation 4方式を再評価し、production aggregation、normalization、th
 | D-027 | 2026-09-14 | W-B/W-CはS5-15で参照可能な診断履歴として保持するが、activeなproduction候補にはしない | calibration shiftの資料にはなるが、両者ともW-Aよりdiscriminationが低く、現行thresholdで検出不足が大きいため |
 | D-028 | 2026-09-14 | weight比24などの追加中間weightを試さず、未使用の2回目の5 epoch枠を消化しない | W-Cは同一FPRの全比較点でW-Aよりrecallが低く、追加のweight弱化を支持する根拠が得られなかったため |
 | D-029 | 2026-09-14 | S5-14 coreを再学習なしの座標・frame・overlap exposure診断として開始し、結果報告前にloss/augmentationを変更しない | PLY上のXY反復について座標事前分布、時間位置、window重複露出の3仮説が未分離であり、先に原因を定量化する必要があるため |
+| D-030 | 2026-09-15 | S5-14 core成果物を受入れ、3仮説の解釈はS5-14補足で再評価する | Aの8.7倍は点数比で密度補正未了、Bは動画構成差が残り単調低下でもない、Cのdisagreement関連はexposureの因果効果を示さないため |
+| D-031 | 2026-09-15 | S5-14補足をS5-15前に一度の限定再集計として実施する。学習・GPU再推論0回、grid 16/8、W-A固定 | 点密度と動画・時間構成を確認してから次の改修を選び、根拠不足でも追加探索を自動拡大しないため |
+| D-032 | 2026-09-15 | S5-14補足を受入れ、空間的な誤分類の偏りを次の診断対象にする | 分母補正・自己参照排除後も全動画で偏りが残る一方、一般的な時間低下・exposure対策の根拠は弱いため |
+| D-033 | 2026-09-15 | S5-14補足2の座標変換診断を委任する。W-A固定・学習0回、21動画×8条件以内。S5-15は保留 | 点の対応と相対距離を維持して入力XYZへの感度を調べ、augmentation比較の必要性を判断するため。production変更は承認しない |
+| D-034 | 2026-09-15 | ユーザー判断によりS5-14 core・補足1〜3を完了として受入。追加GPU診断は終了し、回転augmentation単独5 epoch比較を次候補とする | parity・自己除外・split/pooled集計・記録確認を完了。座標暗記・augmentation効果は未確定、転記と承認経緯の留保を保持。学習開始・production変更は未承認 |
 
 ## 8. 文書更新ルール
 
