@@ -176,6 +176,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--h5_pattern", default=None, help="Expected teacher file-name pattern")
     parser.add_argument("--expected_total", type=int, default=None)
     parser.add_argument("--manifest_out", default=None, help="Where to write the combined manifest")
+    parser.add_argument(
+        "--expected_train_sha256",
+        default=None,
+        help="Full content fingerprint the train list must have (order and path spelling included)",
+    )
+    parser.add_argument("--expected_val_sha256", default=None)
     return parser.parse_args()
 
 
@@ -192,6 +198,28 @@ def main() -> None:
         print(f"Fixed-list input rejected: {error}", file=sys.stderr)
         raise SystemExit(2)
 
+    train_sha256 = list_content_sha256(list(inputs.train_paths))
+    val_sha256 = list_content_sha256(list(inputs.val_paths))
+
+    # Verified before the manifest is written, so a mismatched list never
+    # reaches the preflight or a training run.
+    for label, actual, expected, paths in (
+        ("train", train_sha256, args.expected_train_sha256, inputs.train_paths),
+        ("val", val_sha256, args.expected_val_sha256, inputs.val_paths),
+    ):
+        if expected and actual != expected:
+            identity = list_identity_sha256(list(paths))
+            print(
+                f"Fixed-list input rejected: {label} list fingerprint mismatch\n"
+                f"  expected: {expected}\n"
+                f"  actual  : {actual}\n"
+                f"  identity (file names only, ignoring path spelling): {identity}\n"
+                "  A differing identity means different videos or a different order; an identical "
+                "identity with a differing content hash means only the path spelling changed.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+
     if args.manifest_out:
         write_combined_manifest(inputs, args.manifest_out)
 
@@ -199,8 +227,9 @@ def main() -> None:
         "Fixed-list inputs validated: "
         f"train={len(inputs.train_paths)} val={len(inputs.val_paths)} "
         f"total={len(inputs.all_paths)} "
-        f"train_sha256={list_content_sha256(list(inputs.train_paths))[:16]} "
-        f"val_sha256={list_content_sha256(list(inputs.val_paths))[:16]}"
+        f"train_sha256={train_sha256[:16]} "
+        f"val_sha256={val_sha256[:16]}"
+        + (" (fingerprints verified against the expected values)" if args.expected_train_sha256 else "")
     )
 
 

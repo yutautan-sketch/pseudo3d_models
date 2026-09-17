@@ -287,9 +287,66 @@ def test_cli_writes_a_manifest_and_rejects_bad_input_with_exit_code_2() -> None:
     print("  ok: the CLI writes the manifest on success and exits 2 without a manifest on rejection")
 
 
+def test_cli_verifies_expected_fingerprints_and_separates_the_two_failure_kinds() -> None:
+    """P3 approval: the dry run must confirm the lists' content, order and hash,
+    not merely display them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        train_list, val_list, train_files, val_files = build_valid_pair(root)
+        train_sha = list_content_sha256(train_files)
+        val_sha = list_content_sha256(val_files)
+
+        def run(extra: list[str], manifest_name: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [
+                    sys.executable, str(MODULE_PATH),
+                    "--train_list", str(train_list),
+                    "--val_list", str(val_list),
+                    "--manifest_out", str(root / manifest_name),
+                    *extra,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        matched = run(["--expected_train_sha256", train_sha, "--expected_val_sha256", val_sha], "ok.txt")
+        assert matched.returncode == 0, matched.stderr
+        assert "fingerprints verified against the expected values" in matched.stdout
+        assert (root / "ok.txt").exists()
+
+        # Different videos: content differs, and the identity hash differs too.
+        wrong = run(["--expected_train_sha256", "0" * 64], "never.txt")
+        assert wrong.returncode == 2
+        assert "train list fingerprint mismatch" in wrong.stderr
+        assert not (root / "never.txt").exists(), "a rejected list must not leave a manifest behind"
+
+        # Same videos, same order, different path spelling: the content hash
+        # differs while the identity hash does not, and the message says so.
+        # The files have to exist under the new prefix, otherwise the earlier
+        # existence check fires first and this case is never reached.
+        moved = make_h5_files(root / "other_mount", range(len(train_files)))
+        assert [p.name for p in moved] == [p.name for p in train_files]
+        assert list_identity_sha256(moved) == list_identity_sha256(train_files)
+        write_list(train_list, moved)
+        representation = subprocess.run(
+            [
+                sys.executable, str(MODULE_PATH),
+                "--train_list", str(train_list),
+                "--val_list", str(val_list),
+                "--expected_train_sha256", train_sha,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert representation.returncode == 2
+        assert "identity (file names only" in representation.stderr
+    print("  ok: the CLI verifies fingerprints, refuses on mismatch, and names the identity hash for triage")
+
+
 def main() -> None:
     tests = [
         test_valid_pair_is_accepted_in_list_order,
+        test_cli_verifies_expected_fingerprints_and_separates_the_two_failure_kinds,
         test_one_sided_or_empty_or_unreadable_lists_stop_without_fallback,
         test_duplicates_and_overlap_are_rejected,
         test_missing_files_and_wrong_teacher_pattern_are_rejected,

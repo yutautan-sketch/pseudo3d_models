@@ -52,6 +52,17 @@ AUGMENTATION_ROTATION_DEGREES="15.0"
 EX_DATE="${EX_DATE:-260916}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/mnt/data/3d_projects/stage5_runs/${EX_DATE}}"
 
+# train_stage5.py derives the augmentation base seed as SEED + 500000 when no
+# explicit one is given. Recomputed here so the dry run can show the value that
+# will be recorded, and so the manifest carries it.
+AUGMENTATION_SEED_OFFSET="500000"
+RESOLVED_AUGMENTATION_SEED="$((SEED + AUGMENTATION_SEED_OFFSET))"
+
+# Manifests are written here, NOT into the run directory: the launcher refuses
+# to start into a non-empty run directory and that protection is not weakened
+# to make room for a manifest. Each manifest records its run directory path.
+MANIFEST_DIR="${MANIFEST_DIR:-${SCRIPT_DIR}/work_dirs/_s5_15_p3_manifests}"
+
 ARM="${ARM:?Set ARM to r0 (augmentation=none) or r1 (random_z_rotation)}"
 case "${ARM}" in
   r0) AUGMENTATION="none" ;;
@@ -91,11 +102,15 @@ fi
 
 # Validate the list pair up front with the same module train_stage5.sh uses, so
 # a duplicate, a missing H5 or a stale teacher version stops the arm before any
-# GPU time is spent rather than midway through the preflight.
+# GPU time is spent rather than midway through the preflight. The fingerprints
+# are verified here, not merely displayed: a list whose content or order has
+# drifted from the audited one must stop the arm.
 list_summary="$("${PYTHON}" "${SCRIPT_DIR}/stage5/utils/file_list_mode.py" \
   --train_list "${TRAIN_LIST}" \
   --val_list "${VAL_LIST}" \
-  --expected_total 180)"
+  --expected_total 180 \
+  --expected_train_sha256 "${EXPECTED_TRAIN_LIST_SHA256}" \
+  --expected_val_sha256 "${EXPECTED_VAL_LIST_SHA256}")"
 
 if [[ -d "${OUTPUT_DIR}" ]] && [[ -n "$(find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   echo "Output directory already exists and is not empty: ${OUTPUT_DIR}" >&2
@@ -119,7 +134,7 @@ echo "  norm           : ${POINTNEXT_NORM} (${POINTNEXT_NORM_GROUPS} groups)"
 echo "  class weight   : ${CLASS_WEIGHT}"
 echo "  label policy   : ${LABEL_POLICY}"
 echo "  epochs         : ${EPOCHS} (save_every=${SAVE_EVERY}, every epoch kept)"
-echo "  seed           : ${SEED}"
+echo "  seed           : ${SEED} (augmentation base seed resolves to ${RESOLVED_AUGMENTATION_SEED})"
 echo "  output dir     : ${OUTPUT_DIR}"
 
 launch_env=(
@@ -143,15 +158,49 @@ launch_env=(
 
 echo
 echo "Command:"
+launch_command="$(printf '%s ' "${launch_env[@]}")bash ${SCRIPT_DIR}/train_stage5.sh"
 printf '  %s \\\n' "${launch_env[@]}"
 echo "    bash ${SCRIPT_DIR}/train_stage5.sh"
 
+# Planned optimizer updates: ceil(windows / accumulation) per epoch. The
+# window count comes from the data, so this stays a planned figure; the
+# executed count is reported separately and is never assumed to match.
+PLANNED_OPTIMIZER_STEPS="${PLANNED_OPTIMIZER_STEPS:-450}"
+
+write_manifest() {
+  local mode="$1"
+  "${PYTHON}" "${SCRIPT_DIR}/checks/real_h5/write_stage5_s5_15_run_manifest.py" \
+    --arm "${ARM}" \
+    --mode "${mode}" \
+    --manifest_dir "${MANIFEST_DIR}" \
+    --output_dir "${OUTPUT_DIR}" \
+    --augmentation "${AUGMENTATION}" \
+    --augmentation_rotation_degrees "${AUGMENTATION_ROTATION_DEGREES}" \
+    --seed "${SEED}" \
+    --resolved_augmentation_seed "${RESOLVED_AUGMENTATION_SEED}" \
+    --epochs "${EPOCHS}" \
+    --save_every "${SAVE_EVERY}" \
+    --class_weight "${CLASS_WEIGHT}" \
+    --pointnext_norm "${POINTNEXT_NORM}" \
+    --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}" \
+    --init_checkpoint "${INIT_CHECKPOINT}" \
+    --train_list "${TRAIN_LIST}" \
+    --val_list "${VAL_LIST}" \
+    --command "${launch_command}" \
+    --planned_optimizer_steps "${PLANNED_OPTIMIZER_STEPS}" \
+    --repo_dir "${SCRIPT_DIR}"
+}
+
+echo
 if [[ "${CONFIRM_TRAINING}" != "1" ]]; then
+  write_manifest dry_run
   echo
   echo "Dry run: training was NOT started."
   echo "Re-run with CONFIRM_TRAINING=1 once this arm has been approved."
   exit 0
 fi
+
+write_manifest training
 
 echo
 echo "CONFIRM_TRAINING=1: starting ${ARM} training."
