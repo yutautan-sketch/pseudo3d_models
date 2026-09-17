@@ -8,7 +8,7 @@
 | 作成日 | 2026-09-10 |
 | 最終更新日 | 2026-09-15 |
 | 対象 | pseudo-3D point cloudからのpoint-wise大腿骨segmentation |
-| 現在の段階 | S5-14全体（core・補足1〜3）完了・受入済み（2026-09-15、ユーザー判断）。回転感度は確認したが、座標暗記やaugmentation効果は未確定。追加GPU診断は終了。W-A・production設定を維持し、次候補の回転augmentation単独5 epoch比較は条件策定・承認待ち。S5-15長期学習は保留 |
+| 現在の段階 | S5-14全体完了・コミット済み。S5-15の段階別方針を策定（2026-09-15）。まず回転augmentation単独5 epoch比較の実装・preflightへ進む計画。実装・学習は未着手。W-A・production設定を維持し、50〜200 epoch学習は段階判定後に別途承認 |
 | production readiness | 未到達。診断中 |
 
 本書は、Stage 5の目的、現在状態、過去の改修、検証結果、次の実施順を一か所から追えるように
@@ -106,7 +106,8 @@ annotation前H5は実運用推論に使用できる。
 ## 3. 現在状態の要約
 
 最新方針（2026-09-15）: S5-14全体（core・補足1〜3）の完了をユーザー判断により受け入れた。
-次候補は回転augmentation単独5 epoch比較であり、学習条件と実行承認は別途決定する。
+S5-15は6章の段階別計画に従い、回転augmentation単独5 epoch比較から進める。
+本更新は方針策定であり、実装・学習の完了や長期学習の一括承認ではない。
 以下は補足1の結果要約で、補足2・3と最終判断は6章を参照する。
 teacher v7全180 H5（train 162 / val 18）、W-A epoch 5、GroupNorm 8 groups、`bbox_noncontour_ignore`
 を固定し、保存済み予測で再集計した。分母補正・自己参照排除後も仮説A（座標事前分布）の偏りは
@@ -1512,11 +1513,141 @@ split別再集計、補足3のCPU集計と7件のsynthetic検証を完了記録�
 
 ### S5-15 長期学習とproduction候補確定
 
-状態: deferred。S5-14全体は完了。次の回転augmentation比較またはpilotの条件・承認を別途決定する。
+方針策定日: 2026-09-15。状態: 計画確定、実装・実行未着手。担当: Stage 5実装チャット。
+S5-14全体はユーザー判断により完了・コミット済み。以下の段階ごとに結果を管理チャットへ返し、
+次段階へ進む承認を得る。200 epochを一括実行する計画ではない。
 
-S5-10〜S5-14のうち主要な構造問題が解消し、5〜10 epoch pilotでtrain sanityとvalidationの両方に
-改善根拠が得られた場合だけ、50 epochの中間判定を経て100〜200 epochへ進む。最終checkpointで
-aggregation 4方式を再評価し、production aggregation、normalization、thresholdを確定する。
+#### 目的と判断原則
+
+回転augmentationを一要因で比較して学習条件を固定し、短期pilot、50 epoch中間判定を経て
+長期学習・production候補を評価する。S5-14で確認したのは推論時の回転感度であり、学習時
+augmentationの有効性ではない。＋15度の推論結果が良かったことを理由に、片方向回転や
+推論時回転を採用しない。座標暗記の因果的証明を追加診断で追求する段階にも戻らない。
+
+#### P1: 固定条件・実験manifestの監査
+
+| 項目 | 短期比較の固定条件 |
+| --- | --- |
+| teacher / split | teacher v7、既存W-Aのtrain162 / validation18。保存済みfile listを使用し再分割しない |
+| 評価対象 | 固定train sanity3動画＋全validation18動画。GT・元点対応も維持 |
+| モデル | PointNeXt-S、GroupNorm8 groups、W-Aと同じwidth/radius/nsample等 |
+| 初期重み | W-Aを学習した際と同一のGroupNorm転移初期checkpoint。両armでhashを一致させる |
+| 特徴 / label policy | intensity,confidence / bbox_noncontour_ignore |
+| Loss / class weight | CE、smoothing0、W-Aの固定weight [0.05963856, 1.94036150] |
+| Optimizer | AdamW、lr=1e-3、weight_decay=1e-4、grad_clip_norm=10。W-A実configと照合 |
+| 入力 / batch | 全動画XYZ正規化、window16/stride8/tailあり、physical batch1、accumulation8 |
+| Sampling | overlap windowの実点を維持。random point removal・zero paddingなし |
+| 評価 / 集約 | eval mode、augmentationなし、mean probability、2クラスargmax・同値background |
+| 乱数 | W-Aのseed・shuffle条件を再使用。augmentationの乱数はshuffle/modelの乱数から分離 |
+| 保存 | 独立した新規run dir、config・metrics・file lists・best/lastと各epoch checkpoint |
+
+既存bashの既定値がW-Aと一致するとは仮定しない。特にGroupNormとその初期checkpointを明示し、
+W-A epoch5の学習済み重みを新しいarmの初期値にしない。auto weightを再算出して比較条件を
+変えることも避ける。入力file list・GT/初期重みの同一性、コードrevision、実行環境、主要引数を
+manifestへ記録し、旧出力を上書きしない。W-A実configとの差があれば開始前に報告する。
+
+#### P2: Training-only回転augmentationの実装・preflight
+
+追加する設定はaugmentationのnone / random_z_rotationと回転範囲・seedに限定する。
+production既定値はnoneのまま。実験用bashでは明示的に指定し、config/checkpointにも保存する。
+
+- 全動画XYZ正規化後・window抽出前に、原点（動画重心）中心のZ軸回転を適用する。
+- 角度はtrain動画×epochごとに一つ、Uniform[-15度, +15度]から生成する。同一動画の全windowで
+  同じ角度を使い、epoch間では更新する。動画内のoverlap点を異なる角度で学習させない。
+- base seed・epoch・安定した動画識別子から再現可能に生成する。Pythonのプロセス依存hashや
+  workerの呼出順に依存しない。角度生成用RNGをモデルやDataLoaderのRNGと共有しない。
+- persistent workerを含むDataLoaderへのepoch伝達を検証する。キャッシュ済み点群をin-placeで
+  回し続けない。距離・点順・特徴・GT・valid_mask・frame_order・point_indicesを維持する。
+- 回転後の再正規化・clip・sampling・translation/scale/reflection追加はしない。
+  validation・train sanity評価・inferenceでは常に無変換にする。
+
+CPU syntheticで角度範囲、距離保存、同一動画/epochの一致、epoch更新、worker間再現性、
+元データ不変、無効時の既存経路との一致を検証する。GPUでは限定したdummy forward/backwardと
+実H5の少数stepでfinite loss/gradient・点対応を確認する。preflightはフル1 epoch学習を
+別途追加するものではなく、実施動画/step数と実行回数を実行前に提示する。
+
+#### P3: 5 epoch一要因比較
+
+| arm | augmentation | 学習開始・期間 |
+| --- | --- | --- |
+| R0 control | none | W-Aと同一の初期重みから5 epoch |
+| R1 candidate | random_z_rotation、角度[-15度,+15度] | 同じ初期重み・seedから5 epoch |
+
+通常は2 run、計10 training epochsを上限とする。既存W-Aの5 epoch runをR0として再利用できるのは、
+初期重み・teacher/split・config・seed・optimizer更新条件・実行環境・augmentation無効時の経路に
+実質的な差がないことをP1/P2で確認できた場合だけとし、再利用理由を報告する。
+再利用不能ならR0を新規実行し、旧W-Aは履歴にする。追加seed・角度探索・3本目の5 epoch runは
+自動追加しない。preflight失敗のやり直しも、理由・実施量を記録して追加実行の承認を得る。
+
+比較の主対象は両armのepoch5。bestは同じ選択規則で保存し副次評価とする。異なるepochのbestだけを
+比べてaugmentation効果としない。固定21動画の無変換評価で、pooled confusion-derived指標と
+動画別F1/IoU中央値・paired差分・TP0・recall/FPRを併記する。ignore上のpositiveはFPと区別する。
+PLYは元座標のGT/予測/positive-onlyを既存パイプラインで出力し、同じ動画・視点で比較する。
+
+**事前の選定基準:** validationの動画別F1/IoU、pooled F1、TP0を主指標とし、recall/FPRと
+train sanityを安全側の確認に使う。R1暫定採用は、validationのpaired F1差分中央値が正、
+split median IoUとpooled F1がR0以上、TP0が増えず、recall低下やFP増加だけで説明される
+悪化がなく、train sanityでもmedian F1/IoU・TP0が悪化しない場合を基本とする。
+全条件を満たしても単一seedの暫定判断にとどめる。微差・指標間のトレードオフ・train sanityとの
+不一致が残る場合はR0を維持し、結果を見て角度や判定基準を変更して採用しない。
+pooled recallはGT positive数加重、FPRはGT background数加重で解釈する。
+
+#### P4: 採用条件固定と最終pilot（5〜10 epoch）
+
+P3の選定を管理チャットへ返し、noneまたはrandom_z_rotationを固定する。同一条件のP3の5 epoch
+runが健全なら最終pilotの5 epoch部分として再利用し、儀礼的に再学習しない。追加確認が必要な場合だけ
+累計10 epochまでの延長案を出す。label policy・weight・LR・scheduler等を同時に変更しない。
+
+**継続学習の注意:** 現在の`train_stage5.py --checkpoint`はモデル初期化用であり、optimizer等を
+復元するresumeとは扱わない。延長する場合はepoch・optimizer・必要なRNG/データ順序・augmentation
+epochを復元できるresume経路を実装・検証するか、同じ初期値から通算期間を再実行する計画を
+事前承認する。モデル重みだけの再読込を「5→10→50 epochの連続学習」と記録しない。
+
+#### P5: 50 epoch中間判定
+
+pilotを受け入れた場合だけ50 epochまでの実行を承認する。継続か再開始かをmanifestへ明記し、
+optimizer更新回数・通算epochを比較可能にする。短期比較ではschedulerを追加しない。
+50 epochでもまず採用条件を固定し、LR変更が必要なら別の変更として管理チャットへ相談する。
+
+各epochのtrain/validation loss・FP/FN/TP/TN・weight/ignore情報を保存し、10 epochごととbest/lastを
+保持する。動画単位の評価とPLYはpilot時点・epoch25・epoch50を基本とし、epoch25も明示的に保存する。
+validation lossの継続的な悪化、TP0の増加、video median F1/IoUのpilot比低下、FP/FPRの増大、
+train sanityとvalidationの改善方向の乖離を確認する。NaN/Inf・点対応破損は即停止。
+品質指標の継続悪化は次の保存区切りで中断・報告し、epochを増やすだけで解決しようとしない。
+単一のbest値だけで継続を判断せず、時系列と動画別結果を管理チャットへ返す。
+
+#### P6: 100〜200 epochとproduction候補の評価
+
+50 epoch判定が良好な場合のみ100 epochへ、100 epochの再判定後に必要なら200 epochへ進む。
+各延長は別承認とし、同じ監視・保存を続ける。最終モデルは事前固定のvalidation選択規則で選び、
+lastと選択checkpointの両方を報告する。
+
+モデルを固定した後にのみthreshold sweepを行う。候補は0.1〜0.9（0.1刻み）とし、baseline0.5を
+必ず残す。両クラスargmax・float32同値backgroundという既存判定との整合をテストする。
+FP/FPR、recall、TP0、video median指標、必要に応じStage6入力としてのFP形状を併せて判断する。
+Stage6側の許容基準が未定なら「production上許容」と断定しない。
+
+aggregationはmeanを基準に維持し、変更を検討する場合のみ同じcheckpointで4方式を副次比較する。
+maxは診断用で、S5-14以前の判断どおり既定の採用候補に戻さない。aggregationとthresholdを同時に
+探索して改善要因を混ぜず、変更候補がなければ4方式の再実行は必須にしない。
+production採用の最終判断はnormalization・augmentation学習設定・aggregation・thresholdを明示して
+別途行い、それまでは既存既定値を変更しない。
+
+validation18動画はすでに多数の方式選択に使用しており、最終の独立testではない。thresholdや
+checkpoint選択後の数値を未見データの汎化保証と呼ばない。最終的な性能確認には、調整に使っていない
+動画群を別途確保し、動画単位の分離とteacher版を明記する。確保不能ならその限界を報告する。
+
+#### 成果物・記録・実施境界
+
+実装依頼はP1〜P3から開始し、P4以降は結果を受けた段階承認とする。本節の方針策定だけで実行を
+開始しない。実装チャットへ渡す依頼書は別途作成する。
+各段階でコードrevision、run manifest、config、metrics、checkpoint、固定21動画の評価・PLY、
+匿名化metrics、実施量と判断を残す。bash内で実機のパスを指定可能にし、GPU実行時は既存の
+dualtrack311/CUDA_HOME/TORCH_CUDA_ARCH_LIST/LD_LIBRARY_PATH設定を踏襲する。
+元H5・旧run・旧評価を上書きせず、`.tmp/`や生データ・重みをコミットしない。
+
+進捗・採否は本管理記録、数値と検証は評価レポートの新しいS5-15節、実装配置は`FILES.md`へ記録する。
+S5-14の転記上の留保は生成CSVとの文書照合として処理し、新たなGPU診断や補足段階へ戻さない。
 
 ## 7. Decision record
 

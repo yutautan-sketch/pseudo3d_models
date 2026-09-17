@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -12,6 +13,13 @@ from stage5.utils.feature_normalization import (
     normalize_pixel_xy,
     normalize_uint8_feature,
     normalize_xyz,
+)
+from stage5.utils.rotation_augmentation import (
+    DEFAULT_MAX_ABS_DEGREES,
+    MODE_NONE,
+    AugmentationConfig,
+    rotate_video_points,
+    stable_video_id_from_path,
 )
 from stage5.utils.h5_io import load_stage5_pointcloud_h5, read_path_list
 from stage5.utils.label_policy import DEFAULT_LABEL_POLICY, apply_bbox_noncontour_label_policy
@@ -90,6 +98,9 @@ class Pseudo3DPointCloudDataset(Dataset):
         seed: int | None = None,
         cache_data: bool = False,
         label_policy: str = DEFAULT_LABEL_POLICY,
+        augmentation_mode: str = MODE_NONE,
+        augmentation_rotation_degrees: float = DEFAULT_MAX_ABS_DEGREES,
+        augmentation_seed: int | None = None,
     ) -> None:
         self.h5_paths = _coerce_paths(h5_paths)
         if not self.h5_paths:
@@ -115,8 +126,89 @@ class Pseudo3DPointCloudDataset(Dataset):
         self.seed = seed
         self.cache_data = bool(cache_data)
         self.label_policy = str(label_policy)
+
+        self.augmentation = self._resolve_augmentation(
+            mode=augmentation_mode,
+            rotation_degrees=augmentation_rotation_degrees,
+            augmentation_seed=augmentation_seed,
+        )
+        if self.augmentation.enabled and not self.normalize_points:
+            raise ValueError(
+                f"augmentation_mode={self.augmentation.mode!r} rotates about the origin, which is the video "
+                "centroid only after normalize_xyz(). It cannot be combined with normalize_points=False."
+            )
+        self._video_ids = self._build_video_ids()
+        # Shared memory rather than a plain attribute: DataLoader workers get
+        # their own copy of this dataset, so with persistent_workers=True a
+        # later set_epoch() in the parent would never reach an already-forked
+        # worker. __getitem__ re-reads this value on every call instead.
+        # lock=False is deliberate: a lock-carrying Value cannot cross into a
+        # spawn-context worker ("a SemLock created in a fork context..."),
+        # while a lock-free one works under both start methods. Nothing here
+        # needs the lock -- only the parent writes, between epochs, and a
+        # single aligned C int is read and written whole.
+        self._epoch_shared = multiprocessing.Value("i", 0, lock=False)
+
         self._cache: dict[int, dict[str, Any]] = {}
         self.samples = self._build_sample_index()
+
+    def _resolve_augmentation(
+        self,
+        *,
+        mode: str,
+        rotation_degrees: float,
+        augmentation_seed: int | None,
+    ) -> AugmentationConfig:
+        if augmentation_seed is None and self.seed is None:
+            if mode != MODE_NONE:
+                raise ValueError(
+                    f"augmentation_mode={mode!r} needs a base seed: pass augmentation_seed explicitly, "
+                    "or give the dataset a seed to derive it from."
+                )
+            return AugmentationConfig(mode=MODE_NONE, max_abs_degrees=rotation_degrees)
+        return AugmentationConfig.resolve(
+            mode=mode,
+            train_seed=int(self.seed) if self.seed is not None else 0,
+            augmentation_seed=augmentation_seed,
+            max_abs_degrees=rotation_degrees,
+        )
+
+    def _build_video_ids(self) -> list[str]:
+        """File names used to derive per-video rotation angles.
+
+        Only built when augmentation is on: the duplicate-name rejection below
+        would otherwise change behavior for ordinary training runs, and two
+        videos sharing a file name would silently share an angle.
+        """
+        if not self.augmentation.enabled:
+            return []
+        video_ids = [stable_video_id_from_path(path) for path in self.h5_paths]
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for video_id in video_ids:
+            if video_id in seen:
+                duplicates.add(video_id)
+            seen.add(video_id)
+        if duplicates:
+            raise ValueError(
+                "Duplicate H5 file name(s) in this dataset's file list, which would give distinct videos the "
+                f"same augmentation angle: {sorted(duplicates)}"
+            )
+        return video_ids
+
+    def set_epoch(self, epoch: int) -> None:
+        """Publish the current epoch to every worker, including persistent ones."""
+        if isinstance(epoch, bool) or not isinstance(epoch, int):
+            raise TypeError(f"epoch must be an int, got {type(epoch).__name__}: {epoch!r}")
+        if epoch < 0:
+            raise ValueError(f"epoch must be non-negative, got {epoch}")
+        if epoch > 2**31 - 1:
+            raise ValueError(f"epoch must fit in a C int, got {epoch}")
+        self._epoch_shared.value = epoch
+
+    @property
+    def epoch(self) -> int:
+        return int(self._epoch_shared.value)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -279,6 +371,20 @@ class Pseudo3DPointCloudDataset(Dataset):
         if self.normalize_points:
             points = normalize_xyz(points)
 
+        # Rotate the whole video once, after normalization and before windows
+        # are cut, so every window of this video shares one angle this epoch
+        # and overlapping points keep their correspondence. astype/normalize/
+        # rotate each allocate, so the cached data["points"] is never touched
+        # and rotations cannot accumulate across epochs.
+        rotation_angle_degrees: float | None = None
+        if self.augmentation.enabled:
+            points, rotation_angle_degrees = rotate_video_points(
+                points,
+                config=self.augmentation,
+                video_id=self._video_ids[h5_index],
+                epoch=self.epoch,
+            )
+
         sampled_points = points[selected_indices]
         sampled_features = features[selected_indices]
         sampled_labels = labels[selected_indices]
@@ -300,5 +406,6 @@ class Pseudo3DPointCloudDataset(Dataset):
                 "window_id": window_id,
                 "num_source_points": int(points.shape[0]),
                 "sampled_indices": torch.from_numpy(selected_indices.astype(np.int64)).long(),
+                "rotation_angle_degrees": rotation_angle_degrees,
             },
         }

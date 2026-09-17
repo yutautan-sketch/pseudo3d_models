@@ -74,6 +74,45 @@ MAX_TRAIN_FILES=0
 VAL_FRACTION=0.1
 MAX_VAL_FILES=0
 
+# Fixed-list mode (S5-15). Set BOTH to reuse saved train/val file lists exactly
+# as they are, instead of scanning INPUT_DIR and re-splitting it by
+# VAL_FRACTION/SEED. Leaving both empty keeps the historical directory mode
+# unchanged. Setting only one is an error: there is deliberately no fallback to
+# directory splitting, because a silently different split is exactly what this
+# mode exists to prevent.
+TRAIN_LIST="${TRAIN_LIST:-}"
+VAL_LIST="${VAL_LIST:-}"
+
+# Emits the train_stage5.py arguments selecting the input source, one per line.
+# Kept as a function so checks/dummy/check_dummy_fixed_list_mode.sh can extract
+# and exercise it without running any training.
+input_source_args() {
+  local train_list="$1"
+  local val_list="$2"
+  local input_dir="$3"
+  local val_fraction="$4"
+  local max_train_files="$5"
+  local max_val_files="$6"
+
+  if [[ -n "${train_list}" || -n "${val_list}" ]]; then
+    if [[ -z "${train_list}" || -z "${val_list}" ]]; then
+      echo "TRAIN_LIST and VAL_LIST must be set together for fixed-list mode (no directory-split fallback)." >&2
+      return 1
+    fi
+    # --train_dir is deliberately absent: train_stage5.py rejects both at once,
+    # and passing neither --val_dir nor --val_fraction means the seed-based
+    # re-split is never reached. Truncation is disabled so the lists are used
+    # whole, in their own order.
+    printf '%s\n' --train_list "${train_list}" --val_list "${val_list}" \
+      --max_train_files 0 --max_val_files 0
+    return 0
+  fi
+
+  printf '%s\n' --train_dir "${input_dir}" --val_fraction "${val_fraction}" \
+    --max_train_files "${max_train_files}" --max_val_files "${max_val_files}"
+  return 0
+}
+
 # ------------------------------------------------------------
 # output path info
 # ------------------------------------------------------------
@@ -167,6 +206,15 @@ POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
 # "bbox_noncontour_background" for the Run B label-policy pilot.
 LABEL_POLICY="${LABEL_POLICY:-bbox_noncontour_ignore}"
 
+# Training-only input augmentation (S5-15). "none" is the production default.
+# "random_z_rotation" rotates each training video about its centroid by one
+# angle per epoch; validation, train-sanity evaluation and inference are never
+# augmented. AUGMENTATION_SEED is optional: left empty, train_stage5.py derives
+# it as SEED + 500000 and records the resolved value in config.json.
+AUGMENTATION="${AUGMENTATION:-none}"
+AUGMENTATION_ROTATION_DEGREES="${AUGMENTATION_ROTATION_DEGREES:-15.0}"
+AUGMENTATION_SEED="${AUGMENTATION_SEED:-}"
+
 # Sampling knobs.
 # In WINDOW_MODE="overlap", each frame-order window is one training sample and
 # NUM_POINTS/SAMPLING_MODE are kept only for legacy non-window runs.
@@ -203,26 +251,46 @@ if [[ "${ALLOW_EXISTING_OUTPUT_DIR}" != "0" && "${ALLOW_EXISTING_OUTPUT_DIR}" !=
   exit 1
 fi
 
-if [[ ! -d "${INPUT_DIR}" ]]; then
-  echo "Input directory not found: ${INPUT_DIR}" >&2
-  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v7_crop_quality.sh first, or set INPUT_DIR." >&2
-  exit 1
-fi
+LIST_MANIFEST=""
+if [[ -n "${TRAIN_LIST}" || -n "${VAL_LIST}" ]]; then
+  # Fixed-list mode: the teacher preflight below must inspect exactly the files
+  # that will be trained on, so INPUT_DIR is never scanned here. Adding or
+  # removing files in INPUT_DIR therefore cannot change this run's inputs.
+  if [[ -z "${TRAIN_LIST}" || -z "${VAL_LIST}" ]]; then
+    echo "TRAIN_LIST and VAL_LIST must be set together for fixed-list mode (no directory-split fallback)." >&2
+    exit 1
+  fi
+  LIST_MANIFEST="$(mktemp "${TMPDIR:-/tmp}/stage5_fixed_list_manifest.XXXXXX")"
+  trap 'rm -f "${LIST_MANIFEST}"' EXIT
+  "${PYTHON}" "${SCRIPT_DIR}/stage5/utils/file_list_mode.py" \
+    --train_list "${TRAIN_LIST}" \
+    --val_list "${VAL_LIST}" \
+    --h5_pattern "${H5_PATTERN}" \
+    --expected_total "${EXPECTED_INPUT_FILES}" \
+    --manifest_out "${LIST_MANIFEST}"
+  num_inputs="$(grep -c . "${LIST_MANIFEST}" | tr -d ' ')"
+else
+  if [[ ! -d "${INPUT_DIR}" ]]; then
+    echo "Input directory not found: ${INPUT_DIR}" >&2
+    echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v7_crop_quality.sh first, or set INPUT_DIR." >&2
+    exit 1
+  fi
 
-num_inputs="$(find "${INPUT_DIR}" -maxdepth 1 -type f -name "${H5_PATTERN}" | wc -l | tr -d ' ')"
-if [[ "${num_inputs}" -eq 0 ]]; then
-  echo "No input H5 files matched:" >&2
-  echo "  INPUT_DIR=${INPUT_DIR}" >&2
-  echo "  H5_PATTERN=${H5_PATTERN}" >&2
-  exit 1
-fi
-if [[ "${num_inputs}" -ne "${EXPECTED_INPUT_FILES}" ]]; then
-  echo "Stage 5 requires the complete ${DATE} teacher v7 dataset:" >&2
-  echo "  expected files=${EXPECTED_INPUT_FILES}" >&2
-  echo "  matched files=${num_inputs}" >&2
-  echo "  INPUT_DIR=${INPUT_DIR}" >&2
-  echo "  H5_PATTERN=${H5_PATTERN}" >&2
-  exit 1
+  num_inputs="$(find "${INPUT_DIR}" -maxdepth 1 -type f -name "${H5_PATTERN}" | wc -l | tr -d ' ')"
+  if [[ "${num_inputs}" -eq 0 ]]; then
+    echo "No input H5 files matched:" >&2
+    echo "  INPUT_DIR=${INPUT_DIR}" >&2
+    echo "  H5_PATTERN=${H5_PATTERN}" >&2
+    exit 1
+  fi
+  if [[ "${num_inputs}" -ne "${EXPECTED_INPUT_FILES}" ]]; then
+    echo "Stage 5 requires the complete ${DATE} teacher v7 dataset:" >&2
+    echo "  expected files=${EXPECTED_INPUT_FILES}" >&2
+    echo "  matched files=${num_inputs}" >&2
+    echo "  INPUT_DIR=${INPUT_DIR}" >&2
+    echo "  H5_PATTERN=${H5_PATTERN}" >&2
+    exit 1
+  fi
 fi
 
 "${PYTHON}" - \
@@ -241,7 +309,8 @@ fi
   "${EXPECTED_CROP_REMOVED_POSITIVE_POINTS}" \
   "${EXPECTED_CROP_REMOVED_IGNORE_POINTS}" \
   "${EXPECTED_CROP_REMOVED_BBOX_ROWS}" \
-  "${EXPECTED_EXCLUDED_VIDEOS}" <<'PY'
+  "${EXPECTED_EXCLUDED_VIDEOS}" \
+  "${LIST_MANIFEST}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -266,7 +335,17 @@ expected_crop_removed_bbox_rows = int(sys.argv[15])
 expected_excluded_videos = {
     value.strip() for value in sys.argv[16].split(",") if value.strip()
 }
-paths = sorted(input_dir.glob(pattern))
+list_manifest = sys.argv[17] if len(sys.argv) > 17 else ""
+if list_manifest:
+    # Fixed-list mode: inspect the listed files themselves, so the preflight and
+    # the training run can never look at different file sets.
+    paths = [
+        Path(line.strip())
+        for line in Path(list_manifest).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+else:
+    paths = sorted(input_dir.glob(pattern))
 if len(paths) != expected:
     raise SystemExit(f"H5 preflight count mismatch: {len(paths)} != {expected}")
 
@@ -535,7 +614,14 @@ PY
 
 if [[ "${PREFLIGHT_ONLY}" == "1" ]]; then
   echo "Stage 5 teacher v7 input preflight-only run complete; training was not started."
-  echo "  input dir     : ${INPUT_DIR}"
+  if [[ -n "${LIST_MANIFEST}" ]]; then
+    echo "  input source  : fixed lists (INPUT_DIR not scanned)"
+    echo "  train list    : ${TRAIN_LIST}"
+    echo "  val list      : ${VAL_LIST}"
+  else
+    echo "  input source  : directory scan"
+    echo "  input dir     : ${INPUT_DIR}"
+  fi
   echo "  h5 pattern    : ${H5_PATTERN}"
   echo "  matched files : ${num_inputs}"
   echo "  teacher       : ${STAGE4_TEACHER}"
@@ -552,10 +638,18 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 
 echo "Stage5 padding-free training"
-echo "  input dir      : ${INPUT_DIR}"
+if [[ -n "${LIST_MANIFEST}" ]]; then
+  echo "  input source   : fixed lists (INPUT_DIR not scanned, no fraction re-split)"
+  echo "  train list     : ${TRAIN_LIST}"
+  echo "  val list       : ${VAL_LIST}"
+else
+  echo "  input source   : directory scan + val_fraction=${VAL_FRACTION}"
+  echo "  input dir      : ${INPUT_DIR}"
+fi
 echo "  h5 pattern     : ${H5_PATTERN}"
 echo "  matched files  : ${num_inputs}"
 echo "  teacher        : ${STAGE4_TEACHER}"
+echo "  augmentation   : ${AUGMENTATION} (train only; eval/inference never augmented)"
 echo "  label policy   : CVAT-reviewed=authoritative; unreviewed=inherited; XML/crop-invalidated=background"
 echo "  output dir     : ${OUTPUT_DIR}"
 echo "  model          : ${MODEL_NAME}"
@@ -583,9 +677,14 @@ if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
   echo "  label_policy   : ${LABEL_POLICY}"
 fi
 
+input_source_output="$(input_source_args \
+  "${TRAIN_LIST}" "${VAL_LIST}" "${INPUT_DIR}" \
+  "${VAL_FRACTION}" "${MAX_TRAIN_FILES}" "${MAX_VAL_FILES}")" || exit 1
+mapfile -t INPUT_SOURCE_ARGS <<< "${input_source_output}"
+
 cmd=(
   "${PYTHON}" "${SCRIPT_DIR}/train_stage5.py"
-  --train_dir "${INPUT_DIR}"
+  "${INPUT_SOURCE_ARGS[@]}"
   --h5_pattern "${H5_PATTERN}"
   --output_dir "${OUTPUT_DIR}"
   --model "${MODEL_NAME}"
@@ -616,9 +715,8 @@ cmd=(
   --window_size_frames "${WINDOW_SIZE_FRAMES}"
   --window_stride_frames "${WINDOW_STRIDE_FRAMES}"
   --positive_oversample_ratio "${POSITIVE_OVERSAMPLE_RATIO}"
-  --val_fraction "${VAL_FRACTION}"
-  --max_train_files "${MAX_TRAIN_FILES}"
-  --max_val_files "${MAX_VAL_FILES}"
+  --augmentation "${AUGMENTATION}"
+  --augmentation_rotation_degrees "${AUGMENTATION_ROTATION_DEGREES}"
   --auto_class_weight_epsilon "${AUTO_CLASS_WEIGHT_EPSILON}"
   --label_smoothing "${LABEL_SMOOTHING}"
 )
@@ -657,6 +755,10 @@ fi
 
 if [[ "${NORMALIZE_AUTO_CLASS_WEIGHT}" != "1" ]]; then
   cmd+=(--no_normalize_auto_class_weight)
+fi
+
+if [[ -n "${AUGMENTATION_SEED}" ]]; then
+  cmd+=(--augmentation_seed "${AUGMENTATION_SEED}")
 fi
 
 "${cmd[@]}"

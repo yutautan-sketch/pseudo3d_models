@@ -24,6 +24,12 @@ from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
 from stage5.training import SegmentationMetricAccumulator, build_loss
 from stage5.utils.h5_io import load_stage5_pointcloud_h5
 from stage5.utils.label_policy import DEFAULT_LABEL_POLICY, SUPPORTED_LABEL_POLICIES, summarize_label_policy_for_arrays
+from stage5.utils.rotation_augmentation import (
+    DEFAULT_MAX_ABS_DEGREES,
+    MODE_NONE,
+    SUPPORTED_AUGMENTATION_MODES,
+    AugmentationConfig,
+)
 
 
 def parse_feature_list(value: str) -> tuple[str, ...]:
@@ -343,6 +349,7 @@ def make_dataset(
     args: argparse.Namespace,
     seed: int,
     cache_data: bool,
+    augmentation_mode: str = MODE_NONE,
 ) -> Pseudo3DPointCloudDataset:
     num_points = None if args.window_mode == "overlap" else args.num_points
     return Pseudo3DPointCloudDataset(
@@ -361,6 +368,9 @@ def make_dataset(
         seed=seed,
         cache_data=cache_data,
         label_policy=args.label_policy,
+        augmentation_mode=augmentation_mode,
+        augmentation_rotation_degrees=args.augmentation_rotation_degrees,
+        augmentation_seed=args.augmentation_seed,
     )
 
 
@@ -722,12 +732,17 @@ def build_config(
     *,
     feature_dim: int,
     class_weight_info: dict[str, Any],
+    augmentation: AugmentationConfig,
 ) -> dict[str, Any]:
     config = vars(args).copy()
     config["feature_names"] = parse_feature_list(args.features)
     config["feature_dim"] = int(feature_dim)
     config["class_weight"] = class_weight_info["resolved"]
     config["class_weight_info"] = class_weight_info
+    # The resolved augmentation, not the raw CLI values: --augmentation_seed may
+    # be None on the command line but the run must record the concrete seed it
+    # actually used, plus how that seed was obtained.
+    config["augmentation_info"] = augmentation.to_config_dict()
     return make_jsonable(config)
 
 
@@ -830,9 +845,12 @@ def train(args: argparse.Namespace) -> None:
         args=args,
         seed=args.seed,
         cache_data=args.cache_data,
+        augmentation_mode=args.augmentation,
     )
     val_dataset = None
     if val_paths:
+        # augmentation_mode is deliberately not forwarded: validation and
+        # train-sanity evaluation are always unaugmented (S5-15 P2 contract).
         val_dataset = make_dataset(
             val_paths,
             args=args,
@@ -878,7 +896,12 @@ def train(args: argparse.Namespace) -> None:
                     writer.writerow({"split": "val", **row})
 
     feature_dim = train_dataset.num_feature_channels
-    config = build_config(args, feature_dim=feature_dim, class_weight_info=class_weight_info)
+    config = build_config(
+        args,
+        feature_dim=feature_dim,
+        class_weight_info=class_weight_info,
+        augmentation=train_dataset.augmentation,
+    )
     config["num_train_files"] = len(train_paths)
     config["num_val_files"] = len(val_paths)
     config["num_train_samples"] = len(train_dataset)
@@ -940,6 +963,16 @@ def train(args: argparse.Namespace) -> None:
         print(f"val samples: {len(val_dataset)}")
     print(f"feature_dim: {feature_dim}")
     print(f"label_policy: {args.label_policy}")
+    augmentation_info = train_dataset.augmentation
+    print(
+        f"augmentation (train only): {augmentation_info.mode}"
+        + (
+            f" +-{augmentation_info.max_abs_degrees} deg, base_seed={augmentation_info.base_seed} "
+            f"({augmentation_info.seed_source})"
+            if augmentation_info.enabled
+            else ""
+        )
+    )
     train_converted = train_label_policy_diagnostics["totals"].get("converted_point_count", 0)
     print(f"label_policy train converted points (-1 -> 0): {train_converted}")
     if val_label_policy_diagnostics is not None:
@@ -963,6 +996,10 @@ def train(args: argparse.Namespace) -> None:
         )
 
     for epoch in range(1, args.epochs + 1):
+        # Publish the epoch before the loader spawns/reuses workers for it, so
+        # augmentation angles advance even with persistent workers. The
+        # validation dataset is never augmented and needs no epoch.
+        train_dataset.set_epoch(epoch)
         train_loss, train_metrics = run_one_epoch(
             model=model,
             loader=train_loader,
@@ -1118,6 +1155,29 @@ def parse_args() -> argparse.Namespace:
             "'bbox_noncontour_background' converts audited BBox non-contour "
             "ignore points to background."
         ),
+    )
+    parser.add_argument(
+        "--augmentation",
+        choices=sorted(SUPPORTED_AUGMENTATION_MODES),
+        default=MODE_NONE,
+        help=(
+            "Training-only input augmentation (S5-15). 'none' is the default and the production "
+            "setting. 'random_z_rotation' rotates each training video about its centroid by one "
+            "angle per epoch; validation, train-sanity evaluation and inference are never augmented."
+        ),
+    )
+    parser.add_argument(
+        "--augmentation_rotation_degrees",
+        type=float,
+        default=DEFAULT_MAX_ABS_DEGREES,
+        help="Half-width of the uniform Z-rotation range in degrees (S5-15 uses 15.0)",
+    )
+    parser.add_argument(
+        "--augmentation_seed",
+        type=int,
+        default=None,
+        help="Base seed for augmentation angles. Unset derives it as --seed + 500000, kept "
+        "separate from the shuffling and model-init streams.",
     )
     parser.add_argument("--window_mode", default="none", choices=["none", "overlap"])
     parser.add_argument("--window_size_frames", type=int, default=12)
