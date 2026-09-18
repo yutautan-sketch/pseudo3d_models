@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="/mnt/data/3d_projects/models/Stage5"
 cd "${SCRIPT_DIR}"
 
-PYTHON="/home/kodaira/anaconda3/envs/dualtrack311/bin/python"
+PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
 
 if [[ -z "${CONDA_PREFIX:-}" ]]; then
   CONDA_PREFIX="$(dirname "$(dirname "${PYTHON}")")"
@@ -169,11 +169,16 @@ NUM_POINTS=0
 # starts from weak labels and smaller batches, so keep 1e-3 for the smoke run.
 LR=1e-3
 WEIGHT_DECAY=1e-4
-NUM_WORKERS=4
-DEVICE="cuda"
-SEED=42
-GRAD_CLIP_NORM=10
-SAVE_EVERY=10
+# These four accept an environment override like the knobs above. They used to
+# be plain assignments, which silently discarded whatever a caller exported:
+# an S5-15 arm passed SAVE_EVERY=1 and still got the default 10, so no
+# per-epoch checkpoint was ever written. The defaults are unchanged, so
+# ordinary use of this script behaves exactly as before.
+NUM_WORKERS="${NUM_WORKERS:-4}"
+DEVICE="${DEVICE:-cuda}"
+SEED="${SEED:-42}"
+GRAD_CLIP_NORM="${GRAD_CLIP_NORM:-10}"
+SAVE_EVERY="${SAVE_EVERY:-10}"
 
 # Lightweight baseline size.
 # For MODEL_NAME="pointnext_s", WIDTH/EXPANSION/DROPOUT are used by the

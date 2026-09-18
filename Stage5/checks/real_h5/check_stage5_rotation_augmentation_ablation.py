@@ -49,6 +49,31 @@ STATUS_UNKNOWN = "UNKNOWN"
 INTENDED_DIFFERENCE_KEYS = ("output_dir", "augmentation", "augmentation_info")
 
 EVALUATED_SPLITS = ("train_sanity", "validation")
+
+# Launch manifests record what the launcher *intended* to pass; config.json
+# records what train_stage5.py actually used. The S5-15 P3 runs showed the two
+# can disagree silently (an exported SAVE_EVERY=1 was overwritten by a plain
+# assignment in train_stage5.sh, so config.json held 10), which is invisible
+# unless the two are compared. A mismatch in a setting that changes training or
+# comparability is fatal; one that only changes which artifacts get written is
+# for a human to weigh.
+MANIFEST_SETTING_TO_CONFIG_KEY = {
+    "augmentation": "augmentation",
+    "augmentation_rotation_degrees": "augmentation_rotation_degrees",
+    "seed": "seed",
+    "epochs": "epochs",
+    "pointnext_norm": "pointnext_norm",
+    "pointnext_norm_groups": "pointnext_norm_groups",
+    "save_every": "save_every",
+}
+COMPARABILITY_CRITICAL_SETTINGS = (
+    "augmentation",
+    "augmentation_rotation_degrees",
+    "seed",
+    "epochs",
+    "pointnext_norm",
+    "pointnext_norm_groups",
+)
 PER_VIDEO_DIFF_METRICS = ("f1", "iou_femur", "precision", "recall", "false_positive_rate")
 
 TIMESTAMP_VIDEO_ID_PATTERN = re.compile(r"[0-9]{8}_[0-9]{6}_[0-9]+")
@@ -91,14 +116,24 @@ def parse_optional_float(value: str | None) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
-def read_h5_metrics_csv(path: Path) -> dict[tuple[str, str], dict[str, str]]:
+def read_h5_metrics_csv(paths: str | Path) -> dict[tuple[str, str], dict[str, str]]:
+    """Read one or more h5_metrics CSVs, keyed by (split, video_name).
+
+    Accepts a comma-separated list because the anonymized export splits its
+    metrics into one CSV per split (train_sanity_h5_metrics.csv and
+    validation_h5_metrics.csv) rather than a single combined file.
+    """
+    entries = [Path(part.strip()) for part in str(paths).split(",") if part.strip()]
+    if not entries:
+        raise ValueError("no metrics CSV given")
     rows: dict[tuple[str, str], dict[str, str]] = {}
-    with path.open("r", encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            key = (row["split"], row["video_name"])
-            if key in rows:
-                raise ValueError(f"duplicate (split, video_name) in {path.name}: {key}")
-            rows[key] = row
+    for path in entries:
+        with path.open("r", encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                key = (row["split"], row["video_name"])
+                if key in rows:
+                    raise ValueError(f"duplicate (split, video_name) across {len(entries)} CSV(s): {key}")
+                rows[key] = row
     return rows
 
 
@@ -184,6 +219,74 @@ def check_augmentation_settings(
         f"R1 base_seed={base_seed!r} seed_source={info_r1.get('seed_source')!r}",
     )
     return {"r0_mode": mode_r0, "r1_mode": mode_r1, "r1_augmentation_info": info_r1}
+
+
+def check_manifest_against_config(
+    manifest_path: Path,
+    config: dict[str, Any],
+    *,
+    arm: str,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare what the launcher intended to pass with what the run used."""
+    manifest = load_json(manifest_path)
+    settings = manifest.get("settings") or {}
+    report: dict[str, Any] = {
+        "manifest": manifest_path.name,
+        "git_head": (manifest.get("git") or {}).get("head"),
+        "worktree_clean": (manifest.get("git") or {}).get("worktree_clean"),
+        "mismatches": [],
+    }
+
+    clean = report["worktree_clean"]
+    record(
+        results,
+        f"{arm}.manifest.worktree_clean",
+        STATUS_PASS if clean is True else (STATUS_UNKNOWN if clean is None else STATUS_JUDGE),
+        (
+            f"launched from a clean tree at {report['git_head']}"
+            if clean is True
+            else "working-tree state was unavailable at launch; not recorded as clean"
+            if clean is None
+            else f"launched with non-ignored changes present at {report['git_head']}"
+        ),
+    )
+
+    for setting_key, config_key in MANIFEST_SETTING_TO_CONFIG_KEY.items():
+        if setting_key not in settings or config_key not in config:
+            continue
+        intended, effective = settings[setting_key], config[config_key]
+        if isinstance(intended, str) and isinstance(effective, (int, float)):
+            try:
+                intended = type(effective)(intended)
+            except (TypeError, ValueError):
+                pass
+        if intended == effective:
+            continue
+        critical = setting_key in COMPARABILITY_CRITICAL_SETTINGS
+        report["mismatches"].append(
+            {"setting": setting_key, "intended": settings[setting_key], "effective": effective, "critical": critical}
+        )
+        record(
+            results,
+            f"{arm}.manifest.{setting_key}",
+            STATUS_FAIL if critical else STATUS_JUDGE,
+            f"launcher intended {settings[setting_key]!r} but the run used {effective!r}"
+            + (
+                " -- this setting changes training or comparability"
+                if critical
+                else " -- affects which artifacts were written, not the comparison itself"
+            ),
+        )
+
+    if not report["mismatches"]:
+        record(
+            results,
+            f"{arm}.manifest.settings_match_config",
+            STATUS_PASS,
+            f"all {len(MANIFEST_SETTING_TO_CONFIG_KEY)} compared settings reached the run unchanged",
+        )
+    return report
 
 
 def check_init_checkpoint(
@@ -591,6 +694,7 @@ def build_shareable_summary(private_summary: dict[str, Any]) -> dict[str, Any]:
             "counts",
             "results",
             "augmentation",
+            "manifest_vs_config",
             "history",
             "checkpoint_inventory",
             "split_pooled_comparison",
@@ -619,8 +723,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected_rotation_degrees", type=float, default=15.0)
     parser.add_argument("--expected_init_sha256", default=None)
     parser.add_argument("--reference_run_dir", default=None, help="Run dir whose saved lists are the reference")
-    parser.add_argument("--eval_csv_r0", default=None, help="R0 evaluate_stage5.py h5_metrics.csv")
-    parser.add_argument("--eval_csv_r1", default=None, help="R1 evaluate_stage5.py h5_metrics.csv")
+    parser.add_argument("--manifest_r0", default=None, help="R0 launch manifest, compared against its config.json")
+    parser.add_argument("--manifest_r1", default=None, help="R1 launch manifest, compared against its config.json")
+    parser.add_argument(
+        "--eval_csv_r0",
+        default=None,
+        help="R0 h5_metrics CSV; comma-separate several (the anonymized export writes one per split)",
+    )
+    parser.add_argument("--eval_csv_r1", default=None, help="R1 h5_metrics CSV(s), same format as --eval_csv_r0")
     parser.add_argument(
         "--marginal_threshold",
         type=float,
@@ -660,6 +770,19 @@ def main() -> None:
     init_checkpoint = check_init_checkpoint(
         config_r0, config_r1, expected_sha256=args.expected_init_sha256, results=results
     )
+    manifest_reports: dict[str, Any] = {}
+    for arm, manifest_arg, config in (("r0", args.manifest_r0, config_r0), ("r1", args.manifest_r1, config_r1)):
+        if manifest_arg:
+            manifest_reports[arm] = check_manifest_against_config(
+                Path(manifest_arg), config, arm=arm, results=results
+            )
+        else:
+            record(
+                results,
+                f"{arm}.manifest.settings_match_config",
+                STATUS_UNKNOWN,
+                "launch manifest not supplied; intended-vs-effective settings were not compared",
+            )
     file_lists = check_file_lists(
         run_dir_r0,
         run_dir_r1,
@@ -678,8 +801,8 @@ def main() -> None:
     per_video_rows: list[dict[str, Any]] = []
     selection: dict[str, Any] = {}
     if args.eval_csv_r0 and args.eval_csv_r1:
-        rows_r0 = read_h5_metrics_csv(Path(args.eval_csv_r0))
-        rows_r1 = read_h5_metrics_csv(Path(args.eval_csv_r1))
+        rows_r0 = read_h5_metrics_csv(args.eval_csv_r0)
+        rows_r1 = read_h5_metrics_csv(args.eval_csv_r1)
         only_r0 = sorted(set(rows_r0) - set(rows_r1))
         only_r1 = sorted(set(rows_r1) - set(rows_r0))
         record(
@@ -716,6 +839,7 @@ def main() -> None:
         "r0_dir": str(run_dir_r0),
         "r1_dir": str(run_dir_r1),
         "augmentation": augmentation,
+        "manifest_vs_config": manifest_reports,
         "init_checkpoint": init_checkpoint,
         "file_lists": file_lists,
         "history": history,

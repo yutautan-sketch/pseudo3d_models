@@ -21,6 +21,7 @@ from check_stage5_rotation_augmentation_ablation import (  # noqa: E402
     STATUS_UNKNOWN,
     build_shareable_summary,
     check_augmentation_settings,
+    check_manifest_against_config,
     check_checkpoints,
     check_file_lists,
     compare_configs,
@@ -450,6 +451,114 @@ def test_shareable_summary_strips_paths_and_passes_the_privacy_check() -> None:
     print("  ok: shareable output drops run paths and video identifiers, and passes both privacy patterns")
 
 
+def write_manifest(path: Path, **settings: Any) -> Path:
+    payload = {
+        "arm": "r0",
+        "mode": "training",
+        "git": {"head": "646cb52b3507e174c996c11d6889d6d0f549dfe5", "worktree_clean": True},
+        "settings": {
+            "augmentation": "none",
+            "augmentation_rotation_degrees": 15.0,
+            "seed": 42,
+            "epochs": 5,
+            "pointnext_norm": "groupnorm",
+            "pointnext_norm_groups": 8,
+            "save_every": 1,
+            **settings,
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
+def test_metrics_can_be_read_from_one_csv_per_split() -> None:
+    """The anonymized export writes train_sanity and validation metrics to
+    separate files, so the checker must accept several CSVs per arm."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        sanity = write_metrics_csv(root / "train_sanity.csv",
+            [metrics_row(split="train_sanity", index=i, tp=100, fp=50, tn=9000, fn=40) for i in range(3)])
+        validation = write_metrics_csv(root / "validation.csv",
+            [metrics_row(split="validation", index=1000 + i, tp=100, fp=60, tn=9000, fn=50) for i in range(18)])
+
+        combined = read_h5_metrics_csv(f"{sanity},{validation}")
+        assert len(combined) == 21
+        assert {k[0] for k in combined} == {"train_sanity", "validation"}
+        assert len(read_h5_metrics_csv(str(validation))) == 18
+
+        expect_duplicate = False
+        try:
+            read_h5_metrics_csv(f"{validation},{validation}")
+        except ValueError as error:
+            expect_duplicate = "duplicate" in str(error)
+        assert expect_duplicate, "the same CSV passed twice must be rejected, not silently merged"
+    print("  ok: one CSV per split is accepted, a single CSV still works, and a repeated file is rejected")
+
+
+def test_manifest_and_config_agreeing_passes() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = write_manifest(Path(tmp) / "m.json", save_every=10)
+        results: list[dict[str, Any]] = []
+        report = check_manifest_against_config(
+            manifest, base_config(save_every=10), arm="r0", results=results
+        )
+        assert report["mismatches"] == []
+        assert status_of(results, "r0.manifest.settings_match_config") == STATUS_PASS
+        assert status_of(results, "r0.manifest.worktree_clean") == STATUS_PASS
+    print("  ok: a manifest whose intended settings all reached the run passes")
+
+
+def test_the_real_save_every_discrepancy_is_reported_as_judge_not_fail() -> None:
+    """The actual S5-15 P3 case: the launcher exported SAVE_EVERY=1 but
+    train_stage5.sh overwrote it, so config.json recorded 10. It changes which
+    artifacts were written, not the comparison, so it is a judgment call."""
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = write_manifest(Path(tmp) / "m.json", save_every=1)
+        results: list[dict[str, Any]] = []
+        report = check_manifest_against_config(
+            manifest, base_config(save_every=10), arm="r0", results=results
+        )
+        assert len(report["mismatches"]) == 1
+        mismatch = report["mismatches"][0]
+        assert mismatch == {"setting": "save_every", "intended": 1, "effective": 10, "critical": False}
+        assert status_of(results, "r0.manifest.save_every") == STATUS_JUDGE
+        assert "not the comparison itself" in [r["detail"] for r in results if r["check"].endswith("save_every")][0]
+    print("  ok: the save_every intended=1 / effective=10 discrepancy is caught and rated JUDGE")
+
+
+def test_a_setting_that_changes_comparability_is_fatal() -> None:
+    for setting, effective in (("seed", 7), ("epochs", 3), ("augmentation", "random_z_rotation"),
+                               ("pointnext_norm", "batchnorm"), ("augmentation_rotation_degrees", 30.0)):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = write_manifest(Path(tmp) / "m.json")
+            results: list[dict[str, Any]] = []
+            report = check_manifest_against_config(
+                manifest, base_config(**{setting: effective}), arm="r0", results=results
+            )
+            assert any(m["setting"] == setting and m["critical"] for m in report["mismatches"]), setting
+            assert status_of(results, f"r0.manifest.{setting}") == STATUS_FAIL, setting
+    print("  ok: seed/epochs/augmentation/norm/rotation-range discrepancies are all FAIL")
+
+
+def test_a_dirty_or_unknown_worktree_at_launch_is_surfaced() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "m.json"
+        payload = json.loads(write_manifest(path).read_text())
+        payload["git"]["worktree_clean"] = False
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        results: list[dict[str, Any]] = []
+        check_manifest_against_config(path, base_config(save_every=1), arm="r1", results=results)
+        assert status_of(results, "r1.manifest.worktree_clean") == STATUS_JUDGE
+
+        payload["git"]["worktree_clean"] = None
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        unknown: list[dict[str, Any]] = []
+        check_manifest_against_config(path, base_config(save_every=1), arm="r1", results=unknown)
+        assert status_of(unknown, "r1.manifest.worktree_clean") == STATUS_UNKNOWN
+    print("  ok: a dirty tree at launch is JUDGE and an unreadable one is UNKNOWN, never silently PASS")
+
+
 def test_launcher_refuses_to_train_without_explicit_confirmation() -> None:
     """The launcher can start training, so it must not do so by default."""
     launcher = REPO_ROOT / "checks" / "real_h5" / "run_stage5_s5_15_arm.sh"
@@ -481,6 +590,11 @@ def main() -> None:
         test_trained_checkpoint_equality_is_not_required_but_identity_is_flagged,
         test_pooled_and_per_video_statistics_are_kept_separate,
         test_tp_zero_videos_are_counted_per_arm,
+        test_metrics_can_be_read_from_one_csv_per_split,
+        test_manifest_and_config_agreeing_passes,
+        test_the_real_save_every_discrepancy_is_reported_as_judge_not_fail,
+        test_a_setting_that_changes_comparability_is_fatal,
+        test_a_dirty_or_unknown_worktree_at_launch_is_surfaced,
         test_selection_criteria_never_emit_an_adoption_verdict,
         test_marginal_differences_are_annotated_not_silently_accepted,
         test_missing_split_data_is_unknown_rather_than_assumed,
