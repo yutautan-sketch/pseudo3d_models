@@ -1948,6 +1948,69 @@ recall diffのmean/median取り違え（正しい中央値は`rotate_z_plus`-4.5
 事前固定する依頼を別途作成する。現段階は学習開始未承認であり、W-A・production設定・長期学習の
 保留を維持する。完了判断の正本は`stage5_revision_management_record.md`6章およびD-034。
 
+### 9.9 S5-15: 回転augmentation単独5 epoch比較（P1〜P3、2026-09-19完了）
+
+固定条件はW-Aと同一（teacher v7、保存済みtrain162/val18、GroupNorm転移初期checkpoint
+SHA-256 `55ec6e6b...438b`、固定class weight `[0.05963856, 1.94036150]`、GroupNorm 8 groups、
+window16/stride8/tail、batch1/accumulation8、seed42、lr1e-3、weight_decay1e-4）。
+R0は`augmentation=none`、R1は`random_z_rotation`（±15度、解決済みbase_seed 500042）で、
+**両armの差はaugmentationのみ**。比較checkerがconfig parity・初期重みhash・file list一致
+（W-A保存済みリストとの全64桁一致を含む）をFAIL 0で確認した。
+
+評価は固定21動画（train sanity 3＋validation 18）のepoch5。両armとも`best.pt`と`last.pt`は
+**評価モデルとして同一**（state_dict 63キー完全一致）であったため、依頼書6.2に従い
+`last.pt`のみを評価した（42動画条件）。
+
+#### pooled（点数加重、合算TP/FP/TN/FNから導出）
+
+| split | 指標 | R0 | R1 | 差分 |
+| --- | --- | ---: | ---: | ---: |
+| validation | precision | 3.66% | 4.15% | +0.49pt |
+| validation | recall | 45.08% | 32.41% | **-12.67pt** |
+| validation | FPR | 12.53% | 7.91% | **-4.63pt** |
+| validation | F1 | 6.77% | 7.36% | +0.59pt |
+| validation | IoU | 3.51% | 3.82% | +0.32pt |
+| train sanity | recall | 70.30% | 60.92% | -9.38pt |
+| train sanity | FPR | 14.88% | 8.82% | -6.06pt |
+| train sanity | F1 | 12.64% | 16.94% | +4.30pt |
+
+ignore領域のpositive率（valid GT上のFPとは別集計）はvalidation 40.08%→28.62%、
+train sanity 66.94%→21.99%といずれもR1で低下した。
+
+#### 動画別（動画等重み）
+
+| split | 指標 | median-of-diffs | diff-of-medians |
+| --- | --- | ---: | ---: |
+| validation | F1 | **+0.03pt** | +1.04pt |
+| validation | recall | -6.17pt | **-24.25pt** |
+| validation | FPR | -4.54pt | -4.29pt |
+| train sanity | F1 | +1.66pt | +1.66pt |
+
+validationのF1は**改善9／悪化9**（同値0）で拮抗。TP0動画数はvalidation 1→0、train sanityは0→0。
+recallでmedian-of-diffsとdiff-of-mediansが大きく乖離しており、動画ごとのrecall変化が
+不均一であることを示す（S5-14補足3で分離した2統計の意義が再び現れた）。
+
+#### 判断
+
+事前選定基準の機械判定は、基準1 satisfied（ただしcheckerが`marginal`と付す+0.03pt）、
+基準2 satisfied、基準3 requires_judgment、基準4 satisfied、総合`requires_policy_chat_judgment`。
+**R0を維持しR1を採用しない**と判断した（管理記録参照）。単一seed・5 epochの暫定結果であり、
+F1約7%・IoU約3.5%という初期段階のモデル同士の比較であるため、50〜200 epochでの優劣を
+予測するものではない。validation18動画は既に多数の方式選択に使用済みで独立testではない。
+
+**PLY所見: 未実施。** 評価パイプラインはPLYを出力したが目視確認は行っていない。
+
+#### 実施量と保存仕様の逸脱
+
+学習はoptimizer更新900回（90/epoch×5×2 arm、予定値と一致）、forward/backward 3,575組/run。
+GPU preflightは4回（うちStage B 1回はpreflightスクリプトの実装不具合による失敗。学習コードとは
+無関係で、修正後の再実行1回で合格）。**学習runの失敗・再実行は0回。**
+
+`train_stage5.sh`が環境変数`SAVE_EVERY`を素の代入で上書きしていたため、意図`SAVE_EVERY=1`に対し
+実効`save_every=10`で動作し、**per-epoch checkpointが保存されなかった**。5 epoch分のmetricsは
+history.jsonに残るが中間epochの重みは復元不能である。主比較はepoch5の`last.pt`で成立するため
+再学習は行わず、逸脱として記録する。再発防止はcommit `cd3b886`。
+
 ## 10. 結論
 
 本章以下は初期調査の履歴要約を含む。2026-09-15時点のS5-14最終判断は9.8.5節を優先する。

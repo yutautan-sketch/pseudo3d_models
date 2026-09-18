@@ -27,6 +27,11 @@ EXPECTED_INIT_SHA256="${EXPECTED_INIT_SHA256:-55ec6e6bcb39d58f398719b33826e80715
 REFERENCE_RUN_DIR="${REFERENCE_RUN_DIR:-}"
 EVAL_CSV_R0="${EVAL_CSV_R0:-}"
 EVAL_CSV_R1="${EVAL_CSV_R1:-}"
+# Launch manifests. Supplying them compares what the launcher intended to pass
+# with what each run actually used; leaving them unset reports that comparison
+# as UNKNOWN rather than silently skipping it.
+MANIFEST_R0="${MANIFEST_R0:-}"
+MANIFEST_R1="${MANIFEST_R1:-}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SCRIPT_DIR}/work_dirs/_s5_15_rotation_ablation}"
 PRIVATE_JSON="${PRIVATE_JSON:-${OUTPUT_ROOT}/rotation_ablation_private.json}"
 SHAREABLE_JSON="${SHAREABLE_JSON:-${OUTPUT_ROOT}/rotation_ablation_shareable.json}"
@@ -54,6 +59,12 @@ if [[ -n "${EXPECTED_INIT_SHA256}" ]]; then
 fi
 if [[ -n "${REFERENCE_RUN_DIR}" ]]; then
   args+=(--reference_run_dir "${REFERENCE_RUN_DIR}")
+fi
+if [[ -n "${MANIFEST_R0}" ]]; then
+  args+=(--manifest_r0 "${MANIFEST_R0}")
+fi
+if [[ -n "${MANIFEST_R1}" ]]; then
+  args+=(--manifest_r1 "${MANIFEST_R1}")
 fi
 if [[ -n "${EVAL_CSV_R0}" && -n "${EVAL_CSV_R1}" ]]; then
   args+=(--eval_csv_r0 "${EVAL_CSV_R0}" --eval_csv_r1 "${EVAL_CSV_R1}")

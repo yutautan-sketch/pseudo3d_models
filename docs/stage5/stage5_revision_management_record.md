@@ -6,9 +6,9 @@
 | --- | --- |
 | 文書種別 | Stage 5の進捗・意思決定・改修履歴を管理する正本 |
 | 作成日 | 2026-09-10 |
-| 最終更新日 | 2026-09-15 |
+| 最終更新日 | 2026-09-19 |
 | 対象 | pseudo-3D point cloudからのpoint-wise大腿骨segmentation |
-| 現在の段階 | S5-14全体完了・コミット済み。S5-15の段階別方針を策定（2026-09-15）。まず回転augmentation単独5 epoch比較の実装・preflightへ進む計画。実装・学習は未着手。W-A・production設定を維持し、50〜200 epoch学習は段階判定後に別途承認 |
+| 現在の段階 | S5-15 P1〜P3完了（2026-09-19）。回転augmentation単独5 epoch比較の結果、**R0（augmentation=none）を維持しR1を採用しない**と判断。R1は比較履歴として保持。次はR0条件での新規50 epoch学習（承認済み、開始前にCPU突合が必要）。production設定は未変更 |
 | production readiness | 未到達。診断中 |
 
 本書は、Stage 5の目的、現在状態、過去の改修、検証結果、次の実施順を一か所から追えるように
@@ -1648,6 +1648,37 @@ dualtrack311/CUDA_HOME/TORCH_CUDA_ARCH_LIST/LD_LIBRARY_PATH設定を踏襲する
 
 進捗・採否は本管理記録、数値と検証は評価レポートの新しいS5-15節、実装配置は`FILES.md`へ記録する。
 S5-14の転記上の留保は生成CSVとの文書照合として処理し、新たなGPU診断や補足段階へ戻さない。
+
+#### S5-15 P1〜P3の結果と現在の状態（2026-09-19追記）
+
+P1（固定条件監査）・P2（実装・CPU検証・限定GPU preflight）・P3（R0/R1各5 epoch比較と
+固定21動画評価）を完了した。詳細な数値は評価レポート9.9節、経緯は
+`.tmp/stage5_s5_15_report_to_policy_chat.md`。
+
+**判断: R0を維持し、R1を今回は採用しない。** validation pooledでFPRが12.53%→7.91%へ下がる一方
+recallが45.08%→32.41%へ下がり、pooled F1は6.77%→7.36%、TP0は1→0と改善するものの、
+動画別F1は改善9/悪化9、paired差分中央値は約+0.03ptにとどまる。微差と大きな
+recall/FPトレードオフが残るため、事前方針どおりR0を維持する。
+「R1に効果がない」「回転augmentationが一般に無効」とは結論しない。FP削減効果は観測されており、
+threshold調整やStage6のFP許容基準が定まった段階では評価が変わりうる。
+今回の判断をthreshold調整で後から覆さず、production設定も変更しない。
+
+**保存仕様の逸脱（解消せず記録する）:** P3の両armは`train_stage5.sh`が環境変数`SAVE_EVERY`を
+素の代入で上書きしていたため、意図`SAVE_EVERY=1`に対し実効`save_every=10`で動作し、
+**per-epoch checkpointが1件も保存されなかった**。5 epoch分のmetricsはhistory.jsonに残るが、
+**中間epochの重みは復元不能**である。epoch5の`last.pt`と`best.pt`（評価モデルとして同一）は
+揃っており主比較は成立するため、欠落重みの再生成だけを目的とした再学習は行わない。
+既存のmanifest・config・重みを修正して当初から正しく保存されていたように見せない。
+
+再発防止として`train_stage5.sh`の`SAVE_EVERY`/`SEED`/`GRAD_CLIP_NORM`/`NUM_WORKERS`/`PYTHON`を
+環境変数上書き可能な形式へ変更し、launcherがexportする全変数が採用されることを検査する静的テストと、
+実行中のrunの**実効config**と定期保存の動作を早期に確認するCPU checkerを追加した（commit `cd3b886`）。
+静的テストはshellの解析であり、値がPythonへ届くことの実行時検証とは区別する。
+
+**次段階:** 同一のGroupNorm転移初期重みからR0条件で新規50 epochを1 run実行する（承認済み）。
+P3の`last.pt`からの継続ではなく、resume実装も行わない。開始前に保存済みmanifestと実効configの
+CPU突合を行う。確認は開始時・epoch25・epoch50へ集約し、50 epochで固定21動画評価とPLY確認を行う。
+100〜200 epoch延長・追加seed・R1長期比較・threshold tuning・production変更は未承認。
 
 ## 7. Decision record
 
