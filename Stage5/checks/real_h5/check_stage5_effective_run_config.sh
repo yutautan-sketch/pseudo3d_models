@@ -20,7 +20,11 @@ cd "${SCRIPT_DIR}"
 PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
 
 RUN_DIR="${RUN_DIR:?Set RUN_DIR to the train_stage5.py output_dir to inspect}"
-EXPECT_CHECKPOINT="${EXPECT_CHECKPOINT:-checkpoint_epoch_0005.pt}"
+# "-" rather than ":-": an explicitly empty EXPECT_CHECKPOINT must mean "skip the
+# checkpoint check", which is what a run inspected before its first periodic save
+# needs. With ":-" an empty value fell back to the default and reported a
+# missing checkpoint as a failure on a perfectly healthy run.
+EXPECT_CHECKPOINT="${EXPECT_CHECKPOINT-checkpoint_epoch_0005.pt}"
 EPOCHS="${EPOCHS:-50}"
 SAVE_EVERY="${SAVE_EVERY:-5}"
 AUGMENTATION="${AUGMENTATION:-none}"
