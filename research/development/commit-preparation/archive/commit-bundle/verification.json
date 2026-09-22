@@ -1,0 +1,304 @@
+{
+  "steps": [
+    {
+      "step": 1,
+      "python_ast": 0,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 2,
+      "python_ast": 0,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 3,
+      "python_ast": 0,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 4,
+      "python_ast": 0,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 5,
+      "python_ast": 2,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 6,
+      "python_ast": 3,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 7,
+      "python_ast": 5,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 8,
+      "python_ast": 6,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 9,
+      "python_ast": 9,
+      "bash_n": 0,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 10,
+      "python_ast": 11,
+      "bash_n": 2,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 11,
+      "python_ast": 13,
+      "bash_n": 3,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 12,
+      "python_ast": 15,
+      "bash_n": 4,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 13,
+      "python_ast": 15,
+      "bash_n": 5,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 14,
+      "python_ast": 17,
+      "bash_n": 5,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 15,
+      "python_ast": 19,
+      "bash_n": 8,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 16,
+      "python_ast": 21,
+      "bash_n": 9,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 17,
+      "python_ast": 24,
+      "bash_n": 9,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 18,
+      "python_ast": 24,
+      "bash_n": 10,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 19,
+      "python_ast": 27,
+      "bash_n": 11,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 20,
+      "python_ast": 29,
+      "bash_n": 12,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 21,
+      "python_ast": 30,
+      "bash_n": 14,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 22,
+      "python_ast": 32,
+      "bash_n": 15,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 23,
+      "python_ast": 34,
+      "bash_n": 16,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 24,
+      "python_ast": 36,
+      "bash_n": 16,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 25,
+      "python_ast": 38,
+      "bash_n": 17,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 26,
+      "python_ast": 39,
+      "bash_n": 19,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 27,
+      "python_ast": 39,
+      "bash_n": 19,
+      "python_heredocs": 0,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 28,
+      "python_ast": 40,
+      "bash_n": 20,
+      "python_heredocs": 1,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 29,
+      "python_ast": 41,
+      "bash_n": 21,
+      "python_heredocs": 2,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 30,
+      "python_ast": 42,
+      "bash_n": 21,
+      "python_heredocs": 2,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 31,
+      "python_ast": 44,
+      "bash_n": 21,
+      "python_heredocs": 2,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 32,
+      "python_ast": 44,
+      "bash_n": 25,
+      "python_heredocs": 6,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 33,
+      "python_ast": 45,
+      "bash_n": 26,
+      "python_heredocs": 7,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 34,
+      "python_ast": 46,
+      "bash_n": 27,
+      "python_heredocs": 8,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 35,
+      "python_ast": 47,
+      "bash_n": 28,
+      "python_heredocs": 9,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 36,
+      "python_ast": 55,
+      "bash_n": 31,
+      "python_heredocs": 12,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    },
+    {
+      "step": 37,
+      "python_ast": 55,
+      "bash_n": 31,
+      "python_heredocs": 12,
+      "patch_and_hashes": "pass",
+      "local_import_paths": "pass"
+    }
+  ],
+  "final_source_match": true,
+  "runtime_tests": "not run: missing dependencies/data/GPU",
+  "optional_environment_patch": "apply and hashes pass; installation not run",
+  "git_writes": false
+}

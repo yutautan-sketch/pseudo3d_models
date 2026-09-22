@@ -1,0 +1,26 @@
+{
+  "title": "chore: exclude local virtual environments and record CVAT dependencies",
+  "sha256": "573e7b86708532d95e37727b7c08c7afad05a36cd2b3a671bbebb1e1e0cb8e90",
+  "before": {
+    ".gitignore": {
+      "mode": "100644",
+      "sha256": "be14a6a48f4d18b53ef2945fdee2a54a9c9a843ef821b37d3a32896f412b22ab"
+    },
+    "requirements-cvat-review.txt": null,
+    "docs/development/cvat_environment.md": null
+  },
+  "after": {
+    ".gitignore": {
+      "mode": "100644",
+      "sha256": "a114d7462306456c45af65edc1b95b6335373db3e4166d7b6b6c6fe2866e336b"
+    },
+    "requirements-cvat-review.txt": {
+      "mode": "100644",
+      "sha256": "16ff2f835998d7a96da58066d18b2c23bbdff4c0477c57fec1824733b11d89d7"
+    },
+    "docs/development/cvat_environment.md": {
+      "mode": "100644",
+      "sha256": "1f8110a3fa221d72698f254568ca2392e297c5f3e34eb07bb7464bc77b4a4a4c"
+    }
+  }
+}

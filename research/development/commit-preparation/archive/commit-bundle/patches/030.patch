@@ -1,0 +1,37 @@
+diff --git a/Stage5/stage5/training/losses.py b/Stage5/stage5/training/losses.py
+index d8a58034f542113a988062b394909bb26b546c31..96477291968121fc590c195e81bdcfcb5bee6130
+--- a/Stage5/stage5/training/losses.py
++++ b/Stage5/stage5/training/losses.py
+@@ -111,6 +111,7 @@
+         valid_count = (flat_targets != self.ignore_index).sum()
+         if valid_count.item() == 0:
+             loss = flat_logits.sum() * 0.0
++            loss_normalizer = flat_logits.new_zeros(())
+         else:
+             weight = self.class_weight
+             if weight is not None:
+@@ -122,9 +123,19 @@
+                 ignore_index=self.ignore_index,
+                 label_smoothing=self.label_smoothing,
+             )
++            valid_targets = flat_targets[flat_targets != self.ignore_index]
++            if weight is None:
++                loss_normalizer = valid_count.to(dtype=flat_logits.dtype)
++            else:
++                # This matches CrossEntropyLoss mean reduction for hard targets.
++                loss_normalizer = weight[valid_targets].sum()
++
++        loss_sum = loss * loss_normalizer
+ 
+         return {
+             "loss": loss,
++            "loss_sum": loss_sum,
++            "loss_normalizer": loss_normalizer.detach(),
+             "ce_loss": loss.detach(),
+             "valid_point_count": valid_count.detach(),
+         }
+@@ -149,4 +160,3 @@
+         available = ", ".join(list_losses())
+         raise ValueError(f"Unknown Stage5 loss '{name}'. Available losses: {available}")
+     return _LOSS_BUILDERS[key](**kwargs)
+-

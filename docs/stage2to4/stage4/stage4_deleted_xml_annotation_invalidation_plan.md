@@ -7,9 +7,9 @@
 
 関連文書:
 
-- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
-- `docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
-- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
+- `docs/stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
 
 ## 1. 背景
 

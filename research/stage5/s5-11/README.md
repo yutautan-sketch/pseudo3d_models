@@ -1,0 +1,35 @@
+# s5-11: GroupNorm比較
+
+[調査一覧](../README.md)
+
+## 対応する文書
+
+- [Stage 5 S5-11: GroupNorm normalization比較 実装引き継ぎプロンプト](../../../docs/stage5/s5-11/stage5_s5_11_groupnorm_implementation_handoff_prompt.md)
+- [Stage 5 S5-11 完了報告: GroupNorm normalization比較](../../../docs/stage5/s5-11/stage5_s5_11_report_to_policy_chat.md)
+
+## 保存成果物
+
+元の実験名・日付・パッケージ階層を保持しています。圧縮版と展開版は重複排除せず保管しています。
+
+- [S5-11_anonymized_metrics_SHARE_THIS/SHARE_THIS_DIRECTORY.txt](S5-11_anonymized_metrics_SHARE_THIS/SHARE_THIS_DIRECTORY.txt)
+- [S5-11_anonymized_metrics_SHARE_THIS/anonymization_report.json](S5-11_anonymized_metrics_SHARE_THIS/anonymization_report.json)
+- [S5-11_anonymized_metrics_SHARE_THIS/anonymized_metrics_manifest.json](S5-11_anonymized_metrics_SHARE_THIS/anonymized_metrics_manifest.json)
+- [S5-11_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_checkpoint_summary.csv](S5-11_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_checkpoint_summary.csv)
+- [S5-11_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_h5_metrics.csv](S5-11_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_h5_metrics.csv)
+- [S5-11_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_window_metrics.csv](S5-11_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_window_metrics.csv)
+- [S5-11_anonymized_metrics_SHARE_THIS/training_history/training_config_anonymized.json](S5-11_anonymized_metrics_SHARE_THIS/training_history/training_config_anonymized.json)
+- [S5-11_anonymized_metrics_SHARE_THIS/training_history/training_epoch_metrics.jsonl](S5-11_anonymized_metrics_SHARE_THIS/training_history/training_epoch_metrics.jsonl)
+- [S5-11_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_checkpoint_summary.csv](S5-11_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_checkpoint_summary.csv)
+- [S5-11_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_h5_metrics.csv](S5-11_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_h5_metrics.csv)
+- [S5-11_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_window_metrics.csv](S5-11_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_window_metrics.csv)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/SHARE_THIS_DIRECTORY.txt](S5-11_ep5_anonymized_metrics_SHARE_THIS/SHARE_THIS_DIRECTORY.txt)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/anonymization_report.json](S5-11_ep5_anonymized_metrics_SHARE_THIS/anonymization_report.json)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/anonymized_metrics_manifest.json](S5-11_ep5_anonymized_metrics_SHARE_THIS/anonymized_metrics_manifest.json)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_checkpoint_summary.csv](S5-11_ep5_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_checkpoint_summary.csv)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_h5_metrics.csv](S5-11_ep5_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_h5_metrics.csv)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_window_metrics.csv](S5-11_ep5_anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_window_metrics.csv)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/training_history/training_config_anonymized.json](S5-11_ep5_anonymized_metrics_SHARE_THIS/training_history/training_config_anonymized.json)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/training_history/training_epoch_metrics.jsonl](S5-11_ep5_anonymized_metrics_SHARE_THIS/training_history/training_epoch_metrics.jsonl)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_checkpoint_summary.csv](S5-11_ep5_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_checkpoint_summary.csv)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_h5_metrics.csv](S5-11_ep5_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_h5_metrics.csv)
+- [S5-11_ep5_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_window_metrics.csv](S5-11_ep5_anonymized_metrics_SHARE_THIS/validation_accuracy/validation_window_metrics.csv)

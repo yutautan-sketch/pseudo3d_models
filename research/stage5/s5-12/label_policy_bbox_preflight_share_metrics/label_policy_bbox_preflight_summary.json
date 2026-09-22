@@ -1,0 +1,30 @@
+{
+  "status": "violations_found",
+  "num_files": 181,
+  "totals": {
+    "point_count": 69849282,
+    "no_bbox_point_count": 42870295,
+    "no_bbox_background_count": 42870115,
+    "no_bbox_positive_count": 180,
+    "no_bbox_ignore_count": 0,
+    "ignore_point_count": 262347,
+    "bbox_inside_point_count": 1024701,
+    "bbox_noncontour_target_point_count": 262331,
+    "stray_ignore_outside_bbox_count": 16
+  },
+  "violation_file_count": 2,
+  "schema_attrs_observed": {
+    "label_mode": [
+      "bbox_ranked_global_local"
+    ],
+    "no_bbox_label": [
+      "0"
+    ],
+    "bbox_inside_non_contour_label": [
+      "ignore"
+    ],
+    "contour_teacher_schema": [
+      "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
+    ]
+  }
+}

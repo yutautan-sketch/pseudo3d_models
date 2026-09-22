@@ -1,0 +1,74 @@
+diff --git a/Dockerfile.codex b/Dockerfile.codex
+new file mode 100644
+index 0000000000000000000000000000000000000000..18d09e2b020b5053eaed5b60aea2ce6bb15caced
+--- /dev/null
++++ b/Dockerfile.codex
+@@ -0,0 +1,30 @@
++FROM ubuntu:24.04
++
++ENV DEBIAN_FRONTEND=noninteractive
++
++RUN apt-get update && apt-get install -y \
++    curl \
++    ca-certificates \
++    git \
++    bash \
++    nano \
++    vim \
++    python3 \
++    python3-pip \
++    python3-venv \
++    nodejs \
++    npm \
++    bubblewrap \
++    && rm -rf /var/lib/apt/lists/*
++
++RUN npm install -g @openai/codex
++
++# ubuntu:24.04 に既存の UID=1000 ユーザーを使用する
++USER ubuntu
++WORKDIR /workspace
++
++RUN mkdir -p /home/ubuntu/.codex
++
++COPY --chown=ubuntu:ubuntu codex_config.toml /home/ubuntu/.codex/config.toml
++
++CMD ["/bin/bash"]
+\ No newline at end of file
+diff --git a/Stage2to4/Dockerfile.codex b/Stage2to4/Dockerfile.codex
+deleted file mode 100644
+index 18d09e2b020b5053eaed5b60aea2ce6bb15caced..0000000000000000000000000000000000000000
+--- a/Stage2to4/Dockerfile.codex
++++ /dev/null
+@@ -1,30 +0,0 @@
+-FROM ubuntu:24.04
+-
+-ENV DEBIAN_FRONTEND=noninteractive
+-
+-RUN apt-get update && apt-get install -y \
+-    curl \
+-    ca-certificates \
+-    git \
+-    bash \
+-    nano \
+-    vim \
+-    python3 \
+-    python3-pip \
+-    python3-venv \
+-    nodejs \
+-    npm \
+-    bubblewrap \
+-    && rm -rf /var/lib/apt/lists/*
+-
+-RUN npm install -g @openai/codex
+-
+-# ubuntu:24.04 に既存の UID=1000 ユーザーを使用する
+-USER ubuntu
+-WORKDIR /workspace
+-
+-RUN mkdir -p /home/ubuntu/.codex
+-
+-COPY --chown=ubuntu:ubuntu codex_config.toml /home/ubuntu/.codex/config.toml
+-
+-CMD ["/bin/bash"]
+\ No newline at end of file

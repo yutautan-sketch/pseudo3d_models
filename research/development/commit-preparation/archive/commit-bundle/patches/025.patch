@@ -1,0 +1,880 @@
+diff --git a/Stage2to4/checks/stage4/check_stage4_deleted_xml_invalidation_batch.py b/Stage2to4/checks/stage4/check_stage4_deleted_xml_invalidation_batch.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c0729606a4b0e076eba93809dbb871d5be8be32
+--- /dev/null
++++ b/Stage2to4/checks/stage4/check_stage4_deleted_xml_invalidation_batch.py
+@@ -0,0 +1,276 @@
++from __future__ import annotations
++
++import argparse
++import csv
++import json
++import sys
++import tempfile
++from pathlib import Path
++
++import h5py
++import numpy as np
++
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++CHECK_ROOT = Path(__file__).resolve().parent
++for candidate in (REPO_ROOT, CHECK_ROOT):
++    if str(candidate) not in sys.path:
++        sys.path.insert(0, str(candidate))
++
++
++from check_stage4_deleted_xml_invalidation_apply import (  # noqa: E402
++    _item,
++    _manifest,
++    _write_source,
++)
++from pseudo3d.analysis.build_stage4_deleted_xml_invalidation_manifest import (  # noqa: E402
++    invalidation_fingerprint,
++    load_xml_invalidation_manifest,
++)
++from pseudo3d.analysis.stage4_sampling_sweep_config import file_sha256  # noqa: E402
++from pseudo3d.annotation.apply_deleted_xml_invalidations import (  # noqa: E402
++    OUTPUT_TOKEN,
++    SOURCE_TOKEN,
++)
++from pseudo3d.batch.annotation.batch_apply_stage4_deleted_xml_invalidations import (  # noqa: E402
++    XmlInvalidationBatchError,
++    run_batch,
++)
++
++
++def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    with path.open("w", newline="", encoding="utf-8") as handle:
++        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
++        writer.writeheader()
++        writer.writerows(rows)
++
++
++def _fixture(root: Path) -> tuple[argparse.Namespace, dict[str, Path]]:
++    affected = "synthetic_xml_invalidation"
++    unaffected = "synthetic_unaffected"
++    excluded = "synthetic_excluded"
++    source_root = root / "v5" / "annotated"
++    voc_root = root / "voc"
++    affected_missing = voc_root / affected / "annotations" / f"{affected}_00002.xml"
++    affected_source = (
++        source_root
++        / affected
++        / f"{affected}_pointcloud_annotated_{SOURCE_TOKEN}.h5"
++    )
++    unaffected_source = (
++        source_root
++        / unaffected
++        / f"{unaffected}_pointcloud_annotated_{SOURCE_TOKEN}.h5"
++    )
++    _write_source(affected_source, affected_missing, video=affected)
++    _write_source(
++        unaffected_source,
++        voc_root / unaffected / "annotations" / f"{unaffected}_00002.xml",
++        video=unaffected,
++    )
++
++    train_manifest = root / "train_manifest_cropclean.csv"
++    manifest_fields = [
++        "video_name",
++        "pseudo3d_h5",
++        "voc_xml_root",
++        "split",
++        "enabled",
++        "notes",
++    ]
++    _write_csv(
++        train_manifest,
++        manifest_fields,
++        [
++            {
++                "video_name": video,
++                "pseudo3d_h5": str(root / "pseudo" / f"{video}.h5"),
++                "voc_xml_root": str(voc_root),
++                "split": "train",
++                "enabled": "false" if video == excluded else "true",
++                "notes": "synthetic fixture",
++            }
++            for video in (affected, unaffected, excluded)
++        ],
++    )
++    exclusion_manifest = root / "exclusions.csv"
++    _write_csv(
++        exclusion_manifest,
++        [
++            "video_name",
++            "reason_code",
++            "evidence_frames",
++            "scope",
++            "recoverable",
++            "notes",
++        ],
++        [
++            {
++                "video_name": excluded,
++                "reason_code": "synthetic_exclusion",
++                "evidence_frames": "0",
++                "scope": "stage4_teacher",
++                "recoverable": "true",
++                "notes": "synthetic excluded video",
++            }
++        ],
++    )
++    invalidation_manifest = root / "invalidations.csv"
++    _manifest(invalidation_manifest, _item(affected_missing))
++    invalidations = load_xml_invalidation_manifest(invalidation_manifest)
++    step2_summary = root / "step2_summary.json"
++    step2_summary.write_text(
++        json.dumps(
++            {
++                "schema_version": 1,
++                "status": "ok",
++                "teacher_version": SOURCE_TOKEN,
++                "invalidations": 1,
++                "videos": 1,
++                "expected_positive_points_to_remove": 2,
++                "mixed_xml_presence_frames": 0,
++                "input_files_unchanged": True,
++                "h5_files_written": 0,
++                "train_manifest_sha256": file_sha256(train_manifest),
++                "exclusion_manifest_sha256": file_sha256(exclusion_manifest),
++                "output_manifest_sha256": file_sha256(invalidation_manifest),
++                "invalidation_fingerprint": invalidation_fingerprint(invalidations),
++                "v5_candidate_h5_sha256": {
++                    affected_source.name: file_sha256(affected_source)
++                },
++                "failure_rows": 0,
++            },
++            indent=2,
++            sort_keys=True,
++        )
++        + "\n",
++        encoding="utf-8",
++    )
++    output_root = root / "v6"
++    args = argparse.Namespace(
++        train_manifest=train_manifest,
++        exclusion_manifest=exclusion_manifest,
++        invalidation_manifest=invalidation_manifest,
++        step2_summary=step2_summary,
++        source_annotated_root=source_root,
++        output_annotated_root=output_root / "annotated",
++        output_collected_root=output_root / "collected",
++        summary_csv=output_root / "invalidation_summary.csv",
++        summary_json=output_root / "invalidation_summary.json",
++        expected_videos=2,
++        expected_excluded_videos=1,
++        expected_invalidations=1,
++        expected_affected_videos=1,
++        expected_positive_points=2,
++        expected_removed_bbox_rows=2,
++        skip_existing=False,
++        overwrite=False,
++    )
++    return args, {
++        "affected_source": affected_source,
++        "unaffected_source": unaffected_source,
++        "output_root": output_root,
++        "invalidation_manifest": invalidation_manifest,
++    }
++
++
++def test_full_batch_build_and_verified_resume(root: Path) -> None:
++    args, paths = _fixture(root)
++    source_hashes = {
++        name: file_sha256(path)
++        for name, path in paths.items()
++        if name.endswith("_source")
++    }
++    summary = run_batch(args)
++    assert summary["videos"] == 2
++    assert summary["affected_videos"] == 1
++    assert summary["invalidated_frames"] == 1
++    assert summary["removed_positive_points"] == 2
++    assert summary["removed_bbox_rows"] == 2
++    assert summary["status_counts"] == {"processed": 2}
++    assert summary["collected_status_counts"] == {"copied": 2}
++    saved_summary = json.loads(args.summary_json.read_text(encoding="utf-8"))
++    assert saved_summary == summary
++    with args.summary_csv.open(newline="", encoding="utf-8") as handle:
++        summary_rows = list(csv.DictReader(handle))
++    assert [row["video_name"] for row in summary_rows] == [
++        "synthetic_unaffected",
++        "synthetic_xml_invalidation",
++    ]
++    assert all(
++        row["output_h5_sha256"] == row["collected_h5_sha256"]
++        for row in summary_rows
++    )
++
++    output_root = paths["output_root"]
++    annotated = sorted((output_root / "annotated").rglob(f"*{OUTPUT_TOKEN}.h5"))
++    collected = sorted((output_root / "collected").glob(f"*{OUTPUT_TOKEN}.h5"))
++    assert len(annotated) == len(collected) == 2
++    by_name = {path.name: path for path in collected}
++    for path in annotated:
++        assert file_sha256(path) == file_sha256(by_name[path.name])
++
++    affected_h5 = next(path for path in annotated if "synthetic_xml_invalidation" in path.name)
++    unaffected_h5 = next(path for path in annotated if "synthetic_unaffected" in path.name)
++    with h5py.File(affected_h5, "r") as handle:
++        orders = handle["point_cloud/frame_order"][:]
++        labels = handle["annotation/point_label"][:]
++        np.testing.assert_array_equal(labels[orders == 1], [0, 0, 0])
++        assert not np.any(handle["frame_annotation/frame_order"][:] == 1)
++    with h5py.File(paths["unaffected_source"], "r") as before, h5py.File(
++        unaffected_h5, "r"
++    ) as after:
++        np.testing.assert_array_equal(
++            before["annotation/point_label"][:], after["annotation/point_label"][:]
++        )
++        np.testing.assert_array_equal(
++            before["annotation/valid_mask"][:], after["annotation/valid_mask"][:]
++        )
++        for name in before["frame_annotation"]:
++            np.testing.assert_array_equal(
++                before[f"frame_annotation/{name}"][:],
++                after[f"frame_annotation/{name}"][:],
++            )
++    for name, expected in source_hashes.items():
++        assert file_sha256(paths[name]) == expected
++
++    args.skip_existing = True
++    resumed = run_batch(args)
++    assert resumed["status_counts"] == {"verified_existing": 2}
++    assert resumed["collected_status_counts"] == {"verified_existing": 2}
++    print(
++        "[OK] 2-video v5-to-v6 batch, affected tombstone, unaffected "
++        "propagation, collection, and verified resume"
++    )
++
++
++def test_corrupt_collected_rejection(root: Path) -> None:
++    args, paths = _fixture(root)
++    run_batch(args)
++    collected = sorted((paths["output_root"] / "collected").glob("*.h5"))
++    assert collected
++    with collected[0].open("ab") as handle:
++        handle.write(b"corrupt")
++    args.skip_existing = True
++    try:
++        run_batch(args)
++    except XmlInvalidationBatchError as exc:
++        assert "Collected H5 differs" in str(exc), str(exc)
++    else:
++        raise AssertionError("Corrupt collected H5 must be rejected")
++    print("[OK] corrupt collected artifact rejection")
++
++
++def main() -> None:
++    with tempfile.TemporaryDirectory(
++        prefix="stage4_deleted_xml_invalidation_batch_"
++    ) as directory:
++        root = Path(directory)
++        test_full_batch_build_and_verified_resume(root / "batch")
++        test_corrupt_collected_rejection(root / "corrupt")
++    print("Stage 4 deleted-XML invalidation Step 4 synthetic checks passed.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/batch/annotation/batch_apply_stage4_deleted_xml_invalidations.py b/Stage2to4/pseudo3d/batch/annotation/batch_apply_stage4_deleted_xml_invalidations.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e6d693524e1abf25f7f27b7839928f0346fc0de
+--- /dev/null
++++ b/Stage2to4/pseudo3d/batch/annotation/batch_apply_stage4_deleted_xml_invalidations.py
+@@ -0,0 +1,478 @@
++from __future__ import annotations
++
++import argparse
++import csv
++import json
++import os
++import shutil
++import sys
++import tempfile
++from collections import Counter, defaultdict
++from pathlib import Path
++from typing import Any, Mapping, Sequence
++
++
++REPO_ROOT = Path(__file__).resolve().parents[3]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++
++from pseudo3d.analysis.build_stage4_deleted_xml_invalidation_manifest import (
++    XmlFrameInvalidation,
++    invalidation_fingerprint,
++    load_xml_invalidation_manifest,
++)
++from pseudo3d.analysis.build_stage4_exclusion_manifest import load_exclusions
++from pseudo3d.analysis.stage4_sampling_sweep_config import (
++    file_sha256,
++    load_stage4_sweep_manifest,
++)
++from pseudo3d.annotation.apply_deleted_xml_invalidations import (
++    OUTPUT_TOKEN,
++    SOURCE_TOKEN,
++    apply_invalidations_to_h5,
++)
++
++
++SUMMARY_FIELDS = (
++    "video_name",
++    "status",
++    "collected_status",
++    "source_h5",
++    "source_h5_sha256",
++    "output_h5",
++    "output_h5_sha256",
++    "collected_h5",
++    "collected_h5_sha256",
++    "points",
++    "positive_before",
++    "positive_after",
++    "removed_positive_points",
++    "removed_ignore_points",
++    "invalidated_frames",
++    "removed_bbox_rows",
++)
++
++
++class XmlInvalidationBatchError(RuntimeError):
++    """Raised when the v5-to-v6 batch contract is inconsistent."""
++
++
++def _paths_overlap(left: Path, right: Path) -> bool:
++    return left == right or left in right.parents or right in left.parents
++
++
++def _single_source(root: Path, video: str) -> Path:
++    matches = sorted((root / video).glob(f"*{SOURCE_TOKEN}.h5"))
++    if len(matches) != 1:
++        raise XmlInvalidationBatchError(
++            f"Expected one v5 source H5 for {video}, found {len(matches)}"
++        )
++    return matches[0].resolve()
++
++
++def _output_name(source: Path) -> str:
++    if SOURCE_TOKEN not in source.name:
++        raise XmlInvalidationBatchError(
++            f"Source filename lacks fixed v5 token: {source.name}"
++        )
++    return source.name.replace(SOURCE_TOKEN, OUTPUT_TOKEN)
++
++
++def _atomic_write(path: Path, content: bytes) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    descriptor, temporary_name = tempfile.mkstemp(
++        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
++    )
++    try:
++        with os.fdopen(descriptor, "wb") as handle:
++            handle.write(content)
++        os.replace(temporary_name, path)
++    except Exception:
++        try:
++            os.unlink(temporary_name)
++        except FileNotFoundError:
++            pass
++        raise
++
++
++def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
++    import io
++
++    stream = io.StringIO(newline="")
++    writer = csv.DictWriter(
++        stream, fieldnames=list(SUMMARY_FIELDS), lineterminator="\n"
++    )
++    writer.writeheader()
++    writer.writerows(
++        {name: row.get(name, "") for name in SUMMARY_FIELDS} for row in rows
++    )
++    _atomic_write(path, stream.getvalue().encode("utf-8"))
++
++
++def _write_json(path: Path, value: Mapping[str, Any]) -> None:
++    _atomic_write(
++        path,
++        (
++            json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
++            + "\n"
++        ).encode("utf-8"),
++    )
++
++
++def _copy_or_verify(
++    source: Path,
++    destination: Path,
++    *,
++    overwrite: bool,
++) -> tuple[str, str]:
++    source_sha = file_sha256(source)
++    if destination.exists():
++        if not destination.is_file():
++            raise XmlInvalidationBatchError(
++                f"Collected destination is not a file: {destination}"
++            )
++        if file_sha256(destination) == source_sha:
++            return "verified_existing", source_sha
++        if not overwrite:
++            raise XmlInvalidationBatchError(
++                f"Collected H5 differs from annotated H5: {destination}"
++            )
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    descriptor, temporary_name = tempfile.mkstemp(
++        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
++    )
++    os.close(descriptor)
++    temporary = Path(temporary_name)
++    try:
++        shutil.copy2(source, temporary)
++        if file_sha256(temporary) != source_sha:
++            raise XmlInvalidationBatchError(
++                f"Temporary collected copy checksum mismatch: {source}"
++            )
++        os.replace(temporary, destination)
++    except Exception:
++        temporary.unlink(missing_ok=True)
++        raise
++    return "copied", source_sha
++
++
++def _validate_step2_summary(
++    *,
++    path: Path,
++    train_manifest: Path,
++    exclusion_manifest: Path,
++    invalidation_manifest: Path,
++    invalidations: Sequence[XmlFrameInvalidation],
++    expected_invalidations: int,
++    expected_affected_videos: int,
++    expected_positive_points: int,
++) -> Mapping[str, Any]:
++    if not path.is_file():
++        raise FileNotFoundError(f"Step 2 summary not found: {path}")
++    summary = json.loads(path.read_text(encoding="utf-8"))
++    expected = {
++        "schema_version": 1,
++        "status": "ok",
++        "teacher_version": SOURCE_TOKEN,
++        "invalidations": expected_invalidations,
++        "videos": expected_affected_videos,
++        "expected_positive_points_to_remove": expected_positive_points,
++        "mixed_xml_presence_frames": 0,
++        "failure_rows": 0,
++        "failure_rows": 0,
++        "train_manifest_sha256": file_sha256(train_manifest),
++        "exclusion_manifest_sha256": file_sha256(exclusion_manifest),
++        "output_manifest_sha256": file_sha256(invalidation_manifest),
++        "invalidation_fingerprint": invalidation_fingerprint(invalidations),
++    }
++    for name, value in expected.items():
++        if summary.get(name) != value:
++            raise XmlInvalidationBatchError(
++                f"Step 2 summary mismatch for {name}: "
++                f"{summary.get(name)!r} != {value!r}"
++            )
++    if not bool(summary.get("input_files_unchanged")):
++        raise XmlInvalidationBatchError("Step 2 inputs were not unchanged")
++    if int(summary.get("h5_files_written", -1)) != 0:
++        raise XmlInvalidationBatchError("Step 2 unexpectedly wrote H5 files")
++    return summary
++
++
++def run_batch(args: argparse.Namespace) -> dict[str, Any]:
++    train_manifest = Path(args.train_manifest).resolve()
++    exclusion_manifest = Path(args.exclusion_manifest).resolve()
++    invalidation_manifest = Path(args.invalidation_manifest).resolve()
++    step2_summary = Path(args.step2_summary).resolve()
++    source_root = Path(args.source_annotated_root).resolve()
++    annotated_root = Path(args.output_annotated_root).resolve()
++    collected_root = Path(args.output_collected_root).resolve()
++    summary_csv = Path(args.summary_csv).resolve()
++    summary_json = Path(args.summary_json).resolve()
++    if not source_root.is_dir():
++        raise FileNotFoundError(f"v5 source root not found: {source_root}")
++    if _paths_overlap(source_root, annotated_root) or _paths_overlap(
++        source_root, collected_root
++    ):
++        raise XmlInvalidationBatchError("Source and output roots must not overlap")
++    if _paths_overlap(annotated_root, collected_root):
++        raise XmlInvalidationBatchError(
++            "Annotated and collected roots must not overlap"
++        )
++    for path, name in (
++        (annotated_root, "annotated root"),
++        (collected_root, "collected root"),
++    ):
++        if path.exists() and path.is_symlink():
++            raise XmlInvalidationBatchError(f"Output {name} must not be a symlink")
++
++    invalidations = load_xml_invalidation_manifest(invalidation_manifest)
++    if len(invalidations) != int(args.expected_invalidations):
++        raise XmlInvalidationBatchError(
++            f"Invalidation count mismatch: {len(invalidations)} != "
++            f"{args.expected_invalidations}"
++        )
++    invalidations_by_video: dict[str, list[XmlFrameInvalidation]] = defaultdict(list)
++    for item in invalidations:
++        invalidations_by_video[item.video_name].append(item)
++    if len(invalidations_by_video) != int(args.expected_affected_videos):
++        raise XmlInvalidationBatchError(
++            f"Affected-video count mismatch: {len(invalidations_by_video)} != "
++            f"{args.expected_affected_videos}"
++        )
++    fixed_summary = _validate_step2_summary(
++        path=step2_summary,
++        train_manifest=train_manifest,
++        exclusion_manifest=exclusion_manifest,
++        invalidation_manifest=invalidation_manifest,
++        invalidations=invalidations,
++        expected_invalidations=int(args.expected_invalidations),
++        expected_affected_videos=int(args.expected_affected_videos),
++        expected_positive_points=int(args.expected_positive_points),
++    )
++
++    manifest_items = load_stage4_sweep_manifest(train_manifest)
++    exclusions = load_exclusions(exclusion_manifest)
++    excluded = {item.video_name for item in exclusions}
++    manifest_by_video = {item.video_name: item for item in manifest_items}
++    unknown_exclusions = sorted(excluded - set(manifest_by_video))
++    if unknown_exclusions:
++        raise XmlInvalidationBatchError(
++            f"Exclusion manifest references unknown videos: {unknown_exclusions}"
++        )
++    disabled = {item.video_name for item in manifest_items if not item.enabled}
++    if disabled != excluded:
++        raise XmlInvalidationBatchError(
++            "Disabled train-manifest videos differ from exclusion manifest: "
++            f"disabled={sorted(disabled)}, excluded={sorted(excluded)}"
++        )
++    enabled = sorted(
++        (
++            item
++            for item in manifest_items
++            if item.enabled and item.video_name not in excluded
++        ),
++        key=lambda item: item.video_name,
++    )
++    if len(enabled) != int(args.expected_videos):
++        raise XmlInvalidationBatchError(
++            f"Enabled-video count mismatch: {len(enabled)} != {args.expected_videos}"
++        )
++    if len(excluded) != int(args.expected_excluded_videos):
++        raise XmlInvalidationBatchError(
++            f"Excluded-video count mismatch: {len(excluded)} != "
++            f"{args.expected_excluded_videos}"
++        )
++    enabled_names = {item.video_name for item in enabled}
++    unknown = sorted(set(invalidations_by_video) - enabled_names)
++    if unknown:
++        raise XmlInvalidationBatchError(
++            f"Invalidations reference disabled/unknown videos: {unknown}"
++        )
++    sources = {item.video_name: _single_source(source_root, item.video_name) for item in enabled}
++    fixed_source_hashes = fixed_summary.get("v5_candidate_h5_sha256")
++    if not isinstance(fixed_source_hashes, dict):
++        raise XmlInvalidationBatchError(
++            "Step 2 summary lacks v5_candidate_h5_sha256 mapping"
++        )
++    expected_fixed_source_hashes = {
++        sources[video].name: file_sha256(sources[video])
++        for video in sorted(invalidations_by_video)
++    }
++    if fixed_source_hashes != expected_fixed_source_hashes:
++        raise XmlInvalidationBatchError(
++            "Affected v5 H5 checksums differ from the fixed Step 2 evidence"
++        )
++    all_source_files = sorted(
++        path
++        for path in source_root.rglob(f"*{SOURCE_TOKEN}.h5")
++        if path.is_file()
++    )
++    if len(all_source_files) != len(enabled):
++        raise XmlInvalidationBatchError(
++            f"v5 source inventory mismatch: {len(all_source_files)} != {len(enabled)}"
++        )
++    if len(set(sources.values())) != len(sources):
++        raise XmlInvalidationBatchError("Duplicate v5 source H5 path")
++    for video in excluded:
++        if (source_root / video).exists():
++            raise XmlInvalidationBatchError(
++                f"Excluded video exists in v5 source root: {video}"
++            )
++
++    annotated_root.mkdir(parents=True, exist_ok=True)
++    collected_root.mkdir(parents=True, exist_ok=True)
++    manifest_sha = file_sha256(invalidation_manifest)
++    print("Stage 4 deleted-XML invalidation full-dataset apply")
++    print(f"  source root        : {source_root}")
++    print(f"  annotated root     : {annotated_root}")
++    print(f"  collected root     : {collected_root}")
++    print(f"  videos             : {len(enabled)}")
++    print(f"  affected videos    : {len(invalidations_by_video)}")
++    print(f"  invalidated frames : {len(invalidations)}")
++    rows: list[dict[str, Any]] = []
++    for index, manifest_item in enumerate(enabled, start=1):
++        video = manifest_item.video_name
++        source_h5 = sources[video]
++        filename = _output_name(source_h5)
++        output_h5 = annotated_root / video / filename
++        video_invalidations = invalidations_by_video.get(video, [])
++        result = apply_invalidations_to_h5(
++            source_h5=source_h5,
++            output_h5=output_h5,
++            manifest_path=invalidation_manifest,
++            manifest_sha256=manifest_sha,
++            items=video_invalidations,
++            overwrite=bool(args.overwrite),
++            skip_existing=bool(args.skip_existing),
++        )
++        collected_h5 = collected_root / filename
++        collected_status, collected_sha = _copy_or_verify(
++            output_h5,
++            collected_h5,
++            overwrite=bool(args.overwrite),
++        )
++        if result["output_h5_sha256"] != collected_sha:
++            raise XmlInvalidationBatchError(
++                f"Annotated/collected checksum mismatch: {video}"
++            )
++        row = {
++            **result,
++            "video_name": video,
++            "collected_status": collected_status,
++            "collected_h5": str(collected_h5),
++            "collected_h5_sha256": collected_sha,
++        }
++        rows.append(row)
++        print(
++            f"  [{index}/{len(enabled)}] [OK] {video}: "
++            f"status={result['status']}, invalidated={result['invalidated_frames']}, "
++            f"removed_positive={result['removed_positive_points']}"
++        )
++
++    total_removed_positive = sum(
++        int(row["removed_positive_points"]) for row in rows
++    )
++    total_removed_bbox = sum(int(row["removed_bbox_rows"]) for row in rows)
++    total_invalidated = sum(int(row["invalidated_frames"]) for row in rows)
++    if total_removed_positive != int(args.expected_positive_points):
++        raise XmlInvalidationBatchError(
++            f"Removed-positive total mismatch: {total_removed_positive} != "
++            f"{args.expected_positive_points}"
++        )
++    if total_removed_bbox != int(args.expected_removed_bbox_rows):
++        raise XmlInvalidationBatchError(
++            f"Removed-BBox total mismatch: {total_removed_bbox} != "
++            f"{args.expected_removed_bbox_rows}"
++        )
++    if total_invalidated != len(invalidations):
++        raise XmlInvalidationBatchError(
++            "Applied invalidation-frame count differs from manifest"
++        )
++    annotated_files = sorted(annotated_root.rglob(f"*{OUTPUT_TOKEN}.h5"))
++    collected_files = sorted(collected_root.glob(f"*{OUTPUT_TOKEN}.h5"))
++    if len(annotated_files) != len(enabled) or len(collected_files) != len(enabled):
++        raise XmlInvalidationBatchError(
++            "Final v6 file count differs from enabled-video count"
++        )
++
++    status_counts = Counter(str(row["status"]) for row in rows)
++    collected_counts = Counter(str(row["collected_status"]) for row in rows)
++    summary: dict[str, Any] = {
++        "schema_version": 1,
++        "status": "ok",
++        "source_teacher_version": SOURCE_TOKEN,
++        "teacher_version": OUTPUT_TOKEN,
++        "videos": len(rows),
++        "affected_videos": len(invalidations_by_video),
++        "invalidated_frames": total_invalidated,
++        "removed_bbox_rows": total_removed_bbox,
++        "removed_positive_points": total_removed_positive,
++        "removed_ignore_points": sum(
++            int(row["removed_ignore_points"]) for row in rows
++        ),
++        "points": sum(int(row["points"]) for row in rows),
++        "status_counts": dict(sorted(status_counts.items())),
++        "collected_status_counts": dict(sorted(collected_counts.items())),
++        "train_manifest_sha256": file_sha256(train_manifest),
++        "exclusion_manifest_sha256": file_sha256(exclusion_manifest),
++        "invalidation_manifest_sha256": manifest_sha,
++        "invalidation_fingerprint": invalidation_fingerprint(invalidations),
++        "step2_summary_sha256": file_sha256(step2_summary),
++        "annotated_root": str(annotated_root),
++        "collected_root": str(collected_root),
++        "input_files_unchanged": True,
++        "failure_rows": 0,
++    }
++    _write_csv(summary_csv, rows)
++    _write_json(summary_json, summary)
++    print("Stage 4 deleted-XML invalidation full-dataset apply passed.")
++    print(f"  videos             : {len(rows)}")
++    print(f"  invalidated frames : {total_invalidated}")
++    print(f"  removed BBoxes     : {total_removed_bbox}")
++    print(f"  removed positive   : {total_removed_positive}")
++    print(f"  summary CSV        : {summary_csv}")
++    print(f"  summary JSON       : {summary_json}")
++    return summary
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description=(
++            "Apply a fixed deleted-XML frame manifest to all Stage 4 v5 H5 "
++            "files and collect byte-identical v6 outputs."
++        )
++    )
++    parser.add_argument("--train_manifest", type=Path, required=True)
++    parser.add_argument("--exclusion_manifest", type=Path, required=True)
++    parser.add_argument("--invalidation_manifest", type=Path, required=True)
++    parser.add_argument("--step2_summary", type=Path, required=True)
++    parser.add_argument("--source_annotated_root", type=Path, required=True)
++    parser.add_argument("--output_annotated_root", type=Path, required=True)
++    parser.add_argument("--output_collected_root", type=Path, required=True)
++    parser.add_argument("--summary_csv", type=Path, required=True)
++    parser.add_argument("--summary_json", type=Path, required=True)
++    parser.add_argument("--expected_videos", type=int, required=True)
++    parser.add_argument("--expected_excluded_videos", type=int, required=True)
++    parser.add_argument("--expected_invalidations", type=int, required=True)
++    parser.add_argument("--expected_affected_videos", type=int, required=True)
++    parser.add_argument("--expected_positive_points", type=int, required=True)
++    parser.add_argument("--expected_removed_bbox_rows", type=int, required=True)
++    modes = parser.add_mutually_exclusive_group()
++    modes.add_argument("--skip_existing", action="store_true")
++    modes.add_argument("--overwrite", action="store_true")
++    return parser
++
++
++def main() -> None:
++    try:
++        run_batch(build_parser().parse_args())
++    except Exception as exc:
++        raise SystemExit(
++            "Stage 4 deleted-XML invalidation batch failed: "
++            f"{type(exc).__name__}: {exc}"
++        ) from exc
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh b/Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..1c02ad89322da1b9d1e5d5175784f627011669e8
+--- /dev/null
++++ b/Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
+@@ -0,0 +1,108 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
++REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
++DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
++
++SOURCE_TOKEN="bboxrank_v5_cvat_authoritative_v1"
++OUTPUT_TOKEN="bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
++SOURCE_RUN_NAME="${SOURCE_RUN_NAME:-global_local_l75_w31_c12_area15_${SOURCE_TOKEN}}"
++OUTPUT_RUN_NAME="${OUTPUT_RUN_NAME:-global_local_l75_w31_c12_area15_${OUTPUT_TOKEN}}"
++SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SOURCE_RUN_NAME}}"
++OUTPUT_ROOT="${OUTPUT_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${OUTPUT_RUN_NAME}}"
++SOURCE_ANNOTATED_ROOT="${SOURCE_ANNOTATED_ROOT:-${SOURCE_RUN_ROOT}/annotated}"
++ANNOTATED_ROOT="${ANNOTATED_ROOT:-${OUTPUT_ROOT}/annotated}"
++COLLECTED_ROOT="${COLLECTED_ROOT:-${OUTPUT_ROOT}/collected}"
++SUMMARY_CSV="${SUMMARY_CSV:-${OUTPUT_ROOT}/invalidation_summary.csv}"
++SUMMARY_JSON="${SUMMARY_JSON:-${OUTPUT_ROOT}/invalidation_summary.json}"
++LOG_ROOT="${LOG_ROOT:-${OUTPUT_ROOT}/logs}"
++
++TRAIN_MANIFEST="${TRAIN_MANIFEST:-${DATASET_ROOT}/stage4_sampling_parameter_sweep/260711/manifests/train_manifest_cropclean_v1.csv}"
++EXCLUSION_MANIFEST="${EXCLUSION_MANIFEST:-pseudo3d/analysis/configs/stage4_video_exclusions_v1.csv}"
++INVALIDATION_MANIFEST="${INVALIDATION_MANIFEST:-pseudo3d/analysis/configs/stage4_deleted_xml_invalidations_v1.csv}"
++STEP2_SUMMARY="${STEP2_SUMMARY:-${SOURCE_RUN_ROOT}/deleted_xml_annotation_invalidation_step2/manifest_summary.json}"
++
++EXPECTED_VIDEOS="${EXPECTED_VIDEOS:-181}"
++EXPECTED_EXCLUDED_VIDEOS="${EXPECTED_EXCLUDED_VIDEOS:-1}"
++EXPECTED_INVALIDATIONS="${EXPECTED_INVALIDATIONS:-7}"
++EXPECTED_AFFECTED_VIDEOS="${EXPECTED_AFFECTED_VIDEOS:-2}"
++EXPECTED_POSITIVE_POINTS="${EXPECTED_POSITIVE_POINTS:-2124}"
++EXPECTED_REMOVED_BBOX_ROWS="${EXPECTED_REMOVED_BBOX_ROWS:-7}"
++SKIP_EXISTING="${SKIP_EXISTING:-1}"
++
++if [[ "${SKIP_EXISTING}" != "0" && "${SKIP_EXISTING}" != "1" ]]; then
++  echo "SKIP_EXISTING must be 0 or 1, got: ${SKIP_EXISTING}" >&2
++  exit 1
++fi
++if [[ ! -x "${PYTHON}" ]]; then
++  echo "Python executable not found: ${PYTHON}" >&2
++  exit 1
++fi
++
++cd "${REPO_ROOT}"
++for required_file in \
++  "${TRAIN_MANIFEST}" \
++  "${EXCLUSION_MANIFEST}" \
++  "${INVALIDATION_MANIFEST}" \
++  "${STEP2_SUMMARY}"; do
++  if [[ ! -f "${required_file}" ]]; then
++    echo "Required file not found: ${required_file}" >&2
++    exit 1
++  fi
++done
++if [[ ! -d "${SOURCE_ANNOTATED_ROOT}" ]]; then
++  echo "v5 annotated source root not found: ${SOURCE_ANNOTATED_ROOT}" >&2
++  exit 1
++fi
++
++mkdir -p "${LOG_ROOT}"
++mode_args=()
++if [[ "${SKIP_EXISTING}" == "1" ]]; then
++  mode_args+=(--skip_existing)
++else
++  mode_args+=(--overwrite)
++fi
++
++echo "Stage 4 teacher v6 deleted-XML invalidation build"
++echo "  source run        : ${SOURCE_RUN_ROOT}"
++echo "  output run        : ${OUTPUT_ROOT}"
++echo "  expected videos   : ${EXPECTED_VIDEOS}"
++echo "  excluded videos   : ${EXPECTED_EXCLUDED_VIDEOS}"
++echo "  invalidated frames: ${EXPECTED_INVALIDATIONS}"
++echo "  affected videos   : ${EXPECTED_AFFECTED_VIDEOS}"
++echo "  label policy      : deleted XML frame -> all background"
++
++"${PYTHON}" \
++  pseudo3d/batch/annotation/batch_apply_stage4_deleted_xml_invalidations.py \
++  --train_manifest "${TRAIN_MANIFEST}" \
++  --exclusion_manifest "${EXCLUSION_MANIFEST}" \
++  --invalidation_manifest "${INVALIDATION_MANIFEST}" \
++  --step2_summary "${STEP2_SUMMARY}" \
++  --source_annotated_root "${SOURCE_ANNOTATED_ROOT}" \
++  --output_annotated_root "${ANNOTATED_ROOT}" \
++  --output_collected_root "${COLLECTED_ROOT}" \
++  --summary_csv "${SUMMARY_CSV}" \
++  --summary_json "${SUMMARY_JSON}" \
++  --expected_videos "${EXPECTED_VIDEOS}" \
++  --expected_excluded_videos "${EXPECTED_EXCLUDED_VIDEOS}" \
++  --expected_invalidations "${EXPECTED_INVALIDATIONS}" \
++  --expected_affected_videos "${EXPECTED_AFFECTED_VIDEOS}" \
++  --expected_positive_points "${EXPECTED_POSITIVE_POINTS}" \
++  --expected_removed_bbox_rows "${EXPECTED_REMOVED_BBOX_ROWS}" \
++  "${mode_args[@]}" \
++  2>&1 | tee "${LOG_ROOT}/01_deleted_xml_invalidation_apply.log"
++
++annotated_count="$(find "${ANNOTATED_ROOT}" -type f -name "*${OUTPUT_TOKEN}.h5" | wc -l | tr -d ' ')"
++collected_count="$(find "${COLLECTED_ROOT}" -maxdepth 1 -type f -name "*${OUTPUT_TOKEN}.h5" | wc -l | tr -d ' ')"
++if [[ "${annotated_count}" -ne "${EXPECTED_VIDEOS}" || "${collected_count}" -ne "${EXPECTED_VIDEOS}" ]]; then
++  echo "v6 H5 count mismatch: annotated=${annotated_count}, collected=${collected_count}" >&2
++  exit 1
++fi
++
++echo
++echo "Stage 4 teacher v6 deleted-XML invalidation build complete."
++echo "  annotated : ${ANNOTATED_ROOT}"
++echo "  collected : ${COLLECTED_ROOT}"
++echo "  summary   : ${SUMMARY_JSON}"
++echo "  files     : annotated=${annotated_count}, collected=${collected_count}"

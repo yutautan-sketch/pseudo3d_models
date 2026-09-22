@@ -1,0 +1,5 @@
+split,granularity,f1_delta_train_minus_eval,iou_delta_train_minus_eval,recall_delta_train_minus_eval,false_positive_count_delta_train_minus_eval,tp_zero_video_count_delta_train_minus_eval
+train_sanity,window,0.04045830216585505,0.022966706745031623,0.4932302831998195,99592,
+validation,window,0.009224342576067815,0.0048524381092723175,0.31602128403309127,1364104,
+train_sanity,aggregated,0.08803844444762808,0.047512916554573736,0.5683681836818367,68187,-1
+validation,aggregated,0.020015698060037654,0.010464367652938799,0.29243639400440596,672160,-10

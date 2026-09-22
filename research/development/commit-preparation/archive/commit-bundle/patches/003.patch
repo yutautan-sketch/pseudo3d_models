@@ -1,0 +1,12 @@
+diff --git a/Dockerfile.codex b/Dockerfile.codex
+index 18d09e2b020b5053eaed5b60aea2ce6bb15caced..16ae318a63530f8b761909b3152b803f0dbaf6d9
+--- a/Dockerfile.codex
++++ b/Dockerfile.codex
+@@ -18,6 +18,7 @@
+     && rm -rf /var/lib/apt/lists/*
+ 
+ RUN npm install -g @openai/codex
++RUN npm install -g @anthropic-ai/claude-code
+ 
+ # ubuntu:24.04 に既存の UID=1000 ユーザーを使用する
+ USER ubuntu

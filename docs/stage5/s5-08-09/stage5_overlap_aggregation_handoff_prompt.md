@@ -1,7 +1,7 @@
 # Stage 5 overlap aggregation検証・実装チャット引継ぎプロンプト
 
 > **進捗注記（2026-09-10）:** 本書の実装事項A・Bは完了済みである。現在状態、採用済み判断、
-> BatchNorm recalibration以降の実施順は`stage5_revision_management_record.md`を正とし、本書は
+> BatchNorm recalibration以降の実施順は`../stage5_revision_management_record.md`を正とし、本書は
 > A・Bの仕様・実装・検証履歴として参照する。
 
 ## 0. この文書の使い方
@@ -140,14 +140,14 @@ checkpointと`reference_h5_metrics_csv`の**絶対パス**が含まれている�
 Step A3（full run、train sanity 3件+validation 18件、計21動画）完了を確認した
 （2026-09-09、ユーザー実機）。`Stage5 overlap aggregation checker passed.`まで到達し、
 anonymization self-checkも合格した。`share_metrics/`一式（8ファイル）を
-`/workspace/.tmp/overlap_aggregation_share/`へ配置してもらい、実装チャット側でも
+`/workspace/research/stage5/s5-08/overlap_aggregation_share/`へ配置してもらい、実装チャット側でも
 絶対パス・timestamp型video IDが含まれていないことを独立に`grep`確認した上で内容を精査した。
 
 mean baseline parityはvalidation split（TP=2691, FP=85785, TN=6421265, FN=66760,
 valid=6576501, ignore=19050）についても本書2.5節の記録値と完全一致した。固定train sanity動画
 単体のF1（0.0293）も9.4節の記録値と一致した。
 
-Step A4として、`stage5_pointnext_s_training_evaluation_report.md`の9.5節へ
+Step A4として、`../stage5_pointnext_s_training_evaluation_report.md`の9.5節へ
 「実装事項A: overlap probability / aggregation checker 検証結果（2026-09-09）」を追記した。
 suppressed-positive率（GT positive点でtrain 21.54%/validation 10.56%）、video別disagreement率
 （0.2%〜79.7%と大きくばらつく）、`min_edge_distance`別disagreement率がほぼ一定（5.9〜6.0%、
@@ -726,7 +726,7 @@ Stage5 BatchNorm mode parity self-test passed.
 
 train sanity 3件のみのsmoke run完了（2026-09-10、ユーザー実機、
 `Stage5 BatchNorm mode parity checker passed.`）。mean baseline parity（eval-modeのmean集約結果と
-既存`evaluate_stage5.py`の一致）も合格した。share側出力を`/workspace/.tmp/batchnorm_mode_parity_share/`
+既存`evaluate_stage5.py`の一致）も合格した。share側出力を`/workspace/research/stage5/s5-09/batchnorm_mode_parity_share/`
 へ配置してもらい、絶対パス・timestamp型video IDが含まれていないことを実装チャット側で独立に
 `grep`確認した上で内容を精査した。
 
@@ -759,7 +759,7 @@ mean baseline parityも合格。**validation（学習に使っていない18動�
 | validation | aggregated | 10/18 → 0/18 | 3.87% → 33.12% |
 
 validation全体でGT positive点のdisagreement率は38.15%、mean abs diff 0.260。詳細な比較表と
-判定は`stage5_pointnext_s_training_evaluation_report.md` 9.5節「実装事項B: BatchNorm train/eval
+判定は`../stage5_pointnext_s_training_evaluation_report.md` 9.5節「実装事項B: BatchNorm train/eval
 parity 検証結果」に記録した。6.3節の判定基準「train-statistics側だけ大幅に良い」に該当し、
 BatchNorm running statisticsまたはphysical batch size 1学習の影響を支持する結果が、train sanity
 だけでなくvalidationでも再現した。

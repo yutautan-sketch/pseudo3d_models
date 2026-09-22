@@ -1,0 +1,112 @@
+{
+  "moves": [
+    {
+      "path": "docs/README.md",
+      "head_equals_index": true,
+      "index_equals_work": false,
+      "old_lines": 25,
+      "new_lines": 46
+    },
+    {
+      "path": "docs/stage2to4/legacy/dualtrack_legacy.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 80,
+      "new_lines": 80
+    },
+    {
+      "path": "docs/stage2to4/stage4/cvat_segmentation_mask_1_1_import_spec.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 1098,
+      "new_lines": 1098
+    },
+    {
+      "path": "docs/stage2to4/stage4/edit_prompt.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 473,
+      "new_lines": 473
+    },
+    {
+      "path": "docs/stage2to4/stage4/stage4_bbox_independent_sampling_edit_prompt.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 875,
+      "new_lines": 875
+    },
+    {
+      "path": "docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md",
+      "head_equals_index": true,
+      "index_equals_work": false,
+      "old_lines": 812,
+      "new_lines": 2718
+    },
+    {
+      "path": "docs/stage2to4/stage4/stage4_phase7_report.md",
+      "head_equals_index": true,
+      "index_equals_work": false,
+      "old_lines": 690,
+      "new_lines": 690
+    },
+    {
+      "path": "docs/stage2to4/stage4/stage4_sampling_investigation_progress.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 982,
+      "new_lines": 982
+    },
+    {
+      "path": "docs/stage2to4/stage4/stage4_sampling_sweep_investigation_edit_prompt.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 912,
+      "new_lines": 912
+    },
+    {
+      "path": "docs/stage2to4/stage4/stage4_sampling_sweep_investigation_rule.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 501,
+      "new_lines": 501
+    },
+    {
+      "path": "docs/stage2to4/submission/README.md",
+      "head_equals_index": true,
+      "index_equals_work": false,
+      "old_lines": 4,
+      "new_lines": 4
+    },
+    {
+      "path": "docs/stage5/FILES.md",
+      "head_equals_index": true,
+      "index_equals_work": false,
+      "old_lines": 57,
+      "new_lines": 85
+    },
+    {
+      "path": "docs/stage5/TRAINING_IMPROVEMENT_PLAN.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 252,
+      "new_lines": 252
+    },
+    {
+      "path": "docs/stage5/data_construct.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 264,
+      "new_lines": 264
+    },
+    {
+      "path": "docs/stage5/stage5_edit_prompt.md",
+      "head_equals_index": true,
+      "index_equals_work": true,
+      "old_lines": 255,
+      "new_lines": 255
+    }
+  ],
+  "python_ast": 55,
+  "bash_n": 31,
+  "failures": []
+}

@@ -1,0 +1,4 @@
+This directory contains anonymized Stage5 metrics only.
+train_sanity_evaluation: behavior on selected training samples.
+validation_accuracy: metrics on held-out validation samples.
+The private video-ID mapping is intentionally stored outside this directory.

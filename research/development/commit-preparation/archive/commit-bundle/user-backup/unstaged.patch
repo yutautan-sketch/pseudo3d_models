@@ -1,0 +1,4359 @@
+diff --git a/.gitignore b/.gitignore
+index fd182d0..91132e0 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,8 +5,10 @@ __pycache__/
+ .venv/
+ .codex/
+ .devcontainer/
++.tmp/
+ codex_config.toml
+ Stage2to4/dualtrack_checkpoints/
+ *.pt
+ *.pth
+ *.ckpt
++CLAUDE.md
+diff --git a/Stage2to4/Dockerfile.codex b/Stage2to4/Dockerfile.codex
+deleted file mode 100644
+index 18d09e2..0000000
+--- a/Stage2to4/Dockerfile.codex
++++ /dev/null
+@@ -1,30 +0,0 @@
+-FROM ubuntu:24.04
+-
+-ENV DEBIAN_FRONTEND=noninteractive
+-
+-RUN apt-get update && apt-get install -y \
+-    curl \
+-    ca-certificates \
+-    git \
+-    bash \
+-    nano \
+-    vim \
+-    python3 \
+-    python3-pip \
+-    python3-venv \
+-    nodejs \
+-    npm \
+-    bubblewrap \
+-    && rm -rf /var/lib/apt/lists/*
+-
+-RUN npm install -g @openai/codex
+-
+-# ubuntu:24.04 に既存の UID=1000 ユーザーを使用する
+-USER ubuntu
+-WORKDIR /workspace
+-
+-RUN mkdir -p /home/ubuntu/.codex
+-
+-COPY --chown=ubuntu:ubuntu codex_config.toml /home/ubuntu/.codex/config.toml
+-
+-CMD ["/bin/bash"]
+\ No newline at end of file
+diff --git a/Stage2to4/checks/stage4/check_stage4_bbox_ranked_label_policy.py b/Stage2to4/checks/stage4/check_stage4_bbox_ranked_label_policy.py
+index 5b30dc3..ceb4243 100644
+--- a/Stage2to4/checks/stage4/check_stage4_bbox_ranked_label_policy.py
++++ b/Stage2to4/checks/stage4/check_stage4_bbox_ranked_label_policy.py
+@@ -22,10 +22,24 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--input_dir", type=Path, required=True)
+     parser.add_argument("--pattern", type=str, required=True)
+     parser.add_argument("--expected_files", type=int, default=182)
++    parser.add_argument(
++        "--allow_cvat_authoritative_no_bbox_positive",
++        action="store_true",
++        help=(
++            "Allow positive (but never ignore) points on BBox-free frames only "
++            "when frame-level provenance marks CVAT snapshot authority."
++        ),
++    )
+     return parser.parse_args()
+ 
+ 
+-def audit_file(path: Path) -> dict[str, int]:
++def _decode(value: object) -> str:
++    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
++
++
++def audit_file(
++    path: Path, *, allow_cvat_authoritative_no_bbox_positive: bool = False
++) -> dict[str, int]:
+     required = (
+         "point_cloud/frame_order",
+         "point_cloud/pixel_xy",
+@@ -51,6 +65,42 @@ def audit_file(path: Path) -> dict[str, int]:
+         valid_mask = handle["annotation/valid_mask"][:].astype(bool)
+         bbox_orders = handle["frame_annotation/frame_order"][:].astype(np.int64)
+         bboxes = handle["frame_annotation/bbox_local_xyxy"][:].astype(np.float64)
++        authoritative_orders: set[int] = set()
++        if allow_cvat_authoritative_no_bbox_positive:
++            if _decode(handle.attrs.get("contour_teacher_schema", "")) != (
++                "bboxrank_v5_cvat_authoritative_v1"
++            ):
++                raise AssertionError(
++                    "CVAT-authoritative no-BBox allowance requires the v5 schema"
++                )
++            if "manual_review_fullvideo_frames" not in handle:
++                raise AssertionError("missing CVAT-authoritative frame provenance")
++            provenance = handle["manual_review_fullvideo_frames"]
++            for name in (
++                "frame_order",
++                "label_authority",
++                "cvat_mask_status",
++            ):
++                if name not in provenance:
++                    raise AssertionError(
++                        f"missing manual_review_fullvideo_frames/{name}"
++                    )
++            provenance_orders = provenance["frame_order"][:].astype(np.int64)
++            authorities = [_decode(value) for value in provenance["label_authority"][:]]
++            mask_statuses = [
++                _decode(value) for value in provenance["cvat_mask_status"][:]
++            ]
++            if not (
++                provenance_orders.size == len(authorities) == len(mask_statuses)
++            ):
++                raise AssertionError("CVAT-authoritative frame provenance is misaligned")
++            authoritative_orders = {
++                int(order)
++                for order, authority, status in zip(
++                    provenance_orders, authorities, mask_statuses, strict=True
++                )
++                if authority == "cvat_snapshot" and status == "positive"
++            }
+ 
+     if frame_order.ndim != 1 or labels.shape != frame_order.shape:
+         raise AssertionError("frame_order and point_label must be aligned 1-D arrays")
+@@ -72,7 +122,25 @@ def audit_file(path: Path) -> dict[str, int]:
+     bbox_frame_values = np.unique(bbox_orders)
+     no_bbox_mask = ~np.isin(frame_order, bbox_frame_values)
+     no_bbox_labels = np.unique(labels[no_bbox_mask])
+-    if no_bbox_labels.size and not np.array_equal(
++    no_bbox_positive_points = int(
++        np.sum(no_bbox_mask & (labels == LABEL_POSITIVE))
++    )
++    if allow_cvat_authoritative_no_bbox_positive:
++        invalid_no_bbox = no_bbox_mask & ~np.isin(
++            labels, np.asarray([LABEL_BACKGROUND, LABEL_POSITIVE])
++        )
++        if np.any(invalid_no_bbox):
++            raise AssertionError("BBox-free authoritative frames contain ignore labels")
++        positive_orders = set(
++            int(value)
++            for value in np.unique(frame_order[no_bbox_mask & (labels == LABEL_POSITIVE)])
++        )
++        if not positive_orders.issubset(authoritative_orders):
++            raise AssertionError(
++                "BBox-free positives lack positive CVAT snapshot provenance: "
++                f"{sorted(positive_orders - authoritative_orders)}"
++            )
++    elif no_bbox_labels.size and not np.array_equal(
+         no_bbox_labels,
+         np.asarray([LABEL_BACKGROUND], dtype=no_bbox_labels.dtype),
+     ):
+@@ -125,7 +193,10 @@ def audit_file(path: Path) -> dict[str, int]:
+         "no_bbox_frames": int(
+             np.setdiff1d(np.unique(frame_order), bbox_frame_values).size
+         ),
+-        "no_bbox_background_points": int(no_bbox_mask.sum()),
++        "no_bbox_background_points": int(
++            np.sum(no_bbox_mask & (labels == LABEL_BACKGROUND))
++        ),
++        "no_bbox_cvat_positive_points": no_bbox_positive_points,
+         "bbox_inside_points": bbox_inside_points,
+         "bbox_nonpositive_ignore_points": bbox_nonpositive_ignore_points,
+         "positive_points": int(np.sum(labels == LABEL_POSITIVE)),
+@@ -144,13 +215,19 @@ def main() -> None:
+         "points": 0,
+         "no_bbox_frames": 0,
+         "no_bbox_background_points": 0,
++        "no_bbox_cvat_positive_points": 0,
+         "bbox_inside_points": 0,
+         "bbox_nonpositive_ignore_points": 0,
+         "positive_points": 0,
+     }
+     for index, path in enumerate(paths, start=1):
+         try:
+-            stats = audit_file(path)
++            stats = audit_file(
++                path,
++                allow_cvat_authoritative_no_bbox_positive=(
++                    args.allow_cvat_authoritative_no_bbox_positive
++                ),
++            )
+         except Exception as exc:
+             raise SystemExit(f"[FAIL] {path}: {type(exc).__name__}: {exc}") from exc
+         for key, value in stats.items():
+diff --git a/Stage2to4/checks/stage4/check_stage4_sampling_sweep_manifest.py b/Stage2to4/checks/stage4/check_stage4_sampling_sweep_manifest.py
+index 2314bdd..b205489 100644
+--- a/Stage2to4/checks/stage4/check_stage4_sampling_sweep_manifest.py
++++ b/Stage2to4/checks/stage4/check_stage4_sampling_sweep_manifest.py
+@@ -14,6 +14,10 @@ if str(REPO_ROOT) not in sys.path:
+ import h5py
+ import numpy as np
+ 
++from pseudo3d.analysis.build_stage4_exclusion_manifest import (
++    build_excluded_manifest,
++    load_exclusions,
++)
+ from pseudo3d.analysis.stage4_sampling_sweep_config import (
+     DenseTeacherConfig,
+     dense_teacher_config_from_mapping,
+@@ -228,6 +232,84 @@ def test_preflight_rejects_unmatched_strict_xml(temp_dir: Path) -> None:
+     assert "No strict VOC BBox matched" in rows[0].error
+ 
+ 
++def test_reversible_video_exclusion_manifest(temp_dir: Path) -> None:
++    source = temp_dir / "source.csv"
++    _write_manifest(
++        source,
++        [
++            {
++                "video_name": "video_keep",
++                "pseudo3d_h5": "keep.h5",
++                "voc_xml_root": "voc",
++                "split": "train",
++                "enabled": "true",
++                "notes": "original keep note",
++            },
++            {
++                "video_name": "20250626_090758_8000",
++                "pseudo3d_h5": "excluded.h5",
++                "voc_xml_root": "voc",
++                "split": "train",
++                "enabled": "true",
++                "notes": "original exclusion note",
++            },
++        ],
++    )
++    exclusions = temp_dir / "exclusions.csv"
++    with exclusions.open("w", newline="", encoding="utf-8") as handle:
++        writer = csv.DictWriter(handle, fieldnames=list(EXCLUSION_FIELDNAMES))
++        writer.writeheader()
++        writer.writerow(
++            {
++                "video_name": "20250626_090758_8000",
++                "reason_code": "local_crop_tracking_drift",
++                "evidence_frames": "15-23",
++                "scope": "stage4_teacher",
++                "recoverable": "true",
++                "notes": "Preserve source data for recropping.",
++            }
++        )
++
++    fieldnames, rows, enabled = build_excluded_manifest(
++        source,
++        load_exclusions(exclusions),
++    )
++    assert fieldnames == [
++        "video_name",
++        "pseudo3d_h5",
++        "voc_xml_root",
++        "split",
++        "enabled",
++        "notes",
++    ]
++    assert len(rows) == 2
++    assert enabled == 1
++    assert rows[0]["enabled"] == "true"
++    assert rows[0]["notes"] == "original keep note"
++    assert rows[1]["enabled"] == "false"
++    assert "local_crop_tracking_drift" in rows[1]["notes"]
++    assert rows[1]["pseudo3d_h5"] == "excluded.h5"
++    assert rows[1]["voc_xml_root"] == "voc"
++
++    duplicate_exclusions = temp_dir / "duplicate_exclusions.csv"
++    duplicate_exclusions.write_text(
++        exclusions.read_text(encoding="utf-8")
++        + "20250626_090758_8000,duplicate,15-23,stage4_teacher,true,duplicate\n",
++        encoding="utf-8",
++    )
++    _assert_raises(ValueError, lambda: load_exclusions(duplicate_exclusions))
++
++
++EXCLUSION_FIELDNAMES = (
++    "video_name",
++    "reason_code",
++    "evidence_frames",
++    "scope",
++    "recoverable",
++    "notes",
++)
++
++
+ def main() -> None:
+     test_teacher_config_is_fixed_and_fingerprinted()
+     print("[OK] fixed teacher config and fingerprint")
+@@ -240,6 +322,8 @@ def main() -> None:
+         print("[OK] manifest and teacher validation failures")
+         test_preflight_rejects_unmatched_strict_xml(temp_dir)
+         print("[OK] unmatched strict XML rejection")
++        test_reversible_video_exclusion_manifest(temp_dir)
++        print("[OK] reversible Stage 4 video exclusion manifest")
+ 
+     print("Stage 4 sampling sweep manifest checks passed.")
+ 
+diff --git a/Stage2to4/pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh b/Stage2to4/pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
+index 3d6351f..6a4e675 100644
+--- a/Stage2to4/pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
++++ b/Stage2to4/pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
+@@ -1,31 +1,30 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
+ 
+-# Export both raw and annotation-colored PLY files for the complete 260711
+-# BBox-ranked v2 dataset without rebuilding point-cloud H5 files.
++# Export both raw and annotation-colored PLY files from the accepted Stage 4
++# teacher v6 H5 files without rebuilding point-cloud H5 files.
+ 
+ PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
+ REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
+ DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
++DATE="${DATE:-260711}"
+ SAMPLING_RUN_NAME="${SAMPLING_RUN_NAME:-global_local_l75_w31_c12_area15}"
+-TEACHER_RUN_NAME="${TEACHER_RUN_NAME:-bboxrank_v2_nobbox_bg}"
+-V2_RUN_NAME="${V2_RUN_NAME:-${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
++TEACHER_RUN_NAME="${TEACHER_RUN_NAME:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
++RUN_NAME="${RUN_NAME:-${SAMPLING_RUN_NAME}_${TEACHER_RUN_NAME}}"
+ 
+-SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SAMPLING_RUN_NAME}}"
+-V2_RUN_ROOT="${V2_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${V2_RUN_NAME}}"
+-RAW_H5_ROOT="${RAW_H5_ROOT:-${SOURCE_RUN_ROOT}/point_cloud}"
+-ANNOTATED_H5_ROOT="${ANNOTATED_H5_ROOT:-${V2_RUN_ROOT}/annotated}"
+-RAW_PLY_ROOT="${RAW_PLY_ROOT:-${V2_RUN_ROOT}/pointcloud_foreground}"
+-ANNOTATED_PLY_ROOT="${ANNOTATED_PLY_ROOT:-${V2_RUN_ROOT}/pointcloud_annotated_foreground}"
++RUN_ROOT="${RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${RUN_NAME}}"
++RAW_H5_ROOT="${RAW_H5_ROOT:-${RUN_ROOT}/collected}"
++ANNOTATED_H5_ROOT="${ANNOTATED_H5_ROOT:-${RUN_ROOT}/collected}"
++RAW_PLY_ROOT="${RAW_PLY_ROOT:-${RUN_ROOT}/pointcloud_foreground}"
++ANNOTATED_PLY_ROOT="${ANNOTATED_PLY_ROOT:-${RUN_ROOT}/pointcloud_annotated_foreground}"
+ 
+-POINT_CLOUD_TAG="foreground_combined_v2_${SAMPLING_RUN_NAME}"
+-ANNOTATED_TAG="${POINT_CLOUD_TAG}_${TEACHER_RUN_NAME}"
+-RAW_H5_PATTERN="*_pointcloud_${POINT_CLOUD_TAG}.h5"
+-ANNOTATED_H5_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.h5"
+-RAW_PLY_PATTERN="*_pointcloud_${POINT_CLOUD_TAG}.ply"
+-ANNOTATED_PLY_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.ply"
++ANNOTATED_TAG="foreground_combined_v2_${RUN_NAME}"
++RAW_H5_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.h5"
++ANNOTATED_H5_PATTERN="${RAW_H5_PATTERN}"
++RAW_PLY_PATTERN="*_pointcloud_annotated_${ANNOTATED_TAG}.ply"
++ANNOTATED_PLY_PATTERN="${RAW_PLY_PATTERN}"
+ 
+-EXPECTED_FILES="${EXPECTED_FILES:-182}"
++EXPECTED_FILES="${EXPECTED_FILES:-181}"
+ SKIP_EXISTING="${SKIP_EXISTING:-1}"
+ 
+ cd "${REPO_ROOT}"
+@@ -73,13 +72,14 @@ if [[ "${SKIP_EXISTING}" == "1" ]]; then
+   skip_args+=(--skip_existing)
+ fi
+ 
+-echo "Stage 4 BBox-ranked point-cloud visualization export"
+-echo "  raw H5 root       : ${RAW_H5_ROOT}"
+-echo "  annotated H5 root : ${ANNOTATED_H5_ROOT}"
+-echo "  raw PLY root      : ${RAW_PLY_ROOT}"
++echo "Stage 4 teacher v6 point-cloud visualization export"
++echo "  teacher            : ${TEACHER_RUN_NAME}"
++echo "  raw H5 root        : ${RAW_H5_ROOT}"
++echo "  annotated H5 root  : ${ANNOTATED_H5_ROOT}"
++echo "  raw PLY root       : ${RAW_PLY_ROOT}"
+ echo "  annotated PLY root: ${ANNOTATED_PLY_ROOT}"
+-echo "  input files       : raw=${raw_h5_count}, annotated=${annotated_h5_count}"
+-echo "  skip existing     : ${SKIP_EXISTING}"
++echo "  input files        : raw=${raw_h5_count}, annotated=${annotated_h5_count}"
++echo "  skip existing      : ${SKIP_EXISTING}"
+ 
+ echo
+ echo "[1/2] Exporting pointcloud_foreground PLY files"
+@@ -107,7 +107,7 @@ echo "[2/2] Exporting pointcloud_annotated_foreground PLY files"
+   --summary_csv "${ANNOTATED_PLY_ROOT}/summary.csv" \
+   --no_annotation_only_output \
+   --background_mode dim \
+-  --color_mode annotation_source \
++  --color_mode annotation \
+   --femur_color "255,64,32" \
+   --global_color "255,255,255" \
+   --local_percentile_color "64,200,255" \
+diff --git a/Stage5/checks/dummy/check_dummy_pointnext_s_training.py b/Stage5/checks/dummy/check_dummy_pointnext_s_training.py
+index 8128cac..2c69e69 100644
+--- a/Stage5/checks/dummy/check_dummy_pointnext_s_training.py
++++ b/Stage5/checks/dummy/check_dummy_pointnext_s_training.py
+@@ -15,6 +15,7 @@ import torch
+ 
+ from checks.dummy.check_dummy_pointnext_s_forward import make_window_dummy_h5
+ from stage5.models import build_stage5_model
++from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
+ 
+ 
+ def write_list_file(path: Path, h5_paths: list[Path]) -> None:
+@@ -94,6 +95,8 @@ def run_training(
+         str(args.window_stride_frames),
+         "--batch_size",
+         str(args.batch_size),
++        "--gradient_accumulation_steps",
++        str(args.gradient_accumulation_steps),
+         "--epochs",
+         str(args.epochs),
+         "--lr",
+@@ -114,6 +117,10 @@ def run_training(
+         str(args.nsample),
+         "--pointnext_sa_layers",
+         str(args.sa_layers),
++        "--pointnext_norm",
++        args.pointnext_norm,
++        "--pointnext_norm_groups",
++        str(args.pointnext_norm_groups),
+         "--num_workers",
+         "0",
+         "--device",
+@@ -130,7 +137,13 @@ def run_training(
+     subprocess.run(cmd, check=True)
+ 
+ 
+-def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict:
++def validate_training_outputs(
++    output_dir: Path,
++    *,
++    expected_epochs: int,
++    expected_batch_size: int,
++    expected_gradient_accumulation_steps: int,
++) -> dict:
+     required_paths = [
+         output_dir / "config.json",
+         output_dir / "metrics.jsonl",
+@@ -152,6 +165,19 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
+         raise AssertionError(f"Unexpected window_mode in config.json: {config.get('window_mode')}")
+     if int(config.get("feature_dim", -1)) != 2:
+         raise AssertionError(f"Unexpected feature_dim in config.json: {config.get('feature_dim')}")
++    if int(config.get("batch_size", 0)) != expected_batch_size:
++        raise AssertionError(
++            f"Unexpected batch size: {config.get('batch_size')} != {expected_batch_size}"
++        )
++    if (
++        int(config.get("gradient_accumulation_steps", 0))
++        != expected_gradient_accumulation_steps
++    ):
++        raise AssertionError(
++            "Unexpected gradient accumulation setting: "
++            f"{config.get('gradient_accumulation_steps')} != "
++            f"{expected_gradient_accumulation_steps}"
++        )
+ 
+     records = []
+     with (output_dir / "metrics.jsonl").open("r", encoding="utf-8") as f:
+@@ -162,6 +188,11 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
+     if len(records) != expected_epochs:
+         raise AssertionError(f"Expected {expected_epochs} metric records, got {len(records)}")
+ 
++    num_train_samples = int(config["num_train_samples"])
++    expected_microbatches = math.ceil(num_train_samples / expected_batch_size)
++    expected_optimizer_steps = math.ceil(
++        expected_microbatches / expected_gradient_accumulation_steps
++    )
+     for record in records:
+         train = record.get("train") or {}
+         val = record.get("val") or {}
+@@ -180,6 +211,21 @@ def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict
+             ):
+                 if key not in metrics:
+                     raise AssertionError(f"{split} metrics do not contain {key}")
++        if int(train.get("debug_microbatch_count", -1)) != expected_microbatches:
++            raise AssertionError(
++                "Unexpected train microbatch count: "
++                f"{train.get('debug_microbatch_count')} != {expected_microbatches}"
++            )
++        if int(train.get("debug_optimizer_step_count", -1)) != expected_optimizer_steps:
++            raise AssertionError(
++                "Unexpected optimizer step count: "
++                f"{train.get('debug_optimizer_step_count')} != {expected_optimizer_steps}"
++            )
++        if (
++            int(train.get("debug_gradient_accumulation_steps", -1))
++            != expected_gradient_accumulation_steps
++        ):
++            raise AssertionError("Training metrics lost the gradient accumulation setting")
+ 
+     return config
+ 
+@@ -197,6 +243,8 @@ def validate_checkpoint_reload(output_dir: Path, config: dict, *, device: str) -
+         pointnext_nsample=int(config["pointnext_nsample"]),
+         pointnext_sa_layers=int(config["pointnext_sa_layers"]),
+         pointnext_sa_use_res=bool(config["pointnext_sa_use_res"]),
++        pointnext_norm=str(config.get("pointnext_norm", "batchnorm")),
++        pointnext_norm_groups=int(config.get("pointnext_norm_groups", 8)),
+     )
+     result = model.load_state_dict(checkpoint["model"], strict=True)
+     if result.missing_keys or result.unexpected_keys:
+@@ -218,6 +266,7 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--window_size_frames", type=int, default=8)
+     parser.add_argument("--window_stride_frames", type=int, default=4)
+     parser.add_argument("--batch_size", type=int, default=1)
++    parser.add_argument("--gradient_accumulation_steps", type=int, default=2)
+     parser.add_argument("--epochs", type=int, default=1)
+     parser.add_argument("--width", type=int, default=32)
+     parser.add_argument("--expansion", type=int, default=4)
+@@ -227,6 +276,10 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--sa_layers", type=int, default=2)
+     parser.add_argument("--no_sa_use_res", dest="sa_use_res", action="store_false")
+     parser.set_defaults(sa_use_res=True)
++    parser.add_argument(
++        "--pointnext_norm", choices=sorted(SUPPORTED_POINTNEXT_NORMS), default="batchnorm"
++    )
++    parser.add_argument("--pointnext_norm_groups", type=int, default=8)
+     parser.add_argument("--lr", type=float, default=1e-3)
+     parser.add_argument("--weight_decay", type=float, default=0.0)
+     parser.add_argument("--seed", type=int, default=123)
+@@ -238,6 +291,8 @@ def main() -> None:
+     args = parse_args()
+     if args.device != "cuda":
+         raise RuntimeError("PointNeXt-S training smoke test requires --device cuda")
++    if args.batch_size != 1:
++        raise ValueError("Padding-free PointNeXt-S training smoke test requires --batch_size 1")
+     if not torch.cuda.is_available():
+         raise RuntimeError("CUDA is not available")
+ 
+@@ -258,7 +313,12 @@ def main() -> None:
+         output_dir=output_dir,
+         args=args,
+     )
+-    config = validate_training_outputs(output_dir, expected_epochs=args.epochs)
++    config = validate_training_outputs(
++        output_dir,
++        expected_epochs=args.epochs,
++        expected_batch_size=args.batch_size,
++        expected_gradient_accumulation_steps=args.gradient_accumulation_steps,
++    )
+     validate_checkpoint_reload(output_dir, config, device=args.device)
+ 
+     print("PointNeXt-S Stage5 training CLI check passed.")
+diff --git a/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh b/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh
+index cf5f153..5d40adc 100755
+--- a/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh
++++ b/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh
+@@ -30,7 +30,7 @@ export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/Point
+ # ------------------------------------------------------------
+ # Dummy data / training settings
+ # ------------------------------------------------------------
+-WORK_DIR="${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_training_check"
++WORK_DIR="${WORK_DIR:-${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_training_check_${POINTNEXT_NORM:-batchnorm}}"
+ NUM_TRAIN=2
+ NUM_VAL=1
+ NUM_FRAMES=16
+@@ -38,6 +38,7 @@ POINTS_PER_FRAME=64
+ WINDOW_SIZE_FRAMES=8
+ WINDOW_STRIDE_FRAMES=4
+ BATCH_SIZE=1
++GRADIENT_ACCUMULATION_STEPS=2
+ EPOCHS=1
+ 
+ WIDTH=32
+@@ -47,6 +48,8 @@ RADIUS=0.1
+ NSAMPLE=16
+ SA_LAYERS=2
+ SA_USE_RES=1
++POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
++POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
+ 
+ LR=1e-3
+ WEIGHT_DECAY=0.0
+@@ -62,8 +65,10 @@ echo "  train/val files : ${NUM_TRAIN}/${NUM_VAL}"
+ echo "  frames/points   : ${NUM_FRAMES}/${POINTS_PER_FRAME}"
+ echo "  window frames   : size=${WINDOW_SIZE_FRAMES}, stride=${WINDOW_STRIDE_FRAMES}"
+ echo "  batch/epochs    : ${BATCH_SIZE}/${EPOCHS}"
++echo "  grad accumulation: ${GRADIENT_ACCUMULATION_STEPS}"
+ echo "  model width     : ${WIDTH}"
+ echo "  radius/nsample  : ${RADIUS}/${NSAMPLE}"
++echo "  norm/groups     : ${POINTNEXT_NORM}/${POINTNEXT_NORM_GROUPS}"
+ 
+ cmd=(
+   "${PYTHON}" "${SCRIPT_DIR}/checks/dummy/check_dummy_pointnext_s_training.py"
+@@ -75,6 +80,7 @@ cmd=(
+   --window_size_frames "${WINDOW_SIZE_FRAMES}"
+   --window_stride_frames "${WINDOW_STRIDE_FRAMES}"
+   --batch_size "${BATCH_SIZE}"
++  --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}"
+   --epochs "${EPOCHS}"
+   --width "${WIDTH}"
+   --expansion "${EXPANSION}"
+@@ -82,6 +88,8 @@ cmd=(
+   --radius "${RADIUS}"
+   --nsample "${NSAMPLE}"
+   --sa_layers "${SA_LAYERS}"
++  --pointnext_norm "${POINTNEXT_NORM}"
++  --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
+   --lr "${LR}"
+   --weight_decay "${WEIGHT_DECAY}"
+   --seed "${SEED}"
+diff --git a/Stage5/checks/dummy/check_dummy_training.py b/Stage5/checks/dummy/check_dummy_training.py
+index 486ac92..bf32809 100644
+--- a/Stage5/checks/dummy/check_dummy_training.py
++++ b/Stage5/checks/dummy/check_dummy_training.py
+@@ -17,7 +17,7 @@ import torch
+ 
+ from checks.dummy.check_dummy_inference import make_dummy_pointcloud_h5, validate_outputs
+ from stage5.models import build_stage5_model
+-from stage5.training import compute_segmentation_metrics
++from stage5.training import build_loss, compute_segmentation_metrics
+ 
+ 
+ CONFUSION_METRIC_KEYS = (
+@@ -84,6 +84,57 @@ def validate_confusion_metric_semantics() -> None:
+         )
+ 
+ 
++def validate_accumulated_loss_semantics() -> None:
++    loss_fn = build_loss(
++        "cross_entropy",
++        ignore_index=-1,
++        class_weight=[0.5, 1.5],
++        label_smoothing=0.0,
++    )
++    microbatches = [
++        {
++            "logits": torch.tensor([[[2.0, -1.0], [-0.5, 1.5]]]),
++            "labels": torch.tensor([[0, 1]]),
++            "valid_mask": torch.tensor([[True, True]]),
++        },
++        {
++            "logits": torch.tensor([[[0.2, 0.8], [1.0, -0.2], [0.1, 0.3]]]),
++            "labels": torch.tensor([[1, 0, -1]]),
++            "valid_mask": torch.tensor([[True, True, False]]),
++        },
++    ]
++
++    accumulated_sum = torch.zeros(())
++    accumulated_normalizer = torch.zeros(())
++    combined_logits: list[torch.Tensor] = []
++    combined_labels: list[torch.Tensor] = []
++    combined_masks: list[torch.Tensor] = []
++    for microbatch in microbatches:
++        result = loss_fn(
++            {"logits": microbatch["logits"]},
++            {"labels": microbatch["labels"], "valid_mask": microbatch["valid_mask"]},
++        )
++        accumulated_sum = accumulated_sum + result["loss_sum"]
++        accumulated_normalizer = accumulated_normalizer + result["loss_normalizer"]
++        combined_logits.append(microbatch["logits"].reshape(-1, 2))
++        combined_labels.append(microbatch["labels"].reshape(-1))
++        combined_masks.append(microbatch["valid_mask"].reshape(-1))
++
++    combined_result = loss_fn(
++        {"logits": torch.cat(combined_logits, dim=0).unsqueeze(0)},
++        {
++            "labels": torch.cat(combined_labels, dim=0).unsqueeze(0),
++            "valid_mask": torch.cat(combined_masks, dim=0).unsqueeze(0),
++        },
++    )
++    accumulated_loss = accumulated_sum / accumulated_normalizer
++    if not torch.allclose(accumulated_loss, combined_result["loss"], atol=1e-7, rtol=1e-7):
++        raise AssertionError(
++            "Accumulated weighted CE differs from combined CE: "
++            f"{float(accumulated_loss)} != {float(combined_result['loss'])}"
++        )
++
++
+ def write_list_file(path: Path, h5_paths: list[Path]) -> None:
+     path.parent.mkdir(parents=True, exist_ok=True)
+     with path.open("w", encoding="utf-8") as f:
+@@ -144,6 +195,8 @@ def run_training(
+         str(args.sample_points),
+         "--batch_size",
+         str(args.batch_size),
++        "--gradient_accumulation_steps",
++        str(args.gradient_accumulation_steps),
+         "--epochs",
+         str(args.epochs),
+         "--lr",
+@@ -182,6 +235,8 @@ def validate_training_outputs(
+     *,
+     expected_epochs: int,
+     expected_window_mode: str,
++    expected_batch_size: int,
++    expected_gradient_accumulation_steps: int,
+ ) -> None:
+     config_path = output_dir / "config.json"
+     metrics_path = output_dir / "metrics.jsonl"
+@@ -201,6 +256,19 @@ def validate_training_outputs(
+         raise AssertionError(f"Unexpected feature_dim in config.json: {config.get('feature_dim')}")
+     if config.get("window_mode") != expected_window_mode:
+         raise AssertionError(f"Unexpected window_mode in config.json: {config.get('window_mode')}")
++    if int(config.get("batch_size", 0)) != expected_batch_size:
++        raise AssertionError(
++            f"Unexpected batch size: {config.get('batch_size')} != {expected_batch_size}"
++        )
++    if (
++        int(config.get("gradient_accumulation_steps", 0))
++        != expected_gradient_accumulation_steps
++    ):
++        raise AssertionError(
++            "Unexpected gradient accumulation setting: "
++            f"{config.get('gradient_accumulation_steps')} != "
++            f"{expected_gradient_accumulation_steps}"
++        )
+     if expected_window_mode == "overlap":
+         for name in ["train_window_summary.csv", "val_window_summary.csv"]:
+             path = output_dir / name
+@@ -220,6 +288,11 @@ def validate_training_outputs(
+     if len(records) != expected_epochs:
+         raise AssertionError(f"Expected {expected_epochs} metric records, got {len(records)}")
+ 
++    num_train_samples = int(config["num_train_samples"])
++    expected_microbatches = math.ceil(num_train_samples / expected_batch_size)
++    expected_optimizer_steps = math.ceil(
++        expected_microbatches / expected_gradient_accumulation_steps
++    )
+     for record in records:
+         train = record.get("train") or {}
+         val = record.get("val") or {}
+@@ -239,6 +312,21 @@ def validate_training_outputs(
+             ]:
+                 if key not in metrics:
+                     raise AssertionError(f"{name} metrics do not contain {key}")
++        if int(train.get("debug_microbatch_count", -1)) != expected_microbatches:
++            raise AssertionError(
++                "Unexpected train microbatch count: "
++                f"{train.get('debug_microbatch_count')} != {expected_microbatches}"
++            )
++        if int(train.get("debug_optimizer_step_count", -1)) != expected_optimizer_steps:
++            raise AssertionError(
++                "Unexpected optimizer step count: "
++                f"{train.get('debug_optimizer_step_count')} != {expected_optimizer_steps}"
++            )
++        if (
++            int(train.get("debug_gradient_accumulation_steps", -1))
++            != expected_gradient_accumulation_steps
++        ):
++            raise AssertionError("Training metrics lost the gradient accumulation setting")
+ 
+     checkpoint = torch.load(best_path, map_location="cpu")
+     if "model" not in checkpoint or "config" not in checkpoint:
+@@ -303,6 +391,7 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--num_points", type=int, default=512)
+     parser.add_argument("--sample_points", type=int, default=128)
+     parser.add_argument("--batch_size", type=int, default=2)
++    parser.add_argument("--gradient_accumulation_steps", type=int, default=2)
+     parser.add_argument("--epochs", type=int, default=2)
+     parser.add_argument("--width", type=int, default=16)
+     parser.add_argument("--depth", type=int, default=2)
+@@ -325,6 +414,7 @@ def main() -> None:
+         raise ValueError("--num_val must be positive")
+ 
+     validate_confusion_metric_semantics()
++    validate_accumulated_loss_semantics()
+ 
+     work_dir = Path(args.work_dir)
+     train_list, val_list, inference_input = make_dummy_dataset(
+@@ -346,6 +436,8 @@ def main() -> None:
+         run_dir,
+         expected_epochs=args.epochs,
+         expected_window_mode=args.window_mode,
++        expected_batch_size=args.batch_size,
++        expected_gradient_accumulation_steps=args.gradient_accumulation_steps,
+     )
+ 
+     output_h5 = work_dir / "trained_dummy_prediction.h5"
+diff --git a/Stage5/evaluate_stage5.py b/Stage5/evaluate_stage5.py
+index 6ba308f..8edf749 100644
+--- a/Stage5/evaluate_stage5.py
++++ b/Stage5/evaluate_stage5.py
+@@ -197,6 +197,8 @@ def model_from_checkpoint(
+                 "pointnext_sa_use_res": bool(
+                     config.get("pointnext_sa_use_res", config.get("sa_use_res", True))
+                 ),
++                "pointnext_norm": str(config.get("pointnext_norm", "batchnorm")),
++                "pointnext_norm_groups": int(config.get("pointnext_norm_groups", 8)),
+             }
+         )
+ 
+diff --git a/Stage5/evaluate_stage5.sh b/Stage5/evaluate_stage5.sh
+index 59abb41..3b91fbe 100755
+--- a/Stage5/evaluate_stage5.sh
++++ b/Stage5/evaluate_stage5.sh
+@@ -28,16 +28,16 @@ export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/Point
+ # Training run to evaluate
+ # ------------------------------------------------------------
+ DATE="${DATE:-260711}"
+-EX_DATE="${EX_DATE:-260817}"
++EX_DATE="${EX_DATE:-260908}"
+ RUN_ROOT="${RUN_ROOT:-/mnt/data/3d_projects/stage5_runs}"
+-PREFIX="${PREFIX:-w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep150_bs8}"
++PREFIX="${PREFIX:-w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
+ DEFAULT_EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
+ RUN_DIR="${RUN_DIR:-${RUN_ROOT}/${EX_DATE}/${DEFAULT_EXPERIMENT_NAME}}"
+ EXPERIMENT_NAME="${EXPERIMENT_NAME:-$(basename "${RUN_DIR}")}"
+ 
+ # Space-separated checkpoint filenames. Override this environment variable to
+ # evaluate a different set without editing the Python evaluator.
+-CHECKPOINT_NAMES="${CHECKPOINT_NAMES:-checkpoint_epoch_0030.pt checkpoint_epoch_0100.pt checkpoint_epoch_0150.pt best.pt}"
++CHECKPOINT_NAMES="${CHECKPOINT_NAMES:-checkpoint_epoch_0030.pt checkpoint_epoch_0100.pt checkpoint_epoch_0150.pt checkpoint_epoch_0200.pt best.pt}"
+ 
+ # ------------------------------------------------------------
+ # Evaluation selection and outputs
+@@ -60,7 +60,7 @@ VAL_LIST="${RUN_DIR}/val_files.txt"
+ #   Stage2to4/pseudo3d/pipelines/export_stage4_bbox_ranked_pointcloud_visualizations.sh
+ DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
+ STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
+-STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v2_nobbox_bg}"
++STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
+ STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
+ STAGE4_RUN_ROOT="${STAGE4_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}}"
+ RAW_REFERENCE_PLY_DIR="${RAW_REFERENCE_PLY_DIR:-${STAGE4_RUN_ROOT}/pointcloud_foreground}"
+diff --git a/Stage5/export_anonymized_stage5_metrics.sh b/Stage5/export_anonymized_stage5_metrics.sh
+index 63ad4a6..af0e7c0 100755
+--- a/Stage5/export_anonymized_stage5_metrics.sh
++++ b/Stage5/export_anonymized_stage5_metrics.sh
+@@ -9,10 +9,10 @@ cd "${SCRIPT_DIR}"
+ PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
+ 
+ DATE="${DATE:-260711}"
+-EX_DATE="${EX_DATE:-260801}"
++EX_DATE="${EX_DATE:-260908}"
+ RUN_ROOT="${RUN_ROOT:-/mnt/data/3d_projects/stage5_runs}"
+ EVALUATION_ROOT="${EVALUATION_ROOT:-/mnt/data/3d_projects/stage5_evaluations}"
+-PREFIX="${PREFIX:-w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep150_bs8}"
++PREFIX="${PREFIX:-w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
+ DEFAULT_EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
+ RUN_DIR="${RUN_DIR:-${RUN_ROOT}/${EX_DATE}/${DEFAULT_EXPERIMENT_NAME}}"
+ EXPERIMENT_NAME="${EXPERIMENT_NAME:-$(basename "${RUN_DIR}")}"
+diff --git a/Stage5/infer_stage5.py b/Stage5/infer_stage5.py
+index 0683285..6fdfb75 100644
+--- a/Stage5/infer_stage5.py
++++ b/Stage5/infer_stage5.py
+@@ -17,6 +17,7 @@ from tqdm import tqdm
+ 
+ from stage5.models import build_stage5_model
+ from stage5.models.model_factory import _extract_state_dict
++from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
+ from stage5.utils.feature_normalization import (
+     normalize_frame_order,
+     normalize_pixel_xy,
+@@ -110,6 +111,8 @@ def resolve_model_kwargs(args: argparse.Namespace, config: dict[str, Any], featu
+                 "pointnext_sa_use_res": bool(
+                     value("pointnext_sa_use_res", config.get("sa_use_res", True))
+                 ),
++                "pointnext_norm": str(value("pointnext_norm", "batchnorm")),
++                "pointnext_norm_groups": int(value("pointnext_norm_groups", 8)),
+             }
+         )
+     return kwargs
+@@ -468,6 +471,8 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--pointnext_sa_layers", type=int, default=None)
+     parser.add_argument("--pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_true", default=None)
+     parser.add_argument("--no_pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_false")
++    parser.add_argument("--pointnext_norm", choices=sorted(SUPPORTED_POINTNEXT_NORMS), default=None)
++    parser.add_argument("--pointnext_norm_groups", type=int, default=None)
+     parser.add_argument("--window_size_frames", type=int, default=None)
+     parser.add_argument("--window_stride_frames", type=int, default=None)
+     parser.add_argument("--include_tail_window", dest="include_tail_window", action="store_true", default=None)
+diff --git a/Stage5/infer_stage5.sh b/Stage5/infer_stage5.sh
+index d412a7d..f5d9f3b 100755
+--- a/Stage5/infer_stage5.sh
++++ b/Stage5/infer_stage5.sh
+@@ -4,10 +4,10 @@ set -euo pipefail
+ # ------------------------------------------------------------
+ # Run Stage 5 inference on collected annotated pseudo-3D point-cloud H5 files.
+ #
+-# This script expects annotated point-cloud H5 files already collected into one
+-# flat directory by:
++# This script expects the accepted Stage 4 teacher v6 H5 files collected into
++# one flat directory by:
+ #
+-#   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
++#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
+ #
+ # Edit the path/parameter blocks below, then run:
+ #
+@@ -39,20 +39,20 @@ export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:$
+ export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/PointNeXt/openpoints:${PYTHONPATH:-}"
+ 
+ DATE="${DATE:-260711}"
+-EX_DATE="${EX_DATE:-260714}"
++EX_DATE="${EX_DATE:-260908}"
+ 
+ # ------------------------------------------------------------
+ # input path info
+ # ------------------------------------------------------------
+ DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
+-
+-# Directory created by:
+-#   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
+-INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/${DATE}}"
++STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
++STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
++STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
++INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
+ 
+ MODE="${MODE:-foreground}"
+-H5_PATTERN="${H5_PATTERN:-*_annotated_${MODE}.h5}"
+-INPUT_FILENAME_SUFFIX="${INPUT_FILENAME_SUFFIX:-_pointcloud_annotated_${MODE}.h5}"
++H5_PATTERN="${H5_PATTERN:-*_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
++INPUT_FILENAME_SUFFIX="${INPUT_FILENAME_SUFFIX:-_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
+ 
+ # Optional single-video/file filter. Leave empty to process all matched H5s.
+ # Example:
+@@ -84,17 +84,17 @@ POINTNEXT_SA_USE_RES=1
+ # ------------------------------------------------------------
+ # checkpoint path info
+ # ------------------------------------------------------------
+-RUN_ROOT="/mnt/data/3d_projects/stage5_runs"
++RUN_ROOT="${RUN_ROOT:-/mnt/data/3d_projects/stage5_runs}"
+ MODEL="pointnext_s"
+-PREFIX="w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_ce_smooth00_auto_weight_lr1e3_ep200"
++PREFIX="${PREFIX:-w${WINDOW_SIZE_FRAMES}_s${WINDOW_STRIDE_FRAMES}_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs1_acc8_nopad}"
+ EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
+-CHECKPOINT_NAME="checkpoint_epoch_0150.pt"
+-CHECKPOINT="${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
++CHECKPOINT_NAME="${CHECKPOINT_NAME:-best.pt}"
++CHECKPOINT="${CHECKPOINT:-${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}}"
+ 
+ # ------------------------------------------------------------
+ # output path info
+ # ------------------------------------------------------------
+-PRED_ROOT="/mnt/data/3d_projects/stage5_predictions/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}"
++PRED_ROOT="${PRED_ROOT:-/mnt/data/3d_projects/stage5_predictions/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}}"
+ 
+ # Leave empty to use feature_names stored in checkpoint config.
+ FEATURES_OVERRIDE=""
+@@ -115,7 +115,7 @@ fi
+ 
+ if [[ ! -d "${INPUT_DIR}" ]]; then
+   echo "Input directory not found: ${INPUT_DIR}" >&2
+-  echo "Run Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh first." >&2
++  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh first." >&2
+   exit 1
+ fi
+ 
+diff --git a/Stage5/stage5/models/pointnext_s_segmentor.py b/Stage5/stage5/models/pointnext_s_segmentor.py
+index ff979cf..33fa88b 100644
+--- a/Stage5/stage5/models/pointnext_s_segmentor.py
++++ b/Stage5/stage5/models/pointnext_s_segmentor.py
+@@ -7,6 +7,8 @@ from typing import Any
+ import torch
+ 
+ from .base_segmentor import BasePointSegmentor
++from .norm_layers import resolve_pointnext_norm_args
++from .pointnext_decoder_patch import ensure_stage5_pointnext_decoder_registered
+ 
+ 
+ class AttrDict(dict):
+@@ -54,7 +56,10 @@ def build_pointnext_s_config(
+     nsample: int = 16,
+     sa_layers: int = 2,
+     sa_use_res: bool = True,
++    norm: str = "batchnorm",
++    norm_groups: int = 8,
+ ) -> AttrDict:
++    norm_args = resolve_pointnext_norm_args(norm, norm_groups)
+     return _attrdict(
+         {
+             "NAME": "BaseSeg",
+@@ -83,21 +88,23 @@ def build_pointnext_s_config(
+                 "act_args": {
+                     "act": "relu",
+                 },
+-                "norm_args": {
+-                    "norm": "bn",
+-                },
++                "norm_args": dict(norm_args),
+             },
++            # NAME="Stage5PointNextDecoder", not the official "PointNextDecoder":
++            # the official class accepts norm_args/act_args via **kwargs but never
++            # actually uses them (see pointnext_decoder_patch.py), so decoder norm
++            # would otherwise stay hardcoded to FeaturePropogation's own bn1d default
++            # regardless of what is configured here.
+             "decoder_args": {
+-                "NAME": "PointNextDecoder",
++                "NAME": "Stage5PointNextDecoder",
++                "norm_args": dict(norm_args),
+             },
+             "cls_args": {
+                 "NAME": "SegHead",
+                 "num_classes": int(num_classes),
+                 "in_channels": None,
+                 "dropout": float(dropout),
+-                "norm_args": {
+-                    "norm": "bn",
+-                },
++                "norm_args": dict(norm_args),
+             },
+         }
+     )
+@@ -118,6 +125,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
+         nsample: int = 16,
+         sa_layers: int = 2,
+         sa_use_res: bool = True,
++        pointnext_norm: str = "batchnorm",
++        pointnext_norm_groups: int = 8,
+     ) -> None:
+         super().__init__(num_classes=num_classes, feature_dim=feature_dim)
+         self.width = int(width)
+@@ -127,6 +136,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
+         self.nsample = int(nsample)
+         self.sa_layers = int(sa_layers)
+         self.sa_use_res = bool(sa_use_res)
++        self.pointnext_norm = str(pointnext_norm)
++        self.pointnext_norm_groups = int(pointnext_norm_groups)
+ 
+         _ensure_openpoints_importable()
+         try:
+@@ -136,6 +147,7 @@ class PointNeXtSSegmentor(BasePointSegmentor):
+                 "Failed to import OpenPoints. Ensure PointNeXt/openpoints dependencies "
+                 "are installed in the active environment."
+             ) from exc
++        ensure_stage5_pointnext_decoder_registered()
+ 
+         cfg = build_pointnext_s_config(
+             num_classes=self.num_classes,
+@@ -147,6 +159,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
+             nsample=self.nsample,
+             sa_layers=self.sa_layers,
+             sa_use_res=self.sa_use_res,
++            norm=self.pointnext_norm,
++            norm_groups=self.pointnext_norm_groups,
+         )
+         self.pointnext = build_model_from_cfg(cfg)
+ 
+@@ -201,6 +215,8 @@ class PointNeXtSSegmentor(BasePointSegmentor):
+                 "nsample": self.nsample,
+                 "sa_layers": self.sa_layers,
+                 "sa_use_res": self.sa_use_res,
++                "pointnext_norm": self.pointnext_norm,
++                "pointnext_norm_groups": self.pointnext_norm_groups,
+             }
+         )
+         return config
+@@ -219,6 +235,8 @@ def pointnext_s(
+     nsample = int(kwargs.pop("nsample", kwargs.pop("pointnext_nsample", 16)))
+     sa_layers = int(kwargs.pop("sa_layers", kwargs.pop("pointnext_sa_layers", 2)))
+     sa_use_res = bool(kwargs.pop("sa_use_res", kwargs.pop("pointnext_sa_use_res", True)))
++    pointnext_norm = str(kwargs.pop("norm", kwargs.pop("pointnext_norm", "batchnorm")))
++    pointnext_norm_groups = int(kwargs.pop("norm_groups", kwargs.pop("pointnext_norm_groups", 8)))
+ 
+     # Accepted for compatibility with train_stage5.py's shared model kwargs.
+     kwargs.pop("depth", None)
+@@ -238,4 +256,6 @@ def pointnext_s(
+         nsample=nsample,
+         sa_layers=sa_layers,
+         sa_use_res=sa_use_res,
++        pointnext_norm=pointnext_norm,
++        pointnext_norm_groups=pointnext_norm_groups,
+     )
+diff --git a/Stage5/stage5/training/losses.py b/Stage5/stage5/training/losses.py
+index d8a5803..9647729 100644
+--- a/Stage5/stage5/training/losses.py
++++ b/Stage5/stage5/training/losses.py
+@@ -111,6 +111,7 @@ class CrossEntropySegmentationLoss(BaseSegmentationLoss):
+         valid_count = (flat_targets != self.ignore_index).sum()
+         if valid_count.item() == 0:
+             loss = flat_logits.sum() * 0.0
++            loss_normalizer = flat_logits.new_zeros(())
+         else:
+             weight = self.class_weight
+             if weight is not None:
+@@ -122,9 +123,19 @@ class CrossEntropySegmentationLoss(BaseSegmentationLoss):
+                 ignore_index=self.ignore_index,
+                 label_smoothing=self.label_smoothing,
+             )
++            valid_targets = flat_targets[flat_targets != self.ignore_index]
++            if weight is None:
++                loss_normalizer = valid_count.to(dtype=flat_logits.dtype)
++            else:
++                # This matches CrossEntropyLoss mean reduction for hard targets.
++                loss_normalizer = weight[valid_targets].sum()
++
++        loss_sum = loss * loss_normalizer
+ 
+         return {
+             "loss": loss,
++            "loss_sum": loss_sum,
++            "loss_normalizer": loss_normalizer.detach(),
+             "ce_loss": loss.detach(),
+             "valid_point_count": valid_count.detach(),
+         }
+@@ -149,4 +160,3 @@ def build_loss(name: str = "cross_entropy", **kwargs: Any) -> BaseSegmentationLo
+         available = ", ".join(list_losses())
+         raise ValueError(f"Unknown Stage5 loss '{name}'. Available losses: {available}")
+     return _LOSS_BUILDERS[key](**kwargs)
+-
+diff --git a/Stage5/train_stage5.py b/Stage5/train_stage5.py
+index 90ca967..1087969 100644
+--- a/Stage5/train_stage5.py
++++ b/Stage5/train_stage5.py
+@@ -20,6 +20,7 @@ from tqdm import tqdm
+ 
+ from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
+ from stage5.models import build_stage5_model
++from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
+ from stage5.training import SegmentationMetricAccumulator, build_loss
+ 
+ 
+@@ -583,36 +584,74 @@ def run_one_epoch(
+     ignore_index: int = -1,
+     class_weight_info: dict[str, Any] | None = None,
+     label_smoothing: float = 0.0,
++    gradient_accumulation_steps: int = 1,
+ ) -> tuple[float, dict[str, Any]]:
+     is_train = optimizer is not None
++    gradient_accumulation_steps = int(gradient_accumulation_steps)
++    if gradient_accumulation_steps <= 0:
++        raise ValueError("gradient_accumulation_steps must be positive")
+     model.train(is_train)
+     metric_acc = SegmentationMetricAccumulator(device=device, ignore_index=ignore_index)
+     debug_acc = TrainingDebugAccumulator(ignore_index=ignore_index)
+-    total_loss = 0.0
++    total_loss_sum = 0.0
++    total_loss_normalizer = 0.0
+     total_batches = 0
++    optimizer_steps = 0
++    accumulated_microbatches = 0
++    accumulated_normalizer = 0.0
++
++    if is_train:
++        optimizer.zero_grad(set_to_none=True)
+ 
+     iterator = tqdm(loader, desc=f"{desc} epoch {epoch}", leave=False)
+-    for batch in iterator:
++    for batch_index, batch in enumerate(iterator):
+         batch = move_batch_to_device(batch, device)
+ 
+-        if is_train:
+-            optimizer.zero_grad(set_to_none=True)
+-
+         with torch.set_grad_enabled(is_train):
+             output = model(batch)
+             loss_dict = loss_fn(output, batch)
+             loss = loss_dict["loss"]
+             if is_train:
+-                loss.backward()
+-                if grad_clip_norm is not None and grad_clip_norm > 0:
+-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+-                optimizer.step()
++                loss_sum = loss_dict.get("loss_sum")
++                loss_normalizer_tensor = loss_dict.get("loss_normalizer")
++                if loss_sum is None or loss_normalizer_tensor is None:
++                    loss_sum = loss
++                    loss_normalizer = 1.0
++                else:
++                    loss_normalizer = float(loss_normalizer_tensor.detach().item())
++                if loss_normalizer > 0:
++                    loss_sum.backward()
++                accumulated_microbatches += 1
++                accumulated_normalizer += loss_normalizer
++
++                should_step = (
++                    accumulated_microbatches >= gradient_accumulation_steps
++                    or batch_index + 1 == len(loader)
++                )
++                if should_step:
++                    if accumulated_normalizer > 0:
++                        for parameter in model.parameters():
++                            if parameter.grad is not None:
++                                parameter.grad.div_(accumulated_normalizer)
++                        if grad_clip_norm is not None and grad_clip_norm > 0:
++                            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
++                        optimizer.step()
++                        optimizer_steps += 1
++                    optimizer.zero_grad(set_to_none=True)
++                    accumulated_microbatches = 0
++                    accumulated_normalizer = 0.0
+ 
+         metric_acc.update(output, batch)
+         debug_acc.update(output, batch)
+-        total_loss += float(loss.detach().item())
++        loss_normalizer_tensor = loss_dict.get("loss_normalizer")
++        if loss_normalizer_tensor is None:
++            batch_loss_normalizer = 1.0
++        else:
++            batch_loss_normalizer = float(loss_normalizer_tensor.detach().item())
++        total_loss_sum += float(loss.detach().item()) * batch_loss_normalizer
++        total_loss_normalizer += batch_loss_normalizer
+         total_batches += 1
+-        iterator.set_postfix(loss=total_loss / max(total_batches, 1))
++        iterator.set_postfix(loss=total_loss_sum / max(total_loss_normalizer, 1.0))
+ 
+     metrics = metric_acc.compute()
+     metrics.update(debug_acc.compute())
+@@ -621,8 +660,18 @@ def run_one_epoch(
+         class_weight_info=class_weight_info,
+         label_smoothing=label_smoothing,
+     )
+-    avg_loss = total_loss / max(total_batches, 1)
++    avg_loss = total_loss_sum / max(total_loss_normalizer, 1.0)
+     metrics["loss"] = avg_loss
++    metrics["debug_microbatch_count"] = float(total_batches)
++    metrics["debug_optimizer_step_count"] = float(optimizer_steps if is_train else 0)
++    metrics["debug_gradient_accumulation_steps"] = float(
++        gradient_accumulation_steps if is_train else 1
++    )
++    loader_batch_size = int(loader.batch_size) if loader.batch_size is not None else 1
++    metrics["debug_effective_batch_size_samples"] = float(
++        loader_batch_size * (gradient_accumulation_steps if is_train else 1)
++    )
++    metrics["debug_loss_normalizer"] = float(total_loss_normalizer)
+     return avg_loss, metrics
+ 
+ 
+@@ -655,6 +704,8 @@ def build_model_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+                 "pointnext_nsample": args.pointnext_nsample,
+                 "pointnext_sa_layers": args.pointnext_sa_layers,
+                 "pointnext_sa_use_res": args.pointnext_sa_use_res,
++                "pointnext_norm": args.pointnext_norm,
++                "pointnext_norm_groups": args.pointnext_norm_groups,
+             }
+         )
+     return kwargs
+@@ -665,6 +716,8 @@ def validate_args(args: argparse.Namespace) -> None:
+         raise ValueError("--val_every must be positive")
+     if args.batch_size <= 0:
+         raise ValueError("--batch_size must be positive")
++    if args.gradient_accumulation_steps <= 0:
++        raise ValueError("--gradient_accumulation_steps must be positive")
+     if args.num_workers < 0:
+         raise ValueError("--num_workers must be non-negative")
+     if args.max_train_files < 0:
+@@ -685,6 +738,8 @@ def validate_args(args: argparse.Namespace) -> None:
+         raise ValueError("--pointnext_nsample must be positive")
+     if args.pointnext_sa_layers <= 0:
+         raise ValueError("--pointnext_sa_layers must be positive")
++    if args.pointnext_norm_groups <= 0:
++        raise ValueError("--pointnext_norm_groups must be positive")
+     if args.save_every < 0:
+         raise ValueError("--save_every must be non-negative")
+     if (
+@@ -808,6 +863,12 @@ def train(args: argparse.Namespace) -> None:
+         print(f"val files: {len(val_paths)}")
+         print(f"val samples: {len(val_dataset)}")
+     print(f"feature_dim: {feature_dim}")
++    print(f"physical batch size: {args.batch_size}")
++    print(f"gradient accumulation steps: {args.gradient_accumulation_steps}")
++    print(
++        "effective batch size (samples): "
++        f"{args.batch_size * args.gradient_accumulation_steps}"
++    )
+     if class_weight is not None:
+         print(f"class weight: {class_weight}")
+         if class_weight_info["mode"] == "auto":
+@@ -832,6 +893,7 @@ def train(args: argparse.Namespace) -> None:
+             ignore_index=args.ignore_index,
+             class_weight_info=class_weight_info,
+             label_smoothing=args.label_smoothing,
++            gradient_accumulation_steps=args.gradient_accumulation_steps,
+         )
+ 
+         val_metrics = None
+@@ -950,6 +1012,13 @@ def parse_args() -> argparse.Namespace:
+         help="Disable residual set-abstraction blocks in the PointNeXt-S wrapper",
+     )
+     parser.set_defaults(pointnext_sa_use_res=True)
++    parser.add_argument(
++        "--pointnext_norm",
++        choices=sorted(SUPPORTED_POINTNEXT_NORMS),
++        default="batchnorm",
++        help="Normalization used throughout the PointNeXt-S encoder/decoder/head (S5-11)",
++    )
++    parser.add_argument("--pointnext_norm_groups", type=int, default=8)
+ 
+     parser.add_argument("--features", default="intensity,confidence")
+     parser.add_argument("--num_points", type=int, default=8192)
+@@ -988,6 +1057,12 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--label_smoothing", type=float, default=0.0)
+ 
+     parser.add_argument("--batch_size", type=int, default=4)
++    parser.add_argument(
++        "--gradient_accumulation_steps",
++        type=int,
++        default=1,
++        help="Accumulate point-weighted microbatch gradients before each optimizer step",
++    )
+     parser.add_argument("--epochs", type=int, default=50)
+     parser.add_argument("--lr", type=float, default=1e-3)
+     parser.add_argument("--weight_decay", type=float, default=1e-4)
+diff --git a/Stage5/train_stage5.sh b/Stage5/train_stage5.sh
+index c193a40..85e6976 100755
+--- a/Stage5/train_stage5.sh
++++ b/Stage5/train_stage5.sh
+@@ -2,12 +2,12 @@
+ set -euo pipefail
+ 
+ # ------------------------------------------------------------
+-# Short Stage 5 training run on collected annotated pseudo-3D H5 files.
++# Padding-free Stage 5 training on collected annotated pseudo-3D H5 files.
+ #
+-# This script expects annotated point-cloud H5 files already collected into one
+-# flat directory by:
++# This script expects the accepted Stage 4 teacher v6 H5 files collected into
++# one flat directory by:
+ #
+-#   Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh
++#   Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
+ #
+ # Edit the path/parameter blocks below, then run:
+ #
+@@ -38,7 +38,7 @@ PY
+ export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+ 
+ DATE="${DATE:-260711}"
+-EX_DATE="${EX_DATE:-260817}"
++EX_DATE="${EX_DATE:-260908}"
+ 
+ # ------------------------------------------------------------
+ # input path info
+@@ -46,13 +46,20 @@ EX_DATE="${EX_DATE:-260817}"
+ DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
+ 
+ STAGE4_SAMPLING_RUN="${STAGE4_SAMPLING_RUN:-global_local_l75_w31_c12_area15}"
+-STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v2_nobbox_bg}"
++STAGE4_TEACHER="${STAGE4_TEACHER:-bboxrank_v6_cvat_authoritative_xml_invalidation_v1}"
+ STAGE4_RUN_NAME="${STAGE4_RUN_NAME:-${STAGE4_SAMPLING_RUN}_${STAGE4_TEACHER}}"
+ INPUT_DIR="${INPUT_DIR:-${DATASET_ROOT}/stage4_training_ablation/${DATE}/${STAGE4_RUN_NAME}/collected}"
+ 
+ MODE="${MODE:-foreground}"
+ H5_PATTERN="${H5_PATTERN:-*_pointcloud_annotated_${MODE}_combined_v2_${STAGE4_RUN_NAME}.h5}"
+-EXPECTED_INPUT_FILES="${EXPECTED_INPUT_FILES:-182}"
++EXPECTED_INPUT_FILES="${EXPECTED_INPUT_FILES:-181}"
++EXPECTED_CVAT_VIDEOS="${EXPECTED_CVAT_VIDEOS:-59}"
++EXPECTED_CVAT_FRAMES="${EXPECTED_CVAT_FRAMES:-3014}"
++EXPECTED_XML_INVALIDATED_FRAMES="${EXPECTED_XML_INVALIDATED_FRAMES:-7}"
++EXPECTED_XML_INVALIDATED_VIDEOS="${EXPECTED_XML_INVALIDATED_VIDEOS:-2}"
++EXPECTED_XML_REMOVED_POSITIVE_POINTS="${EXPECTED_XML_REMOVED_POSITIVE_POINTS:-2124}"
++EXPECTED_XML_REMOVED_BBOX_ROWS="${EXPECTED_XML_REMOVED_BBOX_ROWS:-7}"
++EXPECTED_EXCLUDED_VIDEO="${EXPECTED_EXCLUDED_VIDEO:-20250626_090758_8000}"
+ 
+ # Optional quick subset. 0 means all files.
+ MAX_TRAIN_FILES=0
+@@ -65,7 +72,10 @@ MAX_VAL_FILES=0
+ # output path info
+ # ------------------------------------------------------------
+ OUTPUT_ROOT="/mnt/data/3d_projects/stage5_runs/${EX_DATE}"
+-PREFIX="w16_s8_bboxrankv2_nobboxbg_glocal_ce_smooth00_auto_weight_lr1e3_ep200_bs8"
++EPOCHS="${EPOCHS:-200}"
++BATCH_SIZE="${BATCH_SIZE:-1}"
++GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-8}"
++PREFIX="w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep${EPOCHS}_bs${BATCH_SIZE}_acc${GRADIENT_ACCUMULATION_STEPS}_nopad"
+ EXPERIMENT_NAME="pointnext_s_EX${EX_DATE}_${DATE}_${PREFIX}"
+ OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
+ 
+@@ -75,8 +85,6 @@ OUTPUT_DIR="${OUTPUT_ROOT}/${EXPERIMENT_NAME}"
+ MODEL_NAME="pointnext_s"
+ FEATURES="intensity,confidence"
+ NUM_POINTS=0
+-BATCH_SIZE=8
+-EPOCHS=200
+ 
+ # Conservative Stage5 fine-tuning LR. PointNeXt S3DIS uses 1e-2, but Stage5
+ # starts from weak labels and smaller batches, so keep 1e-3 for the smoke run.
+@@ -98,7 +106,7 @@ DROPOUT=0.0
+ 
+ # Optional Stage5 checkpoint initialization.
+ # Leave empty to train from scratch.
+-INIT_CHECKPOINT="/mnt/data/3d_projects/models/Stage5/work_dirs/_s3dis_to_stage5_pointnext_s_transfer/stage5_pointnext_s_s3dis_partial_init.pt"
++INIT_CHECKPOINT="${INIT_CHECKPOINT:-/mnt/data/3d_projects/models/Stage5/work_dirs/_s3dis_to_stage5_pointnext_s_transfer/stage5_pointnext_s_s3dis_partial_init.pt}"
+ STRICT_CHECKPOINT=1
+ 
+ # PointNeXt-S knobs. Ignored by mlp_baseline.
+@@ -107,6 +115,13 @@ POINTNEXT_NSAMPLE=32
+ POINTNEXT_SA_LAYERS=2
+ POINTNEXT_SA_USE_RES=1
+ 
++# Normalization used throughout the PointNeXt-S encoder/decoder/head (S5-11).
++# "batchnorm" is the historical default. For a GroupNorm pilot, set this to
++# "groupnorm" and point INIT_CHECKPOINT at the GroupNorm-transferred init
++# checkpoint produced by checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh.
++POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
++POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
++
+ # Sampling knobs.
+ # In WINDOW_MODE="overlap", each frame-order window is one training sample and
+ # NUM_POINTS/SAMPLING_MODE are kept only for legacy non-window runs.
+@@ -129,9 +144,18 @@ AUTO_CLASS_WEIGHT_EPSILON=0.02
+ NORMALIZE_AUTO_CLASS_WEIGHT=1
+ LABEL_SMOOTHING=0.0
+ 
++if [[ "${BATCH_SIZE}" -ne 1 ]]; then
++  echo "Padding-free PointNeXt baseline requires BATCH_SIZE=1; got ${BATCH_SIZE}" >&2
++  exit 1
++fi
++if [[ "${GRADIENT_ACCUMULATION_STEPS}" -le 0 ]]; then
++  echo "GRADIENT_ACCUMULATION_STEPS must be positive" >&2
++  exit 1
++fi
++
+ if [[ ! -d "${INPUT_DIR}" ]]; then
+   echo "Input directory not found: ${INPUT_DIR}" >&2
+-  echo "Run Stage2to4/scripts/utils/collect_annotated_pseudo3d_h5.sh first, or set INPUT_DIR." >&2
++  echo "Run Stage2to4/pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh first, or set INPUT_DIR." >&2
+   exit 1
+ fi
+ 
+@@ -143,7 +167,7 @@ if [[ "${num_inputs}" -eq 0 ]]; then
+   exit 1
+ fi
+ if [[ "${num_inputs}" -ne "${EXPECTED_INPUT_FILES}" ]]; then
+-  echo "Stage 5 requires the complete ${DATE} BBox-ranked dataset:" >&2
++  echo "Stage 5 requires the complete ${DATE} teacher v6 dataset:" >&2
+   echo "  expected files=${EXPECTED_INPUT_FILES}" >&2
+   echo "  matched files=${num_inputs}" >&2
+   echo "  INPUT_DIR=${INPUT_DIR}" >&2
+@@ -151,7 +175,18 @@ if [[ "${num_inputs}" -ne "${EXPECTED_INPUT_FILES}" ]]; then
+   exit 1
+ fi
+ 
+-"${PYTHON}" - "${INPUT_DIR}" "${H5_PATTERN}" "${EXPECTED_INPUT_FILES}" <<'PY'
++"${PYTHON}" - \
++  "${INPUT_DIR}" \
++  "${H5_PATTERN}" \
++  "${EXPECTED_INPUT_FILES}" \
++  "${STAGE4_TEACHER}" \
++  "${EXPECTED_CVAT_VIDEOS}" \
++  "${EXPECTED_CVAT_FRAMES}" \
++  "${EXPECTED_XML_INVALIDATED_FRAMES}" \
++  "${EXPECTED_XML_INVALIDATED_VIDEOS}" \
++  "${EXPECTED_XML_REMOVED_POSITIVE_POINTS}" \
++  "${EXPECTED_XML_REMOVED_BBOX_ROWS}" \
++  "${EXPECTED_EXCLUDED_VIDEO}" <<'PY'
+ import sys
+ from pathlib import Path
+ 
+@@ -161,94 +196,198 @@ import numpy as np
+ input_dir = Path(sys.argv[1])
+ pattern = sys.argv[2]
+ expected = int(sys.argv[3])
++expected_teacher = sys.argv[4]
++expected_cvat_videos = int(sys.argv[5])
++expected_cvat_frames = int(sys.argv[6])
++expected_invalidated_frames = int(sys.argv[7])
++expected_invalidated_videos = int(sys.argv[8])
++expected_removed_positive = int(sys.argv[9])
++expected_removed_bbox_rows = int(sys.argv[10])
++expected_excluded_video = sys.argv[11]
+ paths = sorted(input_dir.glob(pattern))
+ if len(paths) != expected:
+     raise SystemExit(f"H5 preflight count mismatch: {len(paths)} != {expected}")
+ 
++def text(value):
++    if isinstance(value, (bytes, np.bytes_)):
++        return bytes(value).decode("utf-8")
++    return str(value)
++
++
+ videos = set()
+-no_bbox_frames = 0
+-no_bbox_points = 0
++cvat_videos = 0
++cvat_frames = 0
++invalidated_videos = 0
++invalidated_frames = 0
++removed_positive = 0
++removed_bbox_rows = 0
++manifest_hashes = set()
++manifest_fingerprints = set()
+ for path in paths:
+     with h5py.File(path, "r") as handle:
+-        label_mode = str(handle.attrs.get("label_mode", ""))
+-        teacher_schema = str(handle.attrs.get("ranked_teacher_schema", ""))
+-        video_name = str(handle.attrs.get("video_name", ""))
+-        no_bbox_label = int(handle.attrs.get("no_bbox_label", -999))
+-        bbox_non_contour = str(
+-            handle.attrs.get("bbox_inside_non_contour_label", "")
+-        )
++        label_mode = text(handle.attrs.get("label_mode", ""))
++        teacher_schema = text(handle.attrs.get("contour_teacher_schema", ""))
++        label_source = text(handle.attrs.get("label_source", ""))
++        video_name = text(handle.attrs.get("video_name", ""))
+         if label_mode != "bbox_ranked_global_local":
+             raise SystemExit(f"Unexpected label_mode in {path}: {label_mode}")
+-        if teacher_schema != "stage4_bbox_ranked_teacher_v2":
++        if teacher_schema != expected_teacher:
+             raise SystemExit(
+-                f"Unexpected ranked_teacher_schema in {path}: {teacher_schema}"
++                f"Unexpected contour_teacher_schema in {path}: {teacher_schema}"
+             )
+-        if no_bbox_label != 0:
++        if label_source != expected_teacher:
+             raise SystemExit(
+-                f"Unexpected no_bbox_label in {path}: {no_bbox_label} (expected 0)"
+-            )
+-        if bbox_non_contour != "ignore":
+-            raise SystemExit(
+-                "Unexpected bbox_inside_non_contour_label in "
+-                f"{path}: {bbox_non_contour!r} (expected 'ignore')"
++                f"Unexpected label_source in {path}: {label_source}"
+             )
+         required = (
+             "point_cloud/frame_order",
+             "annotation/point_label",
++            "annotation/valid_mask",
+             "frame_annotation/frame_order",
++            "manual_review_fullvideo_frames/frame_order",
++            "manual_review_fullvideo_frames/positive_outside_cvat_mask_points",
++            "xml_annotation_invalidation/frame_order",
++            "xml_annotation_invalidation/after_positive_points",
++            "xml_annotation_invalidation/after_ignore_points",
++            "xml_annotation_invalidation/before_positive_points",
++            "xml_annotation_invalidation/removed_frame_annotation_rows",
+         )
+         missing = [name for name in required if name not in handle]
+         if missing:
+             raise SystemExit(f"Missing label-policy datasets in {path}: {missing}")
++        annotation_label_source = text(
++            handle["annotation"].attrs.get("label_source", "")
++        )
++        if annotation_label_source != expected_teacher:
++            raise SystemExit(
++                f"Unexpected annotation label_source in {path}: "
++                f"{annotation_label_source}"
++            )
+ 
+-        frame_order = handle["point_cloud/frame_order"][:]
+-        point_label = handle["annotation/point_label"][:]
+-        bbox_frame_order = np.unique(handle["frame_annotation/frame_order"][:])
+-        if frame_order.shape != point_label.shape:
++        frame_order = handle["point_cloud/frame_order"][:].astype(np.int64)
++        point_label = handle["annotation/point_label"][:].astype(np.int8)
++        valid_mask = handle["annotation/valid_mask"][:].astype(bool)
++        if not (frame_order.shape == point_label.shape == valid_mask.shape):
+             raise SystemExit(
+-                f"frame_order/point_label shape mismatch in {path}: "
+-                f"{frame_order.shape} != {point_label.shape}"
++                f"point annotation shape mismatch in {path}: "
++                f"{frame_order.shape}, {point_label.shape}, {valid_mask.shape}"
+             )
+-        no_bbox_mask = ~np.isin(frame_order, bbox_frame_order)
+-        invalid_labels = np.unique(point_label[no_bbox_mask])
+-        if invalid_labels.size and not np.array_equal(
+-            invalid_labels, np.asarray([0], dtype=invalid_labels.dtype)
+-        ):
++        labels_found = set(int(value) for value in np.unique(point_label))
++        if not labels_found <= {-1, 0, 1}:
+             raise SystemExit(
+-                "No-BBox frames contain non-background labels in "
+-                f"{path}: labels={invalid_labels.tolist()}"
++                f"Unexpected labels in {path}: {sorted(labels_found)}"
+             )
+-        no_bbox_frames += int(
+-            np.setdiff1d(np.unique(frame_order), bbox_frame_order).size
++        if not np.array_equal(valid_mask, point_label != -1):
++            raise SystemExit(f"valid_mask differs from point_label != -1 in {path}")
++
++        review = handle["manual_review_fullvideo_frames"]
++        review_count = len(review["frame_order"])
++        if np.any(
++            review["positive_outside_cvat_mask_points"][:].astype(np.int64) != 0
++        ):
++            raise SystemExit(f"CVAT-mask-external positive remains in {path}")
++        cvat_frames += review_count
++        cvat_videos += int(review_count > 0)
++
++        invalidation = handle["xml_annotation_invalidation"]
++        invalidation_count = len(invalidation["frame_order"])
++        invalidated_frames += invalidation_count
++        invalidated_videos += int(invalidation_count > 0)
++        manifest_hash = text(invalidation.attrs.get("manifest_sha256", ""))
++        manifest_fingerprint = text(
++            invalidation.attrs.get("manifest_fingerprint", "")
+         )
+-        no_bbox_points += int(no_bbox_mask.sum())
++        if not manifest_hash or not manifest_fingerprint:
++            raise SystemExit(f"Missing invalidation manifest identity in {path}")
++        manifest_hashes.add(manifest_hash)
++        manifest_fingerprints.add(manifest_fingerprint)
++        expected_group_attrs = {
++            "teacher_version": expected_teacher,
++            "source_teacher_version": "bboxrank_v5_cvat_authoritative_v1",
++            "policy": "explicit_deleted_xml_frame_tombstone",
++            "frame_authority": "xml_deletion_manifest",
++        }
++        for name, expected_value in expected_group_attrs.items():
++            actual = text(invalidation.attrs.get(name, ""))
++            if actual != expected_value:
++                raise SystemExit(
++                    f"Unexpected xml invalidation {name} in {path}: {actual!r}"
++                )
++
++        if invalidation_count:
++            after_positive = invalidation["after_positive_points"][:].astype(np.int64)
++            after_ignore = invalidation["after_ignore_points"][:].astype(np.int64)
++            if np.any(after_positive != 0) or np.any(after_ignore != 0):
++                raise SystemExit(f"Invalidated frame retains non-background labels in {path}")
++            for order in invalidation["frame_order"][:].astype(np.int64):
++                selected = frame_order == order
++                if not np.any(selected) or not np.all(point_label[selected] == 0):
++                    raise SystemExit(
++                        f"Invalidated frame_order={order} is not all background in {path}"
++                    )
++                if not np.all(valid_mask[selected]):
++                    raise SystemExit(
++                        f"Invalidated frame_order={order} is not fully valid in {path}"
++                    )
++            removed_positive += int(
++                invalidation["before_positive_points"][:].astype(np.int64).sum()
++            )
++            removed_bbox_rows += int(
++                invalidation["removed_frame_annotation_rows"][:]
++                .astype(np.int64)
++                .sum()
++            )
+         if not video_name:
+             raise SystemExit(f"Missing video_name in {path}")
+         if video_name in videos:
+             raise SystemExit(f"Duplicate video_name: {video_name}")
+         videos.add(video_name)
++if expected_excluded_video in videos:
++    raise SystemExit(f"Excluded crop-failure video is present: {expected_excluded_video}")
++if len(manifest_hashes) != 1 or len(manifest_fingerprints) != 1:
++    raise SystemExit(
++        "v6 files do not share one invalidation manifest identity: "
++        f"sha={len(manifest_hashes)}, fingerprint={len(manifest_fingerprints)}"
++    )
++expected_counts = {
++    "cvat_videos": (cvat_videos, expected_cvat_videos),
++    "cvat_frames": (cvat_frames, expected_cvat_frames),
++    "invalidated_frames": (invalidated_frames, expected_invalidated_frames),
++    "invalidated_videos": (invalidated_videos, expected_invalidated_videos),
++    "removed_positive": (removed_positive, expected_removed_positive),
++    "removed_bbox_rows": (removed_bbox_rows, expected_removed_bbox_rows),
++}
++for name, (actual, expected_value) in expected_counts.items():
++    if actual != expected_value:
++        raise SystemExit(f"v6 {name} mismatch: {actual} != {expected_value}")
+ print(
+-    "Stage 5 BBox-ranked input preflight passed: "
++    "Stage 5 teacher v6 input preflight passed: "
+     f"files={len(paths)}, videos={len(videos)}, "
+-    f"no_bbox_frames={no_bbox_frames}, no_bbox_background_points={no_bbox_points}"
++    f"cvat_videos={cvat_videos}, cvat_frames={cvat_frames}, "
++    f"invalidated_videos={invalidated_videos}, "
++    f"invalidated_frames={invalidated_frames}, "
++    f"removed_positive={removed_positive}, removed_bbox_rows={removed_bbox_rows}"
+ )
+ PY
+ 
+ mkdir -p "${OUTPUT_DIR}"
+ 
+-echo "Stage5 short training"
++echo "Stage5 padding-free training"
+ echo "  input dir      : ${INPUT_DIR}"
+ echo "  h5 pattern     : ${H5_PATTERN}"
+ echo "  matched files  : ${num_inputs}"
+-echo "  teacher        : stage4_bbox_ranked_teacher_v2"
+-echo "  label policy   : no-BBox=background, BBox non-contour=ignore"
++echo "  teacher        : ${STAGE4_TEACHER}"
++echo "  label policy   : CVAT-reviewed=authoritative; unreviewed=inherited; XML-invalidated=background"
+ echo "  output dir     : ${OUTPUT_DIR}"
+ echo "  model          : ${MODEL_NAME}"
+ echo "  epochs         : ${EPOCHS}"
+ echo "  window mode    : ${WINDOW_MODE}"
+ echo "  window frames  : size=${WINDOW_SIZE_FRAMES}, stride=${WINDOW_STRIDE_FRAMES}, include_tail=${INCLUDE_TAIL_WINDOW}"
+ echo "  num points     : ${NUM_POINTS} (ignored when window mode is overlap)"
+-echo "  batch size     : ${BATCH_SIZE}"
++echo "  physical batch : ${BATCH_SIZE}"
++echo "  grad accum     : ${GRADIENT_ACCUMULATION_STEPS}"
++echo "  effective batch: $((BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS)) samples"
++echo "  padding policy : none (physical batch size must remain 1)"
+ echo "  lr/weight decay: ${LR}/${WEIGHT_DECAY}"
+ echo "  grad clip norm : ${GRAD_CLIP_NORM:-none}"
+ echo "  save every     : ${SAVE_EVERY}"
+@@ -261,7 +400,7 @@ if [[ "${CLASS_WEIGHT}" == "auto" || "${CLASS_WEIGHT}" == "pointnext_auto" ]]; t
+   echo "  auto cls weight: epsilon=${AUTO_CLASS_WEIGHT_EPSILON}, normalize=${NORMALIZE_AUTO_CLASS_WEIGHT}"
+ fi
+ if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
+-  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}"
++  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}, norm=${POINTNEXT_NORM}, norm_groups=${POINTNEXT_NORM_GROUPS}"
+ fi
+ 
+ cmd=(
+@@ -273,6 +412,7 @@ cmd=(
+   --features "${FEATURES}"
+   --num_points "${NUM_POINTS}"
+   --batch_size "${BATCH_SIZE}"
++  --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}"
+   --epochs "${EPOCHS}"
+   --lr "${LR}"
+   --weight_decay "${WEIGHT_DECAY}"
+@@ -283,6 +423,8 @@ cmd=(
+   --pointnext_radius "${POINTNEXT_RADIUS}"
+   --pointnext_nsample "${POINTNEXT_NSAMPLE}"
+   --pointnext_sa_layers "${POINTNEXT_SA_LAYERS}"
++  --pointnext_norm "${POINTNEXT_NORM}"
++  --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
+   --num_workers "${NUM_WORKERS}"
+   --device "${DEVICE}"
+   --seed "${SEED}"
+diff --git a/docs/README.md b/docs/README.md
+index d0af189..415786e 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1,25 +1,46 @@
+-# Stage2to4 documentation
+-
+-Stage2to4のMarkdown文書はこのディレクトリに集約する。
+-
+-## Stage 4
+-
+-- `stage4/edit_prompt.md`: Stage 4の初期編集要件
+-- `stage4/stage4_phase7_report.md`: Phase 7の受け入れ確認報告
+-- `stage4/stage4_sampling_investigation_progress.md`: sampling parameter調査の進捗
+-- `stage4/stage4_contour_teacher_improvement_plan.md`: BBox-aware輪郭教師の改修計画
+-
+-## その他
+-
+-- `legacy/dualtrack_legacy.md`: 旧DualTrack実行手順
+-- `submission/README.md`: submission utilitiesの案内
++# プロジェクト documentation
++
++このプロジェクト（胎児大腿骨検出・計測パイプライン）のMarkdown文書はこのディレクトリに集約する。
++Stage2to4由来の文書は`stage2to4/`配下に、Stage5由来の文書は`stage5/`配下に格納する。
++
++## Stage2to4 / Stage 4
++
++- `stage2to4/stage4/edit_prompt.md`: Stage 4の初期編集要件
++- `stage2to4/stage4/stage4_phase7_report.md`: Phase 7の受け入れ確認報告
++- `stage2to4/stage4/stage4_sampling_investigation_progress.md`: sampling parameter調査の進捗
++- `stage2to4/stage4/stage4_contour_teacher_improvement_plan.md`: BBox-aware輪郭教師の改修計画
++- `stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`: Phase 5 full-video CVAT運用・実装記録
++- `stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`: full-video CVAT snapshotを最終positiveの唯一の根拠にする反映改修計画
++- `stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`: 削除済み誤BBox XMLの無効化、teacher v6構築・可視化・最終受入記録
++- `stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`: BBox境界接触を用いた自動輪郭選択の小規模見直し案
++- `stage2to4/stage4/stage4_v4_point_label_visualization_plan.md`: teacher v4の保存済み3値point labelを直接確認する可視化計画
++- `stage2to4/stage4/cvat_segmentation_mask_1_1_import_spec.md`: CVATセグメンテーションマスク1:1インポート仕様
++- `stage2to4/stage4/stage4_bbox_independent_sampling_edit_prompt.md`: BBox非依存Stage4 samplingの編集指示
++- `stage2to4/stage4/stage4_sampling_sweep_investigation_edit_prompt.md`: 実教師データに基づくsampling parameter sweep基盤の編集指示
++- `stage2to4/stage4/stage4_sampling_sweep_investigation_rule.md`: 上記調査の進め方に関する方針整理
++
++## Stage2to4 / その他
++
++- `stage2to4/legacy/dualtrack_legacy.md`: 旧DualTrack実行手順
++- `stage2to4/submission/README.md`: submission utilitiesの案内
++
++## Stage 5
++
++- `stage5/stage5_revision_management_record.md`: Stage 5の概要、時系列の改修履歴、採用済み判断、現在状態、次の実施順を管理する正本
++- `stage5/stage5_pointnext_s_training_evaluation_report.md`: PointNeXt-Sのtrain sanity、validation、overlap window、paddingに関する評価・原因調査
++- `stage5/FILES.md`: Stage5リポジトリのファイル構成一覧
++- `stage5/TRAINING_IMPROVEMENT_PLAN.md`: Stage5学習改善方針（初期プラン。現在の優先順には全体改修・管理記録を使用）
++- `stage5/stage5_overlap_aggregation_handoff_prompt.md`: overlap aggregation検証・実装のチャット引継ぎプロンプト
++- `stage5/data_construct.md`: Stage5評価出力構成
++- `stage5/stage5_edit_prompt.md`: Stage5暫定モデル実装の編集指示
+ 
+ ## 検査スクリプト
+ 
+-- `../checks/stage4/`: Stage 4およびpseudo3Dの検査
+-- `../checks/dualtrack/`: DualTrackモデルの検査
++- `../Stage2to4/checks/stage4/`: Stage 4およびpseudo3Dの検査
++- `../Stage2to4/checks/dualtrack/`: DualTrackモデルの検査
++- `../Stage5/checks/`: Stage5学習・推論のスモークテスト/可視化補助
+ 
+ ## 補助ツール
+ 
+-- `../scripts/data/analyze_local_preprocess_candidates.py`: local前処理候補の解析
+-- `../pseudo3d/analysis/visualize_pseudo3d_h5.py`: pseudo3D H5の可視化
++- `../Stage2to4/scripts/data/analyze_local_preprocess_candidates.py`: local前処理候補の解析
++- `../Stage2to4/pseudo3d/analysis/visualize_pseudo3d_h5.py`: pseudo3D H5の可視化
+diff --git a/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md b/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
+index 4ac24b0..4712b4a 100644
+--- a/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
++++ b/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
+@@ -1,7 +1,7 @@
+ # Stage 4 BBox-aware輪郭教師・positive判定 改修計画
+ 
+ 作成日: 2026-08-17  
+-最終更新日: 2026-08-17  
++最終更新日: 2026-09-05
+ 編集対象ディレクトリ: `/workspace/Stage2to4`（主要）、`/workspace/Stage5`（入力契約・事前検査のみ）
+ 
+ ## 1. 目的
+@@ -18,9 +18,10 @@ foreground抽出は推論時にも利用し得る汎用処理である一方、
+ 
+ 人力修正には、ローカルホスト上で運用するCVAT Community Editionを使用する。
+ 画像、mask、manifestを外部SaaS、クラウドストレージ、外部AI/ML backendへ送信しない。
+-Stage 4パイプラインもCVAT APIやネットワークへ接続せず、ローカルimport用artifactの
+-生成までを担当する。CVATへのuploadと修正済みannotationのexportは、利用者が
+-ローカル環境で明示的に実行する。
++通常のStage 4教師生成パイプラインはCVAT APIへ接続せず、ローカルimport用artifactの
++生成までを担当する。Phase 5のTask作成だけは独立した明示実行スクリプトから
++`localhost`のCVAT APIへ接続し、`--apply`指定時に限ってuploadする。外部hostや
++cloud storageは使用しない。
+ 
+ CVATとのannotation交換形式は、次の仕様に固定する。
+ 
+@@ -657,13 +658,14 @@ RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
+   --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
+   --annotated_root "${RUN_ROOT}/annotated" \
+   --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
+-  --output_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --output_root "${RUN_ROOT}/contour_teacher_audit_phase1_preflight" \
+   --expected_videos 182 \
+   --preflight_only \
+   --continue_on_error
+ ```
+ 
+-preflight通過後、`--preflight_only`を外して全監査を実行する。
++preflight通過後、`--preflight_only`を外し、正式な`contour_teacher_audit_phase1`へ全監査結果を
++生成する。preflight専用rootと分離するため`--overwrite`は不要である。
+ 
+ ```bash
+ cd /mnt/data/3d_projects/models/Stage2to4
+@@ -683,41 +685,1938 @@ RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
+ 
+ 同じoutput rootで再実行する場合に限り、内容を置換する明示的な`--overwrite`を付ける。
+ 
++#### Phase 1 Synthetic check結果（2026-08-19）
++
++`dualtrack311`環境で次の全項目が成功した。
++
++- shape、center、BBox border metric
++- candidate comparisonとteacher-selection isolation
++- audit category rankingの決定性
++- 複数BBox、非連続frame index、BBoxなしframeを含むend-to-end監査
++- 保存済みannotation H5と再計算teacherの一致
++- 2回の独立実行におけるCSVとoverlayの決定性
++- 入力pseudo3D H5、annotated H5、XMLの不変性
++- teacher configおよびmanifest validation failure
++
++結果は次のとおりである。
++
++```text
++videos_checked        : 1/1
++bbox_rows             : 2
++valid_contours        : 2
++invalid_contours      : 0
++failure_rows          : 0
++input_files_unchanged : true
++phase1_synthetic_exit_code=0
++```
++
++これによりPhase 1の実装基盤は確認済みとする。Phase 1全体の完了には、引き続き182件の
++preflight、全監査、category上位overlayの目視確認が必要である。
++
+ ### Phase 2: CVAT最小converterとgolden round trip
+ 
+ 2〜3画像のbinary maskを`Segmentation Mask 1.1`へ変換し、ZIP構造、labelmap、stem、
+ shape、indexを検証する。ローカルCVATへのimport/export round tripを行い、仕様を固定する。
+ 
++#### Phase 2の実装範囲
++
++Phase 2では、Stage 4全件のmanual-review package生成に先立ち、CVATとの最小data contractを
++独立したconverterで確定する。対象はflat directoryに置かれた2〜3画像と、同stemの
++single-class binary maskである。
++
++Phase 2に含める。
++
++- 元画像とbinary maskのstrict pairing
++- binary `0/255`からindexed `0/1`への変換
++- `Segmentation Mask 1.1` ZIPの決定的生成
++- 生成ZIPを再度開くself validation
++- CVATからexportした同形式ZIPのread-only validation
++- 2〜3画像のlocal CVAT golden round trip
++
++Phase 2には含めない。
++
++- Phase 1 audit結果からのmanual-review対象自動選択
++- H5からのreview画像・proposal mask抽出
++- 複数class、RGB mask、任意class ID
++- 複数instanceとBBox indexの対応付け
++- CVAT APIへの接続または自動upload
++- CVAT修正maskのH5 import
++- 元H5、元画像、元maskの変更
++
++これらはPhase 4のreview export/manual importで実装する。
++
++#### Phase 2実装ファイル
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++checks/stage4/check_stage4_cvat_segmentation_mask_export.py
++```
++
++converter内部のZIP validation関数は、Phase 4のbatch exporterおよびmanual importerから
++再利用できるpure/read-only APIとして設計する。
++
++#### Phase 2入力契約
++
++初期versionでは次の構成だけを受け付ける。
++
++```text
++images/
++├── image_00001.png
++├── image_00002.jpg
++└── image_00003.png
++
++masks/
++├── image_00001.png
++├── image_00002.png
++└── image_00003.png
++```
++
++- imageはflat directoryの`.png`、`.jpg`、`.jpeg`に限定する
++- maskはflat directoryの`.png`に限定する
++- image/maskは拡張子を除くstemで対応させる
++- stemはdirectory内で一意でなければならない
++- imageとmaskのstem集合は完全一致させる
++- maskは2-D、1-channel、`uint8`とする
++- mask pixelは`{0, 255}`の部分集合だけを許可する
++- `0=background`、`255=femur proposal`とする
++- imageとmaskのwidth/heightは完全一致させる
++- symlink、nested directory、未対応拡張子を拒否する
++- 自動rename、自動resize、補間、輪郭化を行わない
++
++all-background maskは形式上有効とする。golden sample全体では、変換確認のため少なくとも
++1枚にforeground pixelを含める。
++
++#### Phase 2 CLI案
++
++converterは少なくとも`convert`と`validate`の2 modeを提供する。
++
++```text
++convert:
++  --images_dir
++  --masks_dir
++  --output_zip
++  --label_name femur
++  --background_value 0
++  --foreground_value 255
++  --summary_json
++  --keep_unpacked_dir
++  --overwrite
++
++validate:
++  --input_zip
++  --images_dir
++  --summary_json
++```
++
++`convert`はZIP生成後に必ず同じvalidatorを実行し、validationが失敗した場合は最終ZIPを
++残さない。`validate`はCVATから再exportしたZIPをread-onlyで検査するために使用する。
++既存ZIPの置換は明示的な`--overwrite`がある場合だけ許可する。
++
++#### Phase 2変換処理
++
++stemをlexicographical sortし、各maskを次のように変換する。
++
++```text
++input mask : uint8 {0, 255}
++output mask: uint8 {0, 1}
++
++0   -> 0 (background)
++255 -> 1 (femur)
++```
++
++出力maskはgrayscale/indexed PNGとし、palette画像やRGB画像へ暗黙変換しない。
++
++`labelmap.txt`は次の内容に固定する。
++
++```text
++background:0,0,0::
++femur:255,0,0::
++```
++
++foreground label名を変更可能にする場合も、改行、区切り文字、空文字、重複、path文字を
++検査し、mask index `1`との対応を維持する。
++
++`ImageSets/Segmentation/default.txt`には、sort済みstemを拡張子なしで1行ずつ記録する。
++
++#### Phase 2 ZIP契約
++
++ZIP rootを次に固定する。
++
++```text
++annotations_segmentation_mask_1_1.zip
++├── labelmap.txt
++├── ImageSets/
++│   └── Segmentation/
++│       └── default.txt
++├── SegmentationClass/
++│   ├── image_00001.png
++│   ├── image_00002.png
++│   └── image_00003.png
++└── SegmentationObject/
++    ├── image_00001.png
++    ├── image_00002.png
++    └── image_00003.png
++```
++
++Phase 2はsingle foreground objectを前提とし、`SegmentationClass`と
++`SegmentationObject`へ同じ`0/1` maskを格納する。複数instance frameへの一般化は
++golden sampleでCVAT exportの挙動を確認した後、Phase 4で設計する。
++
++ZIPには元画像、summary、外側の親directory、絶対path、`..`を含むmemberを入れない。
++
++#### 決定的ZIP生成
++
++同一入力からbyte-identical ZIPを生成できるよう、次を固定する。
++
++- memberの順序
++- stemのsort順
++- text fileのUTF-8 encodingとLF改行
++- PNG encoding
++- ZIP timestamp
++- ZIP permission/external attributes
++- compression methodとcompression level
++
++最終ZIPは一時fileへ生成・検査してからatomicに配置し、途中失敗時に不完全なZIPを
++残さない。ZIP SHA-256をsummaryへ保存する。
++
++#### Phase 2 strict validation
++
++converter実行前に次を検査する。
++
++- image/maskのmissing、extra、duplicate stem
++- unsupported extension、nested file、symlink
++- image decode failure、mask decode failure
++- image/mask shape mismatch
++- maskのdimension、dtype、unique value
++- label名と出力先
++
++生成後またはCVAT export後のZIPについて次を検査する。
++
++- ZIP member pathにabsolute path、`..`、backslash、余分なrootがない
++- duplicate memberがない
++- `labelmap.txt`がroot直下に1個だけ存在する
++- `ImageSets/Segmentation/default.txt`が存在する
++- `SegmentationClass`と`SegmentationObject`に全stemのPNGが存在する
++- default stem、class stem、object stemの集合が完全一致する
++- default stemに拡張子、空行、重複がない
++- class/object PNGが2-D `uint8`である
++- unique indexが`{0, 1}`の部分集合である
++- class/object PNGのshapeが元画像と一致する
++- labelmapの0-based行indexとmask indexが一致する
++- 宣言外memberが存在しない
++
++validation結果は標準出力とZIP外のJSONへ保存する。
++
++```text
++images
++masks
++classes
++unique_indices
++size_mismatches
++missing_masks
++extra_masks
++zip_members
++zip_sha256
++status
++```
++
++#### Phase 2 Synthetic check
++
++`check_stage4_cvat_segmentation_mask_export.py`で次を確認する。
++
++- 3画像の正常変換
++- input `0/255`とoutput `0/1`のpixel単位一致
++- class/object maskのshape、dtype、unique index
++- labelmapとdefault.txtの内容・改行
++- ZIP root構造とmember集合
++- ZIPに元画像や余分なparent directoryが含まれない
++- 入力順やfile作成順に依存しない決定的出力
++- 同一入力から生成した2 ZIPがbyte-identical
++- all-background maskを保持できる
++- missing/extra/duplicate stemを拒否する
++- unsupported extension、nested file、symlinkを拒否する
++- shape mismatchを拒否し、自動resizeしない
++- RGB/non-uint8/未知pixel値maskを拒否する
++- invalid label名を拒否する
++- 既存outputを`--overwrite`なしで置換しない
++- validation失敗時に不完全な最終ZIPを残さない
++- validatorが危険path、duplicate member、未知member、未知indexを拒否する
++
++Synthetic checkは一時directoryだけを使用し、実画像をrepositoryへ追加しない。
++
++#### Phase 2 local CVAT golden round trip
++
++Synthetic check通過後、外部へ送信できない2〜3枚のlocal sampleを使って次を行う。
++
++1. globally uniqueなstemへ事前に固定した画像と0/255 maskを準備する
++2. converterで`Segmentation Mask 1.1` ZIPを生成する
++3. local CVATに`femur` labelを持つtest Taskを作成する
++4. Taskへ同じbasename/stemの画像を登録する
++5. 既存annotationがあれば先にexportしてbackupする
++6. `Segmentation Mask 1.1`、`Convert masks to polygons=OFF`でimportする
++7. 画像対応、向き、位置、label、mask境界を目視確認する
++8. 編集前に同形式でexportし、validatorでstem、shape、index、pixel領域を比較する
++9. Brush/Eraserで局所編集し、保存後に再exportできることを確認する
++10. 編集後ZIPもvalidatorで形式が維持されていることを確認する
++
++golden round tripでは次を記録する。
++
++- converter input/output SHA-256
++- CVAT version
++- Task label設定
++- import formatとpolygon変換OFF
++- import前backup path
++- no-edit exportのvalidation summary
++- edit後exportのvalidation summary
++- 目視確認結果
++
++CVAT Taskへのuploadとexportはユーザーがlocalhost上で手動実行する。converterやtestから
++CVAT API、外部network、cloud storageへ接続しない。
++
++#### Phase 2完了条件
++
++- converter Synthetic checkがexit code 0で通る
++- 2〜3画像のZIPが仕様どおり決定的に生成される
++- local CVATへmaskとしてimportできる
++- image/stem/shape/label/pixel位置が正しい
++- no-edit exportがvalidatorを通り、class maskが入力と一致する
++- Brush/Eraserで編集して再exportできる
++- edit後exportも`Segmentation Mask 1.1` validationを通る
++- patient画像またはmaskが外部serviceへ送信されていない
++- Phase 4で再利用するZIP contractとvalidator APIが固定される
++
++#### Phase 2実装状況（2026-08-19）
++
++次の2ファイルを実装した。
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++checks/stage4/check_stage4_cvat_segmentation_mask_export.py
++```
++
++converterには次を実装済みである。
++
++- `convert`と`validate`の2 subcommand
++- flat image/mask directoryのstrict pairingと入力検査
++- binary `0/255` maskからindexed `0/1` class/object maskへの変換
++- 固定labelmap、default set、member順、timestamp、permission、PNG圧縮による決定的ZIP生成
++- temporary file上でのself validationとatomicな最終ZIP配置
++- SHA-256、stem、index、比較件数を含むJSON summary
++- ZIP path traversal、symlink、duplicate/unknown member、未知index、過大memberの拒否
++- 元画像とのshape照合、および任意のreference maskとのpixel単位照合
++- CVATからexportしたno-edit/edit済みZIPを検査するread-only validator
++
++Synthetic checkには正常系、byte identity、入力不変性、all-background mask、filesystem/pairing、
++shape/dtype/value、label、overwrite、異常ZIPを含めた。実行コマンドは次のとおりである。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_segmentation_mask_export.py
++
++echo "phase2_synthetic_exit_code=$?"
++```
++
++#### Phase 2 Synthetic check結果（2026-08-19）
++
++`dualtrack311`環境で次の全項目が成功した。
++
++- binary `0/255`からindexed `0/1`への変換とZIP contract
++- file作成順に依存しない決定的出力とbyte identity
++- missing、extra、duplicate stemの拒否
++- unsupported extension、nested directory、symlinkの拒否
++- shape mismatch、RGB、`uint16`、未知pixel値maskの拒否
++- 失敗時に不完全な最終ZIPを残さないこと
++- unknown member、危険path、duplicate member、未知indexを持つZIPの拒否
++- label validationと明示的なoverwrite
++
++結果は次のとおりである。
++
++```text
++[OK] deterministic 0/255 -> 0/1 conversion and exact ZIP contract
++[OK] missing/extra/duplicate/unsupported/nested/symlink rejection
++[OK] shape/RGB/uint16/unknown-value rejection without partial ZIP
++[OK] unknown/unsafe/duplicate/unknown-index ZIP rejection
++[OK] label validation and explicit overwrite behavior
++Stage 4 CVAT Segmentation Mask 1.1 synthetic checks passed.
++phase2_synthetic_exit_code=0
++```
++
++これによりPhase 2のconverter、validator、決定的artifact生成、およびstrict validationの
++実装基盤は確認済みとする。
++
++次に、local CVAT golden sampleを次のように生成する。`GOLDEN_ROOT/images`と
++`GOLDEN_ROOT/masks`には、同じstemを持つ2〜3件の画像と0/255 maskを配置する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++GOLDEN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_contour_teacher_cvat_golden
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py convert \
++  --images_dir "${GOLDEN_ROOT}/images" \
++  --masks_dir "${GOLDEN_ROOT}/masks" \
++  --output_zip "${GOLDEN_ROOT}/cvat/annotations_segmentation_mask_1_1.zip" \
++  --label_name femur \
++  --summary_json "${GOLDEN_ROOT}/cvat/conversion_summary.json" \
++  --keep_unpacked_dir "${GOLDEN_ROOT}/cvat/unpacked_reference"
++```
++
++CVATでは同じ画像と`femur` labelを持つlocal Taskを作り、`Segmentation Mask 1.1`、
++`Convert masks to polygons=OFF`でimportする。編集せずに同形式でexportしたZIPは、入力maskと
++pixel単位で照合する。
++
++```bash
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py validate \
++  --input_zip "${GOLDEN_ROOT}/cvat/cvat_no_edit_export.zip" \
++  --images_dir "${GOLDEN_ROOT}/images" \
++  --reference_masks_dir "${GOLDEN_ROOT}/masks" \
++  --label_name femur \
++  --summary_json "${GOLDEN_ROOT}/cvat/no_edit_validation.json"
++```
++
++Brush/Eraserで変更したexportは入力maskと異なるため、`--reference_masks_dir`を指定せず形式と
++画像shapeを検査する。
++
++```bash
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py validate \
++  --input_zip "${GOLDEN_ROOT}/cvat/cvat_edited_export.zip" \
++  --images_dir "${GOLDEN_ROOT}/images" \
++  --label_name femur \
++  --summary_json "${GOLDEN_ROOT}/cvat/edited_validation.json"
++```
++
++実装、静的検査、`dualtrack311`でのSynthetic checkは完了している。Phase 2全体の完了には、
++localhost上のCVATを用いたgolden import/no-edit export/edit exportの確認が必要である。
++
+ ### Phase 3: auto-refine prototype
+ 
+ 監査対象の代表例でBBox内追加閾値を実装し、候補metricsとrankingを可視化する。
+ 既知の良好例を壊さないことを確認してから判定閾値を固定する。
+ 
+-### Phase 4: review exportとmanual import
++#### Phase 3の目的
+ 
+-`manual_review` frameをimages、overlays、初期mask、CVAT ZIP、manifestとして一括出力する。
+-CVATからexportした修正済みmaskを別runのH5 annotationへ反映し、point label、valid mask、
+-metadataの整合性を検査する。自動maskとmanual maskの上書き規則を明文化する。
++Phase 1の監査結果から、`overfilled`、`border_contact`、`ambiguous`、`off_center`、
++`invalid`と判定された代表BBoxを対象に、BBox内の追加threshold候補を生成する。
++現行teacher v2のglobal/local候補をbaselineとして同じ候補集合へ残し、追加候補が品質と
++安定性の両方で明確に改善した場合だけ`auto_refine`を提案する。
+ 
+-### Phase 5: 全182件のteacher v3再生成
++Phase 3は候補生成、metric、判定規則を調査するread-only prototypeとし、annotated H5、
++point label、元pseudo3D H5、XMLを変更しない。Phase 3の`teacher_decision`は評価用の
++`proposed_decision`であり、学習用H5へ反映するのはPhase 5とする。
++
++#### Phase 3の実装範囲
+ 
+-既存foreground H5を再利用し、annotation、collected、可視化を新しいrun名で生成する。
++Phase 3に含める。
+ 
+-候補run名:
++- Phase 1監査結果からの代表BBoxの決定的選択
++- 現行v2 global/local候補の完全な再現
++- BBox crop内のboundedな追加threshold候補生成
++- 候補maskの重複排除、metric計算、eligibility、ranking
++- 近接threshold間のmask stability計測
++- `auto_accept`、`auto_refine`、`manual_review`の提案
++- v2選択maskと提案maskの比較CSV、binary mask、overlay
++- 入力file不変性と出力決定性の検査
++
++Phase 3には含めない。
++
++- annotated H5またはpoint labelの更新
++- 182件すべてのteacher v3生成
++- CVAT review packageの生成またはCVAT修正結果のimport
++- watershedなど候補数と挙動が大きく変わる分離処理
++- Stage 5学習
++- foreground samplingの再計算
++
++watershedまたはdistance transformは、boundedなthreshold/morphology候補で改善しない代表例が
++複数確認された場合に限り、Phase 3後半または別configとして追加する。
++
++#### Phase 3実装ファイル
+ 
+ ```text
+-global_local_l75_w31_c12_area15_bboxrank_v3_refined
+-global_local_l75_w31_c12_area15_bboxrank_v3_refined_manual_v1
++pseudo3d/annotation/contour_teacher_refinement.py
++pseudo3d/analysis/prototype_stage4_contour_auto_refine.py
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml
++checks/stage4/check_stage4_contour_auto_refine.py
+ ```
+ 
+-既存の`bboxrank_v2_nobbox_bg`は上書きしない。
++必要な既存編集対象は次のとおりである。
+ 
+-### Phase 6: Stage 5比較
++```text
++pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
++pseudo3d/analysis/audit_stage4_contour_teacher.py
++```
++
++候補生成、metric、decisionは`contour_teacher_refinement.py`のpure APIへ置く。runnerや
++Synthetic checkへ処理を複製しない。現行v2候補の生成とsort keyは
++`annotate_pseudo3d_point_cloud.py`の共有APIをそのまま使用する。Phase 1監査のinput解決処理を
++共通化する必要が生じた場合も、Phase 1の出力schemaと選択結果を変えない回帰検査を行う。
++
++#### Phase 3入力契約
++
++prototypeは次を入力とする。
++
++- Phase 1で使用したtrain manifest
++- Phase 1の`bbox_audit.csv`、`category_summary.csv`、`run_config.yaml`
++- `bboxrank_v2_nobbox_bg` annotated H5 root
++- `stage4_bbox_ranked_teacher_v2.yaml`
++- Phase 3 refine config
++
++実行前に次をstrict validationする。
++
++- Phase 1 auditが成功し、`failure_rows=0`である
++- manifest、teacher config、annotated rootのpathとfingerprintがPhase 1記録と一致する
++- BBox key `(video_name, frame_order, frame_index, bbox_index)`が一意である
++- selection rowが`bbox_audit.csv`に存在し、保存metricと一致する
++- pseudo3D H5、annotated H5、strict XMLが存在する
++- frame数、frame index、画像shape、BBox座標が整合する
++- annotated H5がteacher v2 schemaと固定foreground条件を持つ
++- refine configの全threshold、kernel、weight、quality gateが有限で有効範囲内にある
++
++代表BBoxは`category_summary.csv`からカテゴリ別上位をunionして重複排除し、
++`candidate_good_control`を必ず含める。自動選択結果は`selection_resolved.csv`へ保存する。
++必要な場合は同schemaの`--selection_csv`で目視選択例を追加できるようにするが、manifest外の
++video/BBoxは受け付けない。
++
++#### Phase 3 refine config
++
++設定はYAMLへ固定し、少なくとも次を持たせる。
++
++```text
++schema_version
++config_name
++base_teacher_config_name
++base_teacher_fingerprint
++trigger.*
++candidate_generation.percentile_values
++candidate_generation.otsu_enabled
++candidate_generation.adaptive_methods
++candidate_generation.adaptive_block_sizes
++candidate_generation.adaptive_c_values
++candidate_generation.cleanup_variants
++eligibility.*
++ranking.weights.*
++decision.minimum_refine_score_gain
++decision.minimum_score_margin
++decision.minimum_stability_iou
++decision.minimum_support_count
++```
++
++`trigger`、`eligibility`、`decision`のproduction数値はPhase 1の実データ分布から固定し、
++計画時点で推測しない。config templateで未確定値を`null`にする場合、通常実行では拒否し、
++候補分布だけを出す明示的な`--candidate_generation_only`でのみ許可する。Synthetic checkでは
++既知形状用の独立した固定configを使用する。
++
++`base_teacher_config_name`は必須とし、`base_teacher_fingerprint`は特定のcanonical YAMLを
++追加で固定するときだけ指定する。通常はPhase 1 auditに保存されたteacher fingerprintと
++現在のteacher fingerprintをCLIが完全照合するため、refine config側のfingerprintは`null`を
++許可する。config fileのSHA-256とcanonical fingerprintを全出力へ保存し、CLIから個別閾値を暗黙に
++上書きしない。調査条件を変更する場合は別config名と別output rootを使用する。
++
++#### 代表BBoxとrefine発動条件
++
++初期prototypeでは次のいずれかを満たすBBoxをrefine評価対象とする。
++
++- selected contour/BBox area ratioが設定上限以上
++- foreground/BBox area ratioが設定上限以上
++- BBox border contact ratioが設定上限以上
++- center distance normが設定上限以上
++- 1位・2位候補のscore marginが設定下限以下でmaskが異なる
++- v2候補がinvalid
++- Phase 1で`overfilled`、`border_contact`、`ambiguous`、`off_center`、`invalid`に選ばれた
++
++`candidate_good_control`は発動条件に該当しなくても評価へ含め、baselineがそのまま
++`auto_accept`されることを確認する。カテゴリ名だけで置換を決めず、必ず元metricから
++発動条件を再計算する。
++
++#### 追加候補の生成
++
++各BBoxを画像範囲へclipし、現行teacherと同じfull-resolution local imageからBBox cropを
++取得する。resize、補間、BBox外pixelの参照を行わない。threshold maskはBBox外を常に0とする。
++
++boundedな初期候補集合を次に限定する。
++
++1. BBox crop内のhigh-intensity percentile threshold
++2. BBox crop内のOtsu threshold
++3. 設定したblock size/Cだけのadaptive meanまたはGaussian threshold
++4. 上記へ設定済みmorphology open/closeと小成分除去を適用したvariant
++5. 現行v2のglobal/local候補
++
++percentile、adaptive block size、morphology kernel、minimum component areaはconfigに列挙した
++有限個だけを使用する。入力imageのdtype/rangeを明示的に正規化し、同じframe/BBox/configから
++常に同じbinary maskを得る。
++
++各binary maskではexternal connected componentを独立候補として抽出し、filled contourを
++作る。複数BBoxは独立に処理し、別BBoxの中心やmaskをrankingへ利用しない。候補maskはBBoxへ
++clipし、mask byte列のSHA-256で重複排除する。同一maskが複数method/thresholdから得られた場合は
++候補を複製せず、全provenanceと`support_count`を保持する。
++
++#### 候補metricとstability
++
++候補ごとに少なくとも次を保存する。
++
++- source、threshold method/value、cleanup variant、component index
++- mask SHA-256、supporting parameter一覧、support count
++- contour pixel数、filled area、area/BBox ratio
++- contour centroid、center distance norm
++- border contact ratioと上下左右の接触flag
++- contour BBox extent、solidity、perimeter、compactness、aspect ratio
++- BBox内point数、候補内point数、positive point ratio
++- v2 selected maskとのIoU、area差、centroid移動量
++- 近接threshold候補との最大/中央値IoU
++- eligibility、rejection reason codes、各score項、total score
++
++stabilityは同じmethod familyの隣接parameterで得た候補をmask IoUにより対応付けて評価する。
++単独parameterだけで現れる候補を高信頼にしない。異なるmethodで同一maskが得られた場合も
++supportとして記録するが、support数だけで品質gateを迂回させない。
++
++#### eligibilityとranking
++
++eligibilityをrankingより先に適用する。少なくとも次をhard rejectionとする。
++
++- 空mask、非有限metric、無効contour
++- absolute areaまたはarea ratioが下限未満
++- area ratioが上限を超える
++- center distance normが上限を超える
++- border contactが許容上限を超える
++- BBox内の保存pointを1点も含まない
++
++ranking scoreは次の独立項をconfig weightで合成する。
++
++- BBox中心との近さ
++- 設定した許容area band内でのarea score
++- border non-contact score
++- solidity/compactness/extentによるshape score
++- threshold stability score
++- 複数parameter/methodによるsupport score
++
++面積を単純に最大化せず、中心に近い微小成分も選ばない。global/local/refine sourceに固定の
++優先順位を設けない。決定性のため、score各項とmetricのsort keyを固定する。ただし、許容差内で
++同点かつmaskが異なる候補はhash順で自動採用せず、ambiguousとして`manual_review`へ送る。
++
++#### proposed decision
++
++BBox単位の判定を次に固定する。
++
++`auto_accept`:
++
++- v2選択maskがquality gateを満たす
++- refine triggerが発動しない、または追加候補が必要改善幅を満たさない
++- v2 maskをpixel単位でそのまま維持する
++
++`auto_refine`:
++
++- 追加候補がすべてのeligibility/quality gateを満たす
++- v2候補より`minimum_refine_score_gain`以上改善する
++- 2位候補との差が`minimum_score_margin`以上ある
++- stability IoUとsupport countが設定下限以上である
++- mask変更理由をreason codeとscore差で説明できる
++
++`manual_review`:
++
++- eligible候補がない
++- 全候補がoverfilled、off-center、border-contact、too-smallのいずれかで棄却される
++- 1位・2位が拮抗してmaskが異なる
++- threshold間のmask/centroid変動が大きい
++- 複数BBoxまたは複数成分の対応が曖昧である
++- v2候補は不適切だが、追加候補の改善幅が採用条件に届かない
++
++refine triggerが発動してもbaselineが最良で品質gateを満たす場合は`auto_accept`へ戻せる。
++追加候補の存在だけを理由に`auto_refine`しない。Phase 3では判定とproposal maskを出力するだけで、
++`manual_review` BBoxのpoint label変更やignore化は行わない。
++
++#### Phase 3出力契約
++
++出力は既存runと分離した次の構造とする。
++
++```text
++contour_auto_refine_phase3/
++├── selection_resolved.csv
++├── bbox_decisions.csv
++├── candidate_metrics.csv
++├── video_summary.csv
++├── category_summary.csv
++├── failures.csv
++├── refine_summary.json
++├── run_config.yaml
++├── proposal_masks/
++│   └── {video}__fo.....__bbox....png
++└── overlays/
++    ├── auto_accept/
++    ├── auto_refine/
++    ├── manual_review/
++    └── regressions/
++```
++
++`bbox_decisions.csv`はv2とproposalのsource、mask SHA-256、全主要metric、score差、decision、
++reason codesを1 BBox 1行で保持する。`candidate_metrics.csv`は1候補1行とする。
++proposal maskは評価用binary `0/255` PNGで、学習用teacherまたはCVAT確定maskとして扱わない。
++
++overlayは最低限、元画像、BBox、v2 mask、proposal mask、追加/削除pixel、候補centroid、
++主要metric、decision/reasonを表示する。`auto_refine`と`manual_review`は全件、
++`auto_accept`はカテゴリ別control上位を出力する。
++
++summaryにはmanifest、Phase 1 audit、teacher/refine configのpath・SHA-256・fingerprint、
++入力件数、decision/reason別件数、failure数、入力不変性を保存する。作成日時を除くCSV、mask、
++overlayの内容は同一入力で決定的にし、比較用checksum manifestも保存する。
++
++#### Phase 3 CLI案
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/analysis/prototype_stage4_contour_auto_refine.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml \
++  --output_root "${RUN_ROOT}/contour_auto_refine_phase3" \
++  --top_per_category 20
++```
++
++既存output rootを暗黙に追記・置換しない。同じ条件を再実行する場合だけ明示的な
++`--overwrite`を必要とする。`--continue_on_error`を指定した場合も最後にfailure件数が1件以上なら
++non-zero exitとし、不完全な結果を成功扱いしない。
++
++#### Phase 3 Synthetic check
++
++`check_stage4_contour_auto_refine.py`で次を確認する。
++
++- 適正なv2輪郭がpixel単位で維持され`auto_accept`になる
++- BBoxを覆う結合成分が厳格thresholdで分離され`auto_refine`になる
++- BBox中心に近いだけの微小成分をrejectする
++- 大面積だがBBox境界へ広く接触する成分をrejectする
++- 同じmaskを作る複数parameterが重複排除されsupportへ集約される
++- 隣接thresholdのIoUとcentroid stabilityが正しい
++- 同点の異なるmaskをhash順で採用せず`manual_review`にする
++- eligible候補なし、unstable、改善幅不足がそれぞれ期待decision/reasonになる
++- 複数BBoxを独立処理し、maskとmetricを混同しない
++- BBoxなしframe、非連続frame index、empty frameを安全に扱う
++- v2 candidate APIの選択結果がPhase 3追加前後で変わらない
++- point labelと入力H5/XMLのsize、mtime、checksumが変化しない
++- 同一入力のCSV、mask、overlay、decisionが決定的である
++- invalid config、fingerprint mismatch、未知BBox keyを拒否する
++
++実装後の確認コマンドは次とする。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_contour_auto_refine.py
++
++echo "phase3_synthetic_exit_code=$?"
++```
++
++#### Phase 3実データ確認
++
++最初から182件のteacherを再生成せず、Phase 1カテゴリ上位とgood controlを合わせた代表集合で
++実行する。確認順序は次とする。
++
++1. `--candidate_generation_only`で候補metric分布を得る
++2. area、center、border、stability、score marginの分布からconfig閾値を固定する
++3. 同じselectionでdecision modeを実行する
++4. `auto_refine`、`manual_review`、`regressions` overlayを全件目視する
++5. v2 good controlが不必要に変更されていないことを確認する
++6. overfilled/border-contact例でareaと境界接触が改善し、対象断面を欠落していないことを確認する
++7. 閾値をわずかに変えた感度確認を1回行い、decisionが大きく反転しないことを確認する
++
++目視で誤った`auto_refine`が見つかった場合は、個別video名による例外規則を追加せず、
++quality gate、stability、manual-review条件のいずれで一般化して防ぐかを検討する。
++
++#### Phase 3完了条件
++
++- Synthetic checkがexit code 0で通る
++- representative selectionと全候補が入力/configから決定的に再現できる
++- baseline good controlのmaskが不必要に変更されない
++- 明確な過抽出例でproposalが縮小または分離され、目視でも改善している
++- 不安定または拮抗した例が`manual_review`へ送られる
++- 全decisionに機械可読なreason codeと比較metricがある
++- 入力H5/XMLと既存annotated H5が変更されていない
++- Phase 4/5で再利用できるcandidate/decision APIとconfig schemaが固定される
++
++#### Phase 3実装順序
++
++1. refine config loaderとstrict validation
++2. pureな追加candidate生成、重複排除、metric/stability API
++3. eligibility、ranking、proposed decision API
++4. Phase 1 audit入力を使うread-only prototype CLI
++5. CSV、mask、overlay、summaryの決定的出力
++6. Synthetic check
++7. representative実データのcandidate-only調査
++8. threshold固定後のdecision/目視確認
++
++#### Phase 3実装状況（2026-08-19）
++
++次の4ファイルを実装した。
++
++```text
++pseudo3d/annotation/contour_teacher_refinement.py
++pseudo3d/analysis/prototype_stage4_contour_auto_refine.py
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml
++checks/stage4/check_stage4_contour_auto_refine.py
++```
++
++実装済み内容は次のとおりである。
++
++- v2 global/local候補を変更せずbaselineとして再利用するpure refine engine
++- BBox内percentile、Otsu、adaptive thresholdとbounded cleanup variant
++- connected component単位のfilled mask生成とmask SHA-256による重複排除
++- 同一maskを支持する複数parameterのprovenance/support集約
++- area、center、border、shape、point、baseline差、stability metric
++- eligibilityを先に適用するconfig-driven ranking
++- `auto_accept`、`auto_refine`、`manual_review`のreason付き提案
++- Phase 1 manifest/audit/config fingerprintをstrictに照合するread-only CLI
++- selection、BBox decision、全候補、video/category summary、mask、overlay、checksum出力
++- 入力H5/XML/Phase 1 artifactのsize・mtime不変性検査
++- good control、overfilled、tiny、ambiguous、deduplication、end-to-end決定性のSynthetic check
++
++初期configのtrigger、eligibility、ranking、decision値はscreening用の暫定値である。
++`decision.production_thresholds_fixed: false`に固定しているため、通常decision modeは失敗し、
++実データでは次のcandidate-only調査だけを許可する。これにより、暫定値がteacher v3へ誤って
++採用されることを防ぐ。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/analysis/prototype_stage4_contour_auto_refine.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml \
++  --output_root "${RUN_ROOT}/contour_auto_refine_phase3_screening" \
++  --top_per_category 20 \
++  --candidate_generation_only
++```
++
++#### Phase 3 Synthetic check結果（2026-08-19）
++
++`dualtrack311`環境で次の全項目が成功した。
++
++- good controlの`auto_accept`とmask維持
++- overfilled baselineから安定した追加候補への`auto_refine`
++- tiny componentのreject
++- score同点・異mask候補の`manual_review`
++- mask単位の候補重複排除、support/stability集約、決定的ranking
++- Phase 1 manifest/audit/teacher contractとのend-to-end連携
++- 入力H5/XMLの不変性
++- 独立した2回の実行におけるCSV、mask、overlay、checksumの決定性
++- invalid configの拒否
++- project teacher config名、任意fingerprint、candidate-only safety gate
++
++結果は次のとおりである。
++
++```text
++[OK] good-control auto-accept and stable overfilled auto-refine
++[OK] tiny-component rejection and equal-score ambiguity isolation
++[OK] mask-level candidate deduplication and deterministic ranking
++[OK] end-to-end Phase 1 contract, read-only inputs, and deterministic outputs
++[OK] strict Phase 3 config validation
++[OK] project teacher fingerprint and candidate-only safety gate
++Stage 4 contour-teacher Phase 3 synthetic checks passed.
++phase3_synthetic_exit_code=0
++```
++
++Synthetic checkでは2 BBoxから各run 10候補を生成し、2回ともfailureなし、入力不変で完了した。
++これによりPhase 3の実装基盤は確認済みとする。次はPhase 1全監査出力を用いた
++candidate-only実データ調査を行い、その分布とoverlayからproduction decision閾値を固定する。
++
++#### Phase 1/3実データscreening結果（2026-08-23）
++
++Phase 1本監査は182/182 videos、3,072 BBox、failure 0、入力不変で完了した。
++
++```text
++videos_checked         : 182/182
++bbox_rows              : 3072
++valid_contours         : 3046
++invalid_contours       : 26
++failure_rows           : 0
++input_files_unchanged  : true
++phase1_realdata_audit_exit_code=0
++```
++
++Phase 1カテゴリ上位から重複を除いた60 videos、129 BBoxに対しcandidate-only screeningを実行し、
++9,698候補をfailureなしで生成した。
++
++```text
++videos_checked         : 60/60
++selected_bboxes        : 129
++processed_bboxes       : 129
++candidate_rows         : 9698
++failure_rows           : 0
++input_files_unchanged  : true
++phase3_candidate_screening_exit_code=0
++```
++
++129 BBox中98件がtriggerされ、108件でeligible proposalが得られ、21件はeligible候補なしだった。
++triggered proposalの代表分布は次のとおりである。
++
++| metric | p05 | p50 | p95 |
++|---|---:|---:|---:|
++| area ratio | 0.0545 | 0.1493 | 0.2749 |
++| center distance norm | 0.0137 | 0.0552 | 0.2266 |
++| border contact ratio | 0.0000 | 0.0000 | 0.2372 |
++| stability IoU | 0.7160 | 0.8333 | 1.0000 |
++| score gain | 0.0309 | 0.2215 | 0.4150 |
++| score margin | 0.0001 | 0.0064 | 0.0419 |
++
++decision gateをCSV上で比較した結果は次のとおりである。
++
++| 条件 | auto accept | auto refine | manual review |
++|---|---:|---:|---:|
++| current conservative | 31 | 9 | 89 |
++| balanced | 31 | 44 | 54 |
++| retention | 31 | 59 | 39 |
++
++目視前にnear-tie候補を過剰採用しないこと、候補なし21件を確実にmanual reviewへ送ること、
++maskのparameter重複数よりstabilityを優先することから`balanced`をproduction候補として採用した。
++screening configは安全ゲートとして変更せず、次を追加した。
++
++```text
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml
++```
++
++固定したdecision値は次のとおりである。
++
++```yaml
++decision:
++  production_thresholds_fixed: true
++  minimum_refine_score_gain: 0.05
++  minimum_score_margin: 0.005
++  minimum_stability_iou: 0.70
++  minimum_support_count: 1
++  equal_score_tolerance: 1.0e-12
++```
++
++trigger、candidate generation、eligibility、rankingはscreening configと同一である。次のcommandで
++同じ代表129 BBoxをdecision mode実行し、想定件数とoverlayを確認する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/analysis/prototype_stage4_contour_auto_refine.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml \
++  --output_root "${RUN_ROOT}/contour_auto_refine_phase3_production_v1_decisions" \
++  --expected_videos 182 \
++  --top_per_category 20
++
++echo "phase3_production_decision_exit_code=$?"
++```
++
++production config追加後のSynthetic checkは`dualtrack311`環境で成功した。
++
++```text
++[OK] end-to-end Phase 1 contract, read-only inputs, and deterministic outputs
++[OK] strict Phase 3 config validation
++[OK] project screening safety gate and balanced production config
++Stage 4 contour-teacher Phase 3 synthetic checks passed.
++phase3_updated_synthetic_exit_code=0
++```
++
++同じ代表129 BBoxをproduction configでdecision mode実行した実測結果は次のとおりである。
++
++```text
++videos_checked         : 60/60
++selected_bboxes        : 129
++processed_bboxes       : 129
++candidate_rows         : 9698
++decision_counts        : {'auto_accept': 31, 'auto_refine': 35, 'manual_review': 63}
++failure_rows           : 0
++input_files_unchanged  : true
++phase3_production_decision_exit_code=0
++```
++
++CSV上の事前simulationは`31 / 44 / 54`だったが、production実runは`31 / 35 / 63`となった。
++これは`minimum_support_count`が最終decision gateだけでなくcandidateのsupport scoreにも使われ、
++`2`から`1`への変更によってranking、selected proposal、score marginが再計算されたためである。
++したがって、Phase 4へ渡す正式なproduction decisionはend-to-end実runの`31 / 35 / 63`とする。
++この差をCLI不整合とは扱わず、以後の集計と代表例選択には実run artifactを使用する。
++
++### Phase 4: review exportとmanual import
++
++`manual_review` frameをimages、overlays、初期mask、CVAT ZIP、manifestとして一括出力する。
++CVATからexportした修正済みmaskを別runのH5 annotationへ反映し、point label、valid mask、
++metadataの整合性を検査する。自動maskとmanual maskの上書き規則を明文化する。
++
++#### Phase 4の目的
++
++Phase 3で自動判定できなかったBBoxを、localhost上のCVATへ安全かつ再現可能な形式で渡し、
++人力修正済みsemantic maskをStage 4のpoint labelへ戻す最小round tripを確立する。
++
++Phase 4は次の3工程を明示的に分離する。
++
++1. `review export`: Stage 4からlocal artifactを生成する
++2. `local CVAT review`: 利用者がlocalhost CVATへ手動importし、Brush/Eraserで修正してexportする
++3. `manual import`: CVAT export ZIPをstrict validationし、新しいannotated H5へ反映する
++
++Stage 4 codeからCVAT API、外部network、cloud storageへ接続しない。CVAT Taskの作成、annotation
++upload、backup、修正、exportは利用者が明示的に行う。
++
++#### Phase 4開始条件
++
++実装・実データround tripの前に次を満たす。
++
++- Phase 2 Synthetic checkが成功している
++- Phase 2 local CVAT golden import/no-edit export/edit exportが成功している
++- golden結果に基づき`SegmentationClass`と`SegmentationObject`のcontractが固定されている
++- Phase 3 Synthetic checkが成功している
++- Phase 3 production configの`production_thresholds_fixed`が`true`である
++- Phase 3 representative decision runがfailureなしで完了している
++- `manual_review`対象とreason codeがBBox単位で確定している
++
++Phase 2 goldenでCVAT exportのobject maskがPhase 2のsingle-object仮定と異なる場合は、Phase 4を
++実装する前にconverter/validator contractを更新する。CVATの実挙動をimport側で推測して
++暗黙に許容しない。
++
++#### Phase 4の実装範囲
++
++Phase 4に含める。
++
++- representative Phase 3 runからの`manual_review` frame選択
++- CVAT登録用の無描画画像、参照overlay、初期binary maskの生成
++- Phase 2 converterを利用した`Segmentation Mask 1.1` ZIP生成
++- frame/BBox/sourceへ逆引きできるreview manifest
++- CVAT export ZIPのread-only validation
++- semantic correction maskとBBox/manifestのstrict matching
++- source annotated H5を複製した別runへのpoint label反映
++- point配列、frame alignment、sampling schema、measurementの保存検査
++- manual provenance、review/export/import checksumの保存
++- batch export/import summaryと決定性検査
++
++Phase 4には含めない。
++
++- CVAT APIによるTask作成、upload、download
++- hosted CVAT、外部SaaS、外部AI/ML backendの利用
++- source H5/XML/Phase 3 artifactの上書き
++- BBox union外maskの暗黙clip
++- missing/extra frame、未知label、shape mismatchの自動補正
++- 全182件のteacher v3生成
++- instance-aware Stage 5学習
++- Stage 5学習または評価
++
++Phase 4はrepresentative manual round tripのcontract確定までとし、全件生成はPhase 5で行う。
++
++#### Phase 4実装予定ファイル
++
++```text
++pseudo3d/annotation/stage4_manual_review.py
++pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
++pseudo3d/annotation/import_cvat_segmentation_mask_corrections.py
++pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py
++pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml
++checks/stage4/check_stage4_cvat_manual_roundtrip.py
++```
++
++再利用・必要最小限の編集対象は次のとおりである。
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
++pseudo3d/batch/export/batch_export_annotation_mask_visualization.py
++```
++
++frame/BBox manifest、mask合成、mask-to-point label変換、provenance検証は
++`stage4_manual_review.py`のpure APIへ置き、single/batch CLIとSynthetic checkで共有する。
++Phase 2 ZIP validatorとPhase 3 decision schemaを再実装しない。
++
++#### Phase 4A: review export入力契約
++
++review exporterは次を入力とする。
++
++- Phase 3で使用したtrain manifest
++- source pseudo3D H5
++- source `bboxrank_v2_nobbox_bg` annotated H5
++- Phase 1 audit root
++- production閾値を固定したPhase 3 config
++- Phase 3 decision runの`bbox_decisions.csv`、`candidate_metrics.csv`、proposal masks
++- Phase 3 `run_config.yaml`、`refine_summary.json`、`checksums.csv`
++- Stage 4 manual-review config
++
++実行前に次をstrict validationする。
++
++- Phase 3がcandidate-onlyではなくdecision modeで完了している
++- Phase 3 `failure_rows=0`かつ全selected BBoxが処理済みである
++- manifest、teacher、refine config、Phase 1 auditのpath/checksum/fingerprintが一致する
++- Phase 3 checksum manifestと全proposal maskが一致する
++- `manual_review` rowにreason code、proposal mask、元BBoxが存在する
++- BBox keyとframe stemが一意である
++- source annotated H5がteacher v2 schemaおよび固定foreground samplingを持つ
++- source point labelが`-1/0/1`、`valid_mask == (point_label != -1)`を満たす
++
++Phase 3 representative runが一部BBoxだけを評価した場合、review frame内でPhase 3 rowを持たない
++他BBoxは現行v2 baselineを再計算して初期maskへ含める。これにより、annotation uploadがTask内
++annotationを置換しても、同じframeの非review femur領域が消えない。
++
++#### review frameの選択
++
++1個以上のBBoxが`manual_review`となったframeを1 review imageとする。同一frameに複数の
++`manual_review` BBoxがあっても画像とCVAT class maskは1枚だけ生成する。
++
++frame stemを次に固定する。
++
++```text
++{video_name}__fo{frame_order:05d}__fi{frame_index:08d}
++```
++
++- stemは全review package内で一意である
++- image、mask、overlay、CVAT ZIP、manifestで同じstemを使う
++- 拡張子はimage/maskとも`.png`に固定する
++- source imageをリサイズ、crop、補間しない
++- local encoder imageを既存の正規化関数で`uint8` grayscaleへ変換する
++- source imageは変更せず、CVAT Task用の複製画像だけへstrict BBox境界を描く
++- `manual_review` BBoxは黄、同一frameの他BBoxはシアンの1 pixel線とし、文字やmaskは描かない
++
++#### 初期frame maskの合成規則
++
++review frame内の全strict XML BBoxを処理し、初期semantic maskをunionする。
++
++| BBox状態 | 初期maskへ含める領域 |
++|---|---|
++| `auto_accept` | v2 baseline mask |
++| `auto_refine` | Phase 3 selected proposal mask |
++| `manual_review` | Phase 3 best-effort proposal mask |
++| Phase 3対象外 | 再計算したv2 baseline mask |
++
++`manual_review` proposalは修正開始点であり確定positiveではない。review前の学習用H5へは反映
++しない。全BBox maskをannotation BBoxへclipし、frame maskのBBox union外を0にする。
++
++同一frameに複数BBoxがある場合も、初期versionはStage 5が使用するsemantic `femur` unionを
++正解とする。`SegmentationClass`と`SegmentationObject`の具体的なindex表現はPhase 2 goldenで
++固定したcontractに従う。instance IDを推測して新たに割り当てない。
++
++#### review artifact出力契約
++
++runごとに独立した次の構造を生成する。
++
++```text
++manual_review_cvat/
++├── images/
++│   └── {frame_stem}.png              # strict BBox描画済みCVAT review画像
++├── masks/
++│   └── {frame_stem}.png              # binary uint8 0/255
++├── overlays/
++│   └── {frame_stem}.png
++├── cvat/
++│   ├── annotations_segmentation_mask_1_1.zip
++│   ├── conversion_summary.json
++│   └── unpacked_reference/
++├── review_frames.csv                 # 1 frame 1 row
++├── review_bboxes.csv                 # 1 BBox 1 row
++├── review_session_template.yaml
++├── checksums.csv
++├── export_summary.json
++└── run_config.yaml
++```
++
++`review_frames.csv`は少なくとも次を持つ。
++
++- frame stem、video、frame order/index、image shape
++- image/mask/overlay relative pathとSHA-256
++- source pseudo3D/annotated H5 pathとchecksum
++- XML root、frame内BBox数、manual-review BBox数
++- initial frame mask pixel数
++- teacher/refine/manual-review config fingerprint
++
++`review_bboxes.csv`は少なくとも次を持つ。
++
++- frame stem、BBox key、object name/index、XML path/checksum
++- XML/raw/local BBox座標
++- Phase 3 decisionとreason codes
++- baseline/proposal source、score、mask SHA-256
++- `manual_review_required`
++- 初期frame mask内のBBox positive pixel数
++
++overlayには元画像、全BBox、各decision色、baseline/proposal contour、manual-review reason、score、
++area/center/border/stabilityを表示する。overlayは判断支援用でCVAT Task/annotation ZIPへ含めない。
++
++#### 0件時の動作
++
++`manual_review`が0件の場合は正常終了し、summaryへ0件を記録する。ただし、空のimages/masks、
++空のCVAT annotation ZIP、空の`default.txt`は生成しない。`status=no_manual_review`として
++Phase 5へ進めることを明示する。
++
++#### review exportの決定性と安全性
++
++- image/mask/frame/BBoxを決定的にsortする
++- PNG encoding、ZIP timestamp/permission/member順をPhase 2 contractへ従わせる
++- 同一入力からbyte-identical mask、CVAT ZIP、CSV、checksumを生成する
++- output rootはsource H5、Phase 1/3 artifact、CVAT backupと分離する
++- 既存outputは`--overwrite`なしで変更しない
++- converter失敗時に不完全な最終ZIPを残さない
++- source H5/XML/Phase 3 artifactのsize、mtime、checksumを前後比較する
++
++#### review export CLI案
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --phase3_root "${RUN_ROOT}/contour_auto_refine_phase3_production_v1_decisions" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml \
++  --manual_review_config pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml \
++  --output_root "${RUN_ROOT}/manual_review_cvat_phase4"
++```
++
++#### Phase 4B: localhost CVATでの操作
++
++review export完了後、利用者が次を行う。
++
++1. local CVAT version、Task ID/name、利用者識別子を記録する
++2. Task labelを`femur`として作成する
++3. `images/*.png`だけをTask画像として登録する
++4. 既存annotationがあれば、import前に同形式でローカルbackupする
++5. `Segmentation Mask 1.1`、`Convert masks to polygons=OFF`でZIPをimportする
++6. stem、frame対応、向き、mask位置、labelを確認する
++7. overlayを参照し、全`manual_review` BBoxをBrush/Eraserで修正する
++8. 同一frameの非review BBox領域を誤って消していないことを確認する
++9. 保存後、`Segmentation Mask 1.1`でローカルexportする
++10. export ZIPを元artifactと別directoryへ保存する
++11. `review_session_template.yaml`をコピーし、Task/reviewer/CVAT version/backup/export情報を記入する
++
++`review_session.yaml`には少なくとも次を記録する。
++
++```text
++review_schema_version
++review_package_sha256
++cvat_version
++cvat_task_identifier
++reviewer_identifier
++imported_zip_sha256
++pre_import_backup_sha256
++exported_zip_sha256
++review_started_utc
++review_completed_utc
++all_manual_bboxes_reviewed
++notes
++```
++
++実名を不要とする運用では、ローカル管理されたpseudonymous reviewer IDを使用する。外部service
++のuser ID、URL、token、credentialをmanifestやH5へ保存しない。
++
++#### Phase 4C: manual import入力契約
++
++manual importerは次を入力とする。
++
++- review export root
++- CVATからexportした`Segmentation Mask 1.1` ZIP
++- 記入済み`review_session.yaml`
++- source annotated H5 root
++- 新規output root
++
++import前にPhase 2 validatorを使い、次をstrict validationする。
++
++- ZIP pathが安全でduplicate/unknown memberがない
++- labelmapが`background=0`、`femur=1` contractと一致する
++- default stem、class/object mask、review frame stem集合が完全一致する
++- maskが2-D `uint8`でindexが`{0,1}`の部分集合である
++- mask shapeがreview imageおよびmanifestと一致する
++- review package、CVAT import ZIP、CVAT export ZIPのchecksum chainが一致する
++- `review_session.yaml`が完了状態で全manual BBox確認済みである
++- source H5/XML/config checksumがreview export時から変化していない
++- unknown/missing/extra frameがない
++
++edited exportは初期maskと異なるため、Phase 2 validatorのreference pixel equalityは使用しない。
++代わりに初期maskとのadded/removed pixel数とIoUを保存する。
++
++#### correction maskのBBox制約
++
++各frame maskのnonzero pixelはstrict XML BBox union内だけを許可する。union外pixelが1点でも
++存在した場合はimportを失敗させ、暗黙にclipしない。
++
++さらに各`manual_review` BBoxについて、corrected maskとのintersectionが1 pixel以上あることを
++初期contractとする。修正の結果「対象なし」と確定する運用が必要になった場合は、empty maskを
++暗黙に意味付けせず、review sessionへBBox単位の明示的な`confirmed_absent`状態を追加してから
++contract versionを更新する。
++
++同一frameの複数BBoxが重なる場合、Stage 5用semantic labelはcorrected frame maskのunionを使用
++する。BBox別metadataは`corrected mask AND BBox`で計測する。重複pixelをinstance IDへ推測分割
++しない。
++
++#### point labelへの反映規則
++
++review済みframeではpoint labelを次の順序で再構成する。
++
++1. frame内pointを初期値background `0`とする
++2. strict XML BBox union内pointをignore `-1`とする
++3. corrected semantic mask内pointをpositive `1`とする
++
++したがって固定policyは次のまま維持される。
++
++- BBoxなしframe: background
++- BBox外: background
++- BBox内かつcorrected mask外: ignore
++- corrected mask内: positive
++- `valid_mask == (point_label != -1)`
++
++review対象外frameはsource H5のlabelをpixel単位で保持する。Phase 4 representative prototypeでは
++未選択BBoxをteacher v3へ暗黙更新しない。
++
++#### 新規H5の保存規則
++
++source H5を直接変更せず、別run名へ保存する。
++
++```text
++{video_name}_pointcloud_annotated_bboxrank_v2_phase4_manual_v1.h5
++```
++
++次をbyte-levelまたはarray-levelでsourceと一致させる。
++
++- `point_cloud`以下の全dataset、dtype、shape、順序、compression
++- points、intensity、alpha、confidence
++- frame order/index、pixel coordinates
++- source type/flags、sampling confidence
++- frame-level sampling statistics
++- measurement group
++- foreground/sampling metadata
++
++変更可能なのは次だけとする。
++
++- `annotation/point_label`
++- `annotation/valid_mask`
++- review frameに対応する`frame_annotation` annotation metric
++- manual review provenance metadata
++
++追加metadata案:
++
++```text
++manual_annotation_provenance: manual_cvat_segmentation_mask_1_1_v1
++manual_review_schema_version
++manual_review_package_sha256
++manual_review_session_sha256
++cvat_export_sha256
++cvat_task_identifier
++reviewer_identifier
++manual_reviewed_frame_count
++manual_reviewed_bbox_count
++manual_added_positive_pixels
++manual_removed_positive_pixels
++source_annotated_h5_sha256
++teacher_fingerprint
++refine_fingerprint
++```
++
++reviewed BBox rowにはdecisionを`manual_review_completed`、selected sourceを
++`manual_cvat_segmentation_mask_1_1_v1`として保存し、初期proposal source/reasonは別fieldへ保持
++する。自動teacher由来とmanual mask由来を同じsource名で上書きしない。
++
++#### idempotenceと再適用
++
++同じsource H5、review package、CVAT export ZIP、review sessionからはbyte-equivalentなannotation
++arrayとmetadataを生成する。同一outputへの暗黙再適用は拒否し、`--overwrite`付き再生成でも
++point labelが変化しないことを検査する。
++
++すでにmanual provenanceを持つH5を入力にする場合は、source package/export SHAが完全一致する
++idempotence check以外を拒否する。異なる修正版を適用する場合は元source H5から新しいrunを
++作り、revision IDを更新する。
++
++#### manual import CLI案
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py \
++  --review_root "${RUN_ROOT}/manual_review_cvat_phase4" \
++  --cvat_export_zip "${RUN_ROOT}/manual_review_cvat_phase4/cvat_exports/reviewed_segmentation_mask_1_1.zip" \
++  --review_session "${RUN_ROOT}/manual_review_cvat_phase4/cvat_exports/review_session.yaml" \
++  --source_annotated_root "${RUN_ROOT}/annotated" \
++  --manual_review_config pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml \
++  --output_root "${RUN_ROOT}/annotated_phase4_manual_v1" \
++  --summary_csv "${RUN_ROOT}/annotated_phase4_manual_v1/summary.csv"
++```
++
++#### Phase 4 Synthetic check
++
++`check_stage4_cvat_manual_roundtrip.py`で次を確認する。
++
++- manual-review BBoxを含むframeだけが1回ずつexportされる
++- unique frame stemとimage/mask/BBox alignmentが正しい
++- frame内のauto-accept/refine/未選択v2 BBoxが初期maskへ保持される
++- initial maskがBBox union外へ出ない
++- Phase 2 converter/validatorを通る決定的CVAT ZIPが生成される
++- 0件時に空ZIPを生成しない
++- missing/extra/duplicate stem、shape/index/labelmap不一致を拒否する
++- unsafe ZIP path、stale manifest、checksum mismatchを拒否する
++- BBox union外manual pixelを拒否し、clipしない
++- manual-review BBoxのempty correctionを拒否する
++- corrected mask内pointだけがpositiveになる
++- BBox内mask外がignore、BBox外/BBoxなしがbackgroundになる
++- `valid_mask == (point_label != -1)`を維持する
++- review対象外frameのlabelを完全保持する
++- point-level/frame-level sampling配列とmeasurementを完全保持する
++- manual provenanceとframe/BBox metadataが一致する
++- 同一入力のexport/import結果が決定的かつidempotentである
++- source H5/XML/Phase 1/3 artifactが変更されない
++- failure時に不完全な最終H5を残さない
++
++実装後の確認コマンドは次とする。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_manual_roundtrip.py
++
++echo "phase4_synthetic_exit_code=$?"
++```
++
++#### Phase 4 local CVAT round trip確認
++
++最初は2〜3 frame、少なくとも次を含むrepresentative packageで確認する。
++
++- overfilledから`manual_review`になった例
++- ambiguousまたはunstable例
++- 同一frameにmanual/non-manual BBoxが共存する例
++- 可能なら複数BBox frame
++
++確認順序:
++
++1. review packageの画像、mask、overlay、manifestを目視する
++2. local CVATへimportし、no-edit exportをvalidatorで確認する
++3. Brush/Eraserで追加・削除を各1例以上行う
++4. edited exportをvalidatorとmanual importerへ通す
++5. corrected mask、point label visualization、annotated PLYを目視する
++6. source/manual H5のschema propagationとStage 5 loader互換性を確認する
++7. BBox外/background、BBox内ignore、positiveの3値を確認する
++
++目視不一致がある場合はCVAT側で無理に運用回避せず、stem、座標、mask index、frame合成、import
++規則のどこに原因があるかをartifactとchecksumから特定する。
++
++#### Phase 4完了条件
++
++- Phase 2 local CVAT golden contractが確定している
++- Phase 4 Synthetic checkがexit code 0で通る
++- manual-review frameだけの決定的review packageを生成できる
++- localhost CVATでmaskのままimport、編集、exportできる
++- 修正済みZIPをstrict validationして別run H5へ適用できる
++- source point/sampling/measurement schemaを保持できる
++- fixed label policyとStage 5 loader contractを満たす
++- manual provenanceとchecksum chainから全修正を追跡できる
++- source H5/XMLおよび既存runを変更しない
++- 画像、mask、manifestが外部serviceへ送信されていない
++- Phase 5で全件運用するexport/import APIとschemaが固定される
++
++#### Phase 4実装順序
++
++1. Phase 2 local CVAT golden round trip完了とZIP contract固定
++2. manual-review configとframe/BBox manifest schema
++3. pureなframe mask合成・stem・checksum API
++4. batch review exporterとPhase 2 converter接続
++5. review session schemaとmanual ZIP preflight
++6. mask-to-point label変換と新規H5 writer
++7. batch importer、summary、idempotence
++8. Synthetic check
++9. 2〜3 frameのlocalhost CVAT round trip
++10. visualization、schema propagation、Stage 5 loader確認
++
++#### Phase 4実装状況（2026-08-19）
++
++次のファイルを実装した。
++
++```text
++pseudo3d/annotation/stage4_manual_review.py
++pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
++pseudo3d/annotation/import_cvat_segmentation_mask_corrections.py
++pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py
++pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml
++checks/stage4/check_stage4_cvat_manual_roundtrip.py
++```
++
++また、Phase 2のstrict ZIP contractをmanual importでも唯一の解釈系として再利用するため、次の
++public read APIを追加した。
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++  read_cvat_segmentation_class_masks(...)
++```
++
++実装済み内容は次のとおりである。
++
++- Phase 3 production decision artifact、checksum、manifest、Phase 1 fingerprintのstrict照合
++- `manual_review` BBoxを含むframeだけのunique stemによるreview export
++- 同一frameのauto-accept、auto-refine、manual-review、Phase 3対象外BBoxの初期mask合成
++- BBox単位clip後のsemantic union mask、strict BBox描画済みCVAT review画像、参照overlayの生成
++- Phase 2 converterによる決定的`Segmentation Mask 1.1` ZIP生成
++- frame/BBox manifest、session template、run config、checksum chainの生成
++- `manual_review=0`を正常終了し、空CVAT ZIPを生成しない動作
++- 記入済みreview sessionとCVAT export ZIPのstrict validation
++- missing/extra stem、unsafe ZIP、未知index、shape、labelmap、checksum不一致の拒否
++- strict BBox union外pixelとmanual BBox内empty correctionの拒否
++- review frameの`background/ignore/positive` label再構成
++- review対象外frameとpoint/sampling/measurement schemaの保持
++- source H5を変更しない一時ファイル経由のatomicな別run H5生成
++- manual provenance、review/package/session/export checksum、reviewer/task情報の保存
++- 同じsourceへの異なるmanual revisionの暗黙再適用防止
++- repeat importのannotation array・metadata決定性検査
++
++実データreview exportはPhase 3の`production_thresholds_fixed: true`かつdecision mode完了を必須と
++する。candidate-only調査には従来のscreening configを使い続け、review exportにはbalanced値を
++固定した`stage4_contour_auto_refine_phase3_production_v1.yaml`と、そのconfigで生成したdecision
++artifactだけを使用する。これによりscreening artifactを確定annotationとして誤用しない。
++
++Synthetic checkは次で実行する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_manual_roundtrip.py
++
++echo "phase4_synthetic_exit_code=$?"
++```
++
++#### Phase 4 Synthetic check結果（2026-08-21）
++
++`dualtrack311`環境でSynthetic round tripを実行し、`exit_code=0`で完了した。
++
++確認済み項目は次のとおりである。
++
++- mask-to-point labelの`background/ignore/positive`規則
++- strict BBox union外pixelの拒否
++- manual-review BBoxのempty correction拒否
++- Phase 1 auditとPhase 3 production decision fixtureのend-to-end連携
++- manual-review frame、初期mask、overlay、CVAT ZIPの決定性
++- `manual_review=0`時に空CVAT ZIPを生成しない動作
++- edited CVAT ZIPから別run annotated H5への反映
++- source H5のpoint cloud、sampling、measurement schema保持
++- point label、valid mask、manual provenanceの整合性
++- 同一入力を独立したoutputへimportした場合のannotation arrayとmetadataの決定性
++- project Phase 4 configと固定label contract
++
++結果は次のとおりである。
++
++```text
++[OK] strict mask-to-point labels, BBox union, and empty correction
++[OK] deterministic review frame export and exact CVAT ZIP
++[OK] zero manual-review result does not create an empty CVAT ZIP
++[OK] edited CVAT ZIP import, H5 schema preservation, labels, and provenance
++[OK] deterministic repeated import annotation arrays and metadata
++[OK] project Phase 4 config and fixed label contract
++Stage 4 CVAT manual round-trip synthetic checks passed.
++phase4_synthetic_exit_code=0
++```
++
++これによりPhase 4のコード実装とSynthetic contractは確認済みとする。詳細なreason集計とoverlay
++全件監査は省略するが、CVAT export/importの実データ契約を確定するため、2〜3 frameの代表round trip
++だけは自動refine版teacher v3の生成前に行う。
++
++#### 擬似教師データ生成を優先する短縮方針（2026-08-23）
++
++`stage4_contour_auto_refine_phase3_production_v1.yaml`を現設定で固定し、代表CVAT round trip後に
++次の規則で全182件の自動refine版teacher v3を生成する。
++
++- `auto_accept`: 現行v2 maskを使用する
++- `auto_refine`: Phase 3 proposalへ置換する
++- `manual_review`: 現行v2 maskを維持する
++- baseline invalidかつ候補なし: 現行のinvalid/ignoreを維持する
++
++#### 残りのステップ
++
++1. 既存のCVAT修正済み代表ZIPを再編集せず、context-only許可付きvalidatorとmanual importerへ通す。
++2. 修正mask、3値label、schema保持を最低限確認し、代表CVAT確認を完了する。
++3. 全182件について自動refine版teacher v3を別runへ生成する。`manual_review`は現行v2 mask、
++   baseline invalidかつ候補なしは現行invalid/ignoreを維持する。
++4. 全件成功、H5 schema、label件数、Stage 5 loader、数例のannotation textureだけを確認して学習へ進む。
++
++全件のCVAT修正は必須とせず、学習結果から改善が必要と判断した難例に限定して後から実施する。
++
++#### CVAT context-only画像契約（2026-08-24）
++
++- CVAT taskには代表選定した全画像を入れ、前後関係や同一task内の文脈を保持する。
++- 描画可能なstrict BBoxを持つ画像だけをannotation-requiredとし、黄色BBoxを画像へ焼き込む。
++- 描画可能なmanual BBoxがない画像は`context_only_stems.txt`へ記録し、H5更新対象外とする。
++- CVAT exportでcontext-only画像のClass/Object PNGが両方省略された場合だけ、空maskとして補完する。
++- annotation-required画像のmask欠落、Class/Object片側だけの欠落、未知stemは従来どおり拒否する。
++- context-only maskがZIPに含まれる場合は初期maskと同一であることを要求し、編集を反映しない。
++- `context_only` CSV列より前に生成した代表packageでは、明示した`context_only_stems.txt`を
++  human decisionとして優先する。未知stem、ZIP mask契約、初期mask不変条件は同様に検査する。
++- 今回の代表確認は既存修正済みZIPを使用し、追加のCVAT編集は行わない。
++
++代表実データZIPのcontext-only validationは成功した。3画像のうち2画像にmaskがあり、描画可能な
++manual BBoxを持たない1画像は`context_only_stems.txt`に基づくmask省略として受理された。
++
++```text
++images        : 3
++masks         : 2
++missing_masks : 1
++unique_indices: [0, 1]
++zip_sha256    : 2cabad381171eb3da93ecec38ae6992105f677571302696812f9fd42d02411bc
++exit_code     : 0
++```
++
++これによりCVAT側での追加編集・再exportは行わず、このZIPを代表manual importへ使用する。
++
++代表manual importも同じZIPから成功し、Phase 4を完了とする。
++
++```text
++videos                   : 2
++reviewed_frames          : 2
++reviewed_bboxes          : 2
++context_only_frames      : 1
++cvat_missing_context_masks: 1
++added_positive_pixels    : 0
++removed_positive_pixels  : 763
++failure_rows             : 0
++manual_import_exit_code  : 0
++```
++
++修正対象は`1-3_14`と`1-3_15_03`の各1 frame/1 BBoxである。context-onlyの
++`20250625_161030_0550__fo00051__fi00000051`はH5更新対象から除外し、元annotationを保持した。
++source H5を上書きせず、代表manual出力を別runへ生成できることを確認した。
++
++### Phase 5: 全182件のteacher v3再生成
++
++Phase 5はCVATによる全manual-review対象の確認・修正までを範囲とする。
++既存foreground H5を再利用し、自動事前annotation、ケース別CVAT package、
++manual反映済みteacherをそれぞれ別runで生成する。
++
++最初に生成するrun名:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1
++```
++
++CVAT修正を後から反映する場合のrun名:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_manual_v1
++```
++
++既存の`bboxrank_v2_nobbox_bg`は上書きしない。
++
++#### Phase 5実装（2026-08-24）
++
++Phase 3 production runの代表129 BBoxは`auto_accept=31`、`auto_refine=35`、
++`manual_review=63`で固定されている。Phase 5では35件の`auto_refine`だけをproposal maskへ
++置換し、他のdecisionとPhase 3未選択BBoxはv2をpixel単位で維持する。全182 H5は新runへ
++出力し、source H5を上書きしない。
++
++追加ファイル:
++
++```text
++pseudo3d/batch/annotation/batch_apply_stage4_contour_refinement.py
++pseudo3d/pipelines/build_stage4_bbox_ranked_v3_refined_auto.sh
++checks/stage4/check_stage4_contour_teacher_phase5_apply.py
++```
++
++安全条件:
++
++- Phase 1/3のmanifest、config fingerprint、decision checksumを照合する
++- production閾値固定済み・candidate-onlyではないPhase 3 artifactだけを許可する
++- 変更frameの全BBoxについてv2 maskを再構築し、source point labelとの完全一致を要求する
++- proposal maskのshape、値、semantic SHA、BBox、主要metricを再検証する
++- frame内の全BBox maskをunionして`background/ignore/positive`を再構築する
++- point cloud、sampling、measurementと変更対象外frame/BBoxを保持する
++- H5へdecision、mask SHA、score、source/config fingerprintを保存する
++- atomicな別H5出力と`--skip_existing`時のprovenance照合を行う
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_contour_teacher_phase5_apply.py
++
++echo "phase5_synthetic_exit_code=$?"
++```
++
++Synthetic checkは`dualtrack311`環境で成功した。
++
++```text
++videos_written_or_verified: 1
++refined_bboxes           : 1
++refined_frames           : 1
++added_positive_points    : 0
++removed_positive_points  : 13
++failure_rows             : 0
++Phase 5 apply passed.
++Phase 5 synthetic checks passed.
++phase5_synthetic_exit_code=0
++```
++
++これによりproposal適用、v2保持、point/measurement schema、provenance、repeat runの決定性を
++確認済みとし、全182件buildへ進む。
++
++全件生成、collect、label policy監査、annotation texture生成:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++SKIP_EXISTING=1 \
++EXPORT_VISUALIZATIONS=1 \
++bash pseudo3d/pipelines/build_stage4_bbox_ranked_v3_refined_auto.sh
++
++echo "phase5_full_build_exit_code=$?"
++```
++
++主要出力:
++
++```text
++stage4_training_ablation/260711/
++└── global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1/
++    ├── annotated/
++    ├── collected/
++    ├── annotation_textures/
++    └── logs/
++```
++
++Phase 5-Aの自動事前アノテーションbuildは`dualtrack311`環境で全182件完了した。
++
++```text
++annotated                    : 182
++collected                    : 182
++phase5_full_build_exit_code  : 0
++```
++
++`annotated`、一時`collected`、目視確認用の`annotation_textures`を、source runを
++上書きせず`bboxrank_v3_refined_auto_v1`下に生成済みである。ただしこの
++`collected`はmanual review前の中間生成物であり、Phase 5完了品としてStage 5へ渡さない。
++
++#### Phase 5-B: Phase 3全ケースのCVAT確認
++
++Phase 3 production decisionの対象となった129 BBoxを全件対象とする。
++`auto_accept=31`、`auto_refine=35`、`manual_review=63`のすべてをCVATで確認可能にし、
++自動判定ケースも必要なら修正する。Phase 3監査で未選択の残り2,943 BBoxは
++現時点のCVAT対象に含めない。
++
++- 1ケースは1 review frameとし、同一frameの複数BBoxは分割しない
++- 出力はvideoごとの独立ディレクトリとCVAT taskに分ける
++- 各video配下にケース別のimage、初期mask、overlay、BBox/判定情報を保存する
++- 黄BBoxをCVAT入力画像に直接描画し、必要なコンテキストframeも同梱する
++- `auto_accept`、`auto_refine`、`manual_review`の元判定を各ケースに明記する
++- video単位で確認済み・修正済みを記録し、中断・再開可能にする
++- CVAT export ZIP、task backup、review session、SHA-256をvideo単位で保存する
++
++##### Phase 5-B export実装（2026-08-24）
++
++代表試験用の既存export contractを維持しつつ、次を追加した。
++
++- `review_scope=all_phase3`でPhase 3の129 BBoxすべてをreview対象にする
++- correction/importの基点H5を`bboxrank_v3_refined_auto_v1`として記録する
++- 全体packageに加え、`videos/<video_name>`に独立import可能なCVAT packageを生成する
++- `cases/<frame_stem>`にBBox描画済み画像、初期mask、overlay、metadataを保存する
++- review対象BBoxは元のPhase 3 decisionにかかわらずCVAT画像上で黄色にする
++- `review_index.csv`と`progress.csv`でBBox/video単位の進捗を管理する
++- 描画不能なinvalid BBoxも129件のindexに残し、`context_only/not_applicable`として確認対象にする
++- expected countを`129/31/35/63`に固定し、古いPhase 3 artifactの混入を拒否する
++
++編集ファイル:
++
++```text
++pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
++pseudo3d/pipelines/export_stage4_phase5_cvat_review_cases.sh
++checks/stage4/check_stage4_cvat_manual_roundtrip.py
++```
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_manual_roundtrip.py
++
++echo "phase5b_export_synthetic_exit_code=$?"
++```
++
++全件export:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++OVERWRITE=0 \
++bash pseudo3d/pipelines/export_stage4_phase5_cvat_review_cases.sh
++
++echo "phase5b_export_exit_code=$?"
++```
++
++出力先:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1/
++└── manual_review_cvat_phase5_all_phase3_v1/
++    ├── review_index.csv
++    ├── progress.csv
++    ├── partition_summary.json
++    └── videos/
++        └── <video_name>/
++            ├── cases/<frame_stem>/
++            ├── images/
++            ├── masks/
++            ├── overlays/
++            └── cvat/annotations_segmentation_mask_1_1.zip
++```
++
++##### Phase 5-B CVAT master Task確認（2026-08-25）
++
++CVAT `2.73.1`のTask `5`は`1-3_14`だけの代表Taskではなく、Phase 3全129ケースを
++格納したmaster Taskである。したがって、60個のvideo packageはローカルでの整理・
++修正結果の再分割に使い、CVAT上に60 Taskを重複作成しない。
++
++- master Task 5をroot `images/`の129画像、root annotation ZIPと照合する
++- root画像集合と60 video packageの画像集合が完全一致することを確認する
++- `progress.csv`、画像枚数、ZIP SHA-256、Project、`femur` labelを検査する
++- master確認modeではread-onlyとし、`--apply`を拒否する
++- per-video Task作成機能は将来必要になった場合の任意機能として残す
++- 接続先は`localhost`、`127.0.0.1`、`::1`だけを許可する
++- MacのFinderが生成する`.DS_Store`/AppleDoubleは画像集合から除外する
++
++master preflight結果:
++
++```text
++CVAT version       : 2.73.1
++task_id            : 5
++task_name          : stage4_phase5__1-3_14
++task scope         : all_phase3_master
++workspace          : standalone
++master frames      : 129
++selected BBoxes    : 129
++video packages     : 60
++preflight          : passed
++```
++
++Task名は代表video名を含むが、実体は全129ケースのmaster Taskである。Taskを追加作成せず、
++Task 5を全件確認・修正に使用する。
++
++編集前Task backupもMac側で作成・検証済みである。
++
++```text
++filename : task_5_all_phase3_pre_review_backup.zip
++contents : data/images, data/manifest.jsonl, task.json, annotations.json
++zip test : passed
++sha256   : cbce5290afa34f968553b85a78646aeb3c082e463199755bea978f82c08720ce
++```
++
++追加ファイル:
++
++```text
++pseudo3d/batch/export/batch_create_stage4_phase5_cvat_tasks.py
++pseudo3d/pipelines/create_stage4_phase5_cvat_tasks.sh
++```
++
++#### Phase 5-C: full-video CVAT review
++
++selected-frameだけを格納したTask 5では、crop境界に達するまでの大腿骨断面の移動を
++判断しにくいことが分かった。Task 5はbaselineとして保存し、以後はPhase 3対象を含む
++60動画について、1動画1 Taskで全local-crop frameを時系列に格納する。
++
++人力確認では、修正対象を`annotate`、十分な良好frameがあるcrop端例を
++`exclude_crop_boundary`、crop再生成が必要な例を`needs_recrop`に分類する。
++見切れたBBoxを一律にpositive化せず、判断結果をmaskとは別のCSVに保存する。
++
++実装手順、data contract、出力構成、crop metric、CVAT運用、再importの詳細は次へ分離する。
++
++- `docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
++
++2026-08-28時点でStep 1、Step 2を実装し、合成検査のexit code 0を確認済み。実データを
++変更しないpreflight（Step 3）も60動画・3,048 frame・129 targetで成功済み。full-video
++package生成・CVAT ZIP検査・source再照合・Mac転送manifest生成（Step 4）も実データで
++exit code 0を確認して完了した。Mac上でTask 5と分離した60 standalone Taskを作成し、
++1動画smokeから残りへ再開可能に展開するStep 5も実装済みである。次はMacへpackageと
++更新コードを転送し、dry-run、1動画smoke、残り59動画の順に実行する。
++
++#### Phase 5-D: manual反映済み全件runの構築
++
++2026-09-03、59 Taskの返却snapshotを取り込む実装を追加した。crop不良として登録済みの
++`20250626_090758_8000`を除外し、reviewed 59動画と非review 122動画から181動画を構築する。
++CVAT修正は除外後に描画可能な112 target BBoxだけへ限定し、context・target外・crop外BBoxはv3を
++保持する。空maskは削除修正として許可する。単一targetへ一意に帰属するmanual maskは弱い
++BBoxより優先する。BBox外positiveはCVAT再exportごとに再集計し、provenance付きで保持する。
++最終runは
++`bboxrank_v4_manual_fullvideo_v1`とし、preflight、annotated、collected、3値label監査、可視化を
++`pseudo3d/pipelines/build_stage4_bbox_ranked_v4_manual_fullvideo.sh`から実行する。実データでの
++build成功と目視確認をもってPhase 5完了とする。
++
++##### Phase 5-D実データ結果（2026-09-05）
++
++CVATで再修正した59 Taskのsnapshot v2をLinux環境へ返却し、crop不良として登録した
++`20250626_090758_8000`を除外した最終buildが成功した。元の182動画のうち181動画を、
++手動修正反映済みteacher v4として別runへ生成した。
++
++```text
++run name       : global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1
++annotated H5   : 181
++collected H5   : 181
++excluded video : 20250626_090758_8000
++build exit code: 0
++```
++
++主要出力:
++
++```text
++stage4_training_ablation/260711/
++└── global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1/
++    ├── annotated/
++    ├── collected/
++    ├── annotation_textures/
++    └── logs/
++```
++
++`annotated`と`collected`の生成、3値label policy監査、既存可視化のexportまでは完了した。
++ただし、現行`annotation_textures/<video>/frames`の赤maskと輪郭線は、保存済みv4
++`annotation/point_label`やCVAT manual maskを直接描くものではなく、画像・strict XML BBox・
++保存configから`bbox_ranked_global_local`を再実行した自動輪郭である。したがって、この画像は
++sampling source、XML BBox、自動輪郭の確認には使えるが、v4手動修正ラベルの最終確認には
++使わない。
++
++Phase 5の状態は「teacher v4 build完了、v4ラベル専用の目視検証は未完了」とする。
++目視中に見つかった追加相談事項は、内容と対応方針を合意するまで未修正として扱い、現時点の
++H5、XML、可視化処理へ変更を加えない。
++
++自動輪郭の目視では、適切に見えるlocal候補を、BBox辺まで膨張したglobal候補が内包して
++globalが採用される例が確認された。原因調査、境界接触による最小変更案、既存CVAT maskの
++再利用契約は次の独立文書へ分離する。現時点では未実装である。
++
++- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
++
++H5再作成の要否を判断する前に、保存済みteacher v4の3値point labelとprovenanceを直接表示する。
++既存automatic contour可視化とは分離し、次の計画に従う。
++
++- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
++
++その比較により、full-video CVAT Taskのcontext frameでCVAT mask外の旧automatic positiveが
++残ることを確認した。旧Phase 5-Dの「112 target BBoxだけへ部分適用する」契約は廃止し、
++snapshot対象動画の全Task frameでCVAT maskをpositiveの唯一の根拠にする。修正仕様と実装手順は
++次を正本とする。
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++
++### Phase 6: Stage 5比較
++
++v4ラベルを直接表示する可視化での目視確認と、保留中の相談事項の扱いを確定するまで開始しない。
+ 
+ 同じStage 5設定で少なくとも次を比較する。
+ 
+ 1. `bboxrank_v2_nobbox_bg`
+-2. `bboxrank_v3_refined`
++2. `bboxrank_v3_refined_auto_v1`
+ 3. manual修正が十分ある場合は`bboxrank_v3_refined_manual_v1`
+ 
+ foreground点、split、seed、モデル、loss設定を固定し、教師変更だけを比較する。
+@@ -728,12 +2627,19 @@ foreground点、split、seed、モデル、loss設定を固定し、教師変更
+ 
+ ```text
+ pseudo3d/analysis/audit_stage4_contour_teacher.py
++pseudo3d/analysis/prototype_stage4_contour_auto_refine.py
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml
++pseudo3d/annotation/contour_teacher_refinement.py
++pseudo3d/annotation/stage4_manual_review.py
+ pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
+ pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
+ pseudo3d/annotation/import_cvat_segmentation_mask_corrections.py
+ pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py
++pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml
+ pseudo3d/pipelines/build_stage4_bbox_ranked_v3_annotations.sh
+ checks/stage4/check_stage4_contour_teacher_audit.py
++checks/stage4/check_stage4_contour_auto_refine.py
+ checks/stage4/check_stage4_cvat_segmentation_mask_export.py
+ checks/stage4/check_stage4_cvat_manual_roundtrip.py
+ ```
+@@ -747,7 +2653,7 @@ pseudo3d/batch/export/batch_export_annotation_mask_visualization.py
+ pseudo3d/batch/export/batch_export_annotation_mask_visualization.sh
+ pseudo3d/pipelines/build_stage4_bbox_ranked_annotations.sh
+ docs/stage4/stage4_sampling_investigation_progress.md
+-../Stage5/train_stage5.sh
++../../../Stage5/train_stage5.sh
+ ```
+ 
+ ## 12. 検証項目
+diff --git a/docs/stage2to4/stage4/stage4_phase7_report.md b/docs/stage2to4/stage4/stage4_phase7_report.md
+index 88a2d8d..e606455 100644
+--- a/docs/stage2to4/stage4/stage4_phase7_report.md
++++ b/docs/stage2to4/stage4/stage4_phase7_report.md
+@@ -226,7 +226,7 @@ cleanup導入前および導入後の双方で3件の処理が完了し、`proce
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_annotation_schema_propagation.py
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_collect_schema_propagation.py
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
+-  ../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
++  ../../../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_combined_v2_annotated_ply.py
+ ```
+ 
+@@ -555,10 +555,10 @@ strict source visualization: 更新完了、目視確認完了
+ 
+ ### 14.3 Stage 5
+ 
+-* `../Stage5/stage5/utils/h5_io.py`
+-* `../Stage5/train_stage5.sh`
+-* `../Stage5/infer_stage5.sh`
+-* `../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py`
++* `../../../Stage5/stage5/utils/h5_io.py`
++* `../../../Stage5/train_stage5.sh`
++* `../../../Stage5/infer_stage5.sh`
++* `../../../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py`
+ 
+ ### 14.4 Phase 7 checker
+ 
+diff --git a/docs/stage2to4/submission/README.md b/docs/stage2to4/submission/README.md
+index 7112e09..be53c12 100644
+--- a/docs/stage2to4/submission/README.md
++++ b/docs/stage2to4/submission/README.md
+@@ -1,4 +1,4 @@
+ # Submission utilities
+ 
+-実装は`src/submission/`に配置されている。
++実装は`../../../Stage2to4/src/submission/`に配置されている。
+ # 
+diff --git a/docs/stage5/FILES.md b/docs/stage5/FILES.md
+index dbdfafb..52a374f 100644
+--- a/docs/stage5/FILES.md
++++ b/docs/stage5/FILES.md
+@@ -1,7 +1,28 @@
+ # Stage5 File Layout
+ 
++## Current implementation handoff
++
++- `stage5_revision_management_record.md`: authoritative Stage 5 overview,
++  chronological revision record, accepted decisions, current status, and next
++  implementation order. Start here when deciding what work comes next.
++- `stage5_overlap_aggregation_handoff_prompt.md`: current teacher v6 state,
++  overlap aggregation diagnostics, BatchNorm parity steps, privacy rules, and
++  completion criteria for the next implementation chat.
++- `stage5_overlap_aggregation_implementation_policy.md`: implementation-chat
++  rationale behind the handoff prompt's overlap aggregation checker design
++  (module reuse, accumulator math, mean baseline parity method, output
++  layout, and the F1-F3 design decisions). The handoff prompt is authoritative
++  if the two disagree.
++- `stage5_pointnext_s_training_evaluation_report.md`:
++  authoritative investigation history and current findings.
++- `TRAINING_IMPROVEMENT_PLAN.md`: earlier planning history; use the evaluation
++  report for detailed evidence and `stage5_revision_management_record.md` for
++  the current priority order.
++
+ ## Core code
+ 
++Paths below are relative to `Stage5/` (this file lives in `docs/stage5/`).
++
+ - `train_stage5.py`: training CLI.
+ - `infer_stage5.py`: inference CLI.
+ - `evaluate_stage5.py`: annotated H5 evaluation CLI with window and aggregated metrics.
+@@ -27,6 +48,13 @@ Main groups:
+ - `checks/s3dis/check_s3dis_*`: official PointNeXt/S3DIS checkpoint and data checks.
+ - `checks/transfer/check_s3dis_to_stage5_pointnext_s_transfer.*`: partial S3DIS-to-Stage5 weight transfer.
+ - `checks/real_h5/check_real_h5_pointnext_s_transfer_forward.*`: real Stage5 H5 forward/PLY check.
++- `checks/real_h5/check_stage5_batch_integrity.*`: Dataset/window/point_indices audit against source H5 (S5-04).
++- `checks/real_h5/check_stage5_padding_parity.*`: zero-padding sensitivity for logits/gradient/BatchNorm (S5-05).
++- `checks/real_h5/check_stage5_overlap_aggregation.*`: overlap-window probability/aggregation comparison (S5-08, 実装事項A).
++- `checks/real_h5/check_stage5_batchnorm_mode_parity.*`: eval()/train() BatchNorm probability parity (S5-09, 実装事項B).
++- `checks/real_h5/check_stage5_batchnorm_recalibration.*`: diagnostic BatchNorm running-statistics recalibration from the training split, compared against the original checkpoint (S5-10). Saves a diagnostic checkpoint under `stage5_debug/`; never overwrites the original and is never shared.
++- `checks/dummy/check_dummy_pointnext_s_groupnorm.*`: BatchNorm-default backward-compatibility and GroupNorm structural/train-eval-parity checks for the PointNeXt-S wrapper's `pointnext_norm` option (S5-11). `--self_test` is CPU-only; the full run needs CUDA and dummy H5 data only.
++- `checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.*`: transfers the existing Stage5 BatchNorm S3DIS partial-init checkpoint's trainable parameters (conv/linear/head/norm affine) into a freshly constructed GroupNorm model, excluding only BatchNorm running buffers (S5-11). Saves `stage5_pointnext_s_s3dis_partial_init_groupnorm.pt` alongside the existing BatchNorm partial-init checkpoint.
+ - `checks/inspection/inspect_pointnext_checkpoint.py`: checkpoint structure inspection.
+ 
+ ## Generated local work directories
+diff --git a/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md b/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md
+index 382a7ba..a64602b 100644
+--- a/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md
++++ b/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md
+@@ -1,5 +1,9 @@
+ # Stage 5 overlap aggregation検証・実装チャット引継ぎプロンプト
+ 
++> **進捗注記（2026-09-10）:** 本書の実装事項A・Bは完了済みである。現在状態、採用済み判断、
++> BatchNorm recalibration以降の実施順は`stage5_revision_management_record.md`を正とし、本書は
++> A・Bの仕様・実装・検証履歴として参照する。
++
+ ## 0. この文書の使い方
+ 
+ この文書は、Stage 5の実装と検証を別チャットへ引き継ぐための作業プロンプトである。
+@@ -15,44 +19,237 @@
+ 学習を開始したりしないこと。結果から次の方針判断が必要になった時点で、成果物と要約を
+ 方針管理チャットへ返す。
+ 
++### 0.1 実装前確認事項への確定回答（2026-09-09）
++
++実装チャットから提示されたF1からF3は、次の内容で確定した。
++
++- F1: `edge_distance`は事前bucket化せず、生の整数値をgroup keyとして保存する。
++- F1: window境界距離と動画内時間位置は混合せず、独立した2つの内訳表として出力する。
++- F1: 動画内時間位置は生の`frame_order`で動画間集約せず、0から1へ正規化したdecileを使用する。
++- F2: 既存評価の`${EVALUATION_DIR}/best/h5_metrics.csv`と突き合わせるOption Aを採用する。
++- F2: TP/FP/TN/FNは完全一致を要求する。差が出た場合は許容誤差で通さず、差分artifactを保存してcheckerを停止し、CUDA非決定性と実装差を切り分ける。
++- F3: aliasを明示指定する薄いPLY export optionを今回実装し、既定値はoffとする。
++- F3: 未検証code pathにはしない。固定train sanity 1件でoptionのsmoke testを行い、期待する方式別probability/positive-only PLYの存在とheaderを確認する。
++- F3: full runでは固定train sanity aliasだけを指定できるようにし、validation PLYは定量結果から対象を選んだ後に必要なH5だけ再実行する。
++
++F3のテスト追加以外は、実装チャットの推奨内容をそのまま採用する。
++
++### 0.2 実装事項Aのコード実装完了（2026-09-09）
++
++次の2ファイルを新規作成した。
++
++```text
++Stage5/checks/real_h5/check_stage5_overlap_aggregation.py
++Stage5/checks/real_h5/check_stage5_overlap_aggregation.sh
++```
++
++実装チャットのdevコンテナ（numpy/torch/h5pyが無い）で完了した検証。
++
++- `python3 -m py_compile check_stage5_overlap_aggregation.py` 合格。
++- `bash -n check_stage5_overlap_aggregation.sh` 合格。
++
++実装の要点。
++
++- per-point accumulator（vote_count、prob_sum/sum_sq、prob_min/max、positive_vote_count、
++  center_weighted_sum/weight_sum、center_nearest_prob/distance/window_id、min_edge_distance）を
++  `OverlapAccumulator`として実装し、windowごとにNumPy fancy indexingでH5内O(N)更新する。
++  モデルforwardは1 windowにつき1回、1 H5全体でも4方式分の再実行はしない（制約1）。
++- mean baseline parityは`evaluate_stage5.compute_metrics`をそのまま再利用し、
++  `--reference_h5_metrics_csv`（既存の`${EVALUATION_DIR}/best/h5_metrics.csv`）とTP/FP/TN/FNを
++  完全一致比較する（F2で確定したOption A）。不一致時は
++  `private_output_dir/mean_baseline_parity_failure.csv`へ差分を保存し、
++  `ParityMismatchError`で即座に停止する。
++- `min_edge_distance`はbucket化せず整数値のままgroup keyにし、動画内時間位置は
++  `disagreement_by_relative_frame_decile.csv`として境界距離表と別に出力する（F1）。
++- PLY exportは`--export_ply_alias`（alias明示指定、既定off）として実装し、要求aliasが
++  実際に処理されたか事前・事後の両方で照合するfail-fastチェックを入れた（F3）。
++- alias付与は`export_anonymized_stage5_metrics.build_aliases`を再利用。全H5を読み込む前に、
++  H5ルート属性（`h5py.File(...).attrs`）だけを読む軽量pre-passでvideo_nameを解決し、
++  点群配列の二重読み込みを避けている。
++- Step A1のsynthetic testは`--self_test`引数として同スクリプト内に実装した。次の8ケースを
++  カバーする: 基本累積(vote_count/sum/sum_sq/min/max/positive_vote_count)、2-vote統計
++  (mean/std/range)、all_negative/all_positive/disagreement分類、center_nearestと
++  center_weightedの計算、center_nearestタイブレーク（順方向・逆方向で結果が変わらないこと）、
++  tail windowのedge_distance、vote_count=1での4方式一致、probability=0.5のtieがbackgroundに
++  なること。
++
++Step A1完了（2026-09-09、ユーザー実機）。
++
++```text
++$ SELF_TEST=1 bash checks/real_h5/check_stage5_overlap_aggregation.sh
++Stage5 overlap aggregation self-test (Step A1)
++Stage5 overlap aggregation self-test passed.
++```
++
++8ケース全て合格。accumulator蓄積、mean/std/range、all_negative/all_positive/disagreement分類、
++center_nearest/center_weighted、center_nearestタイブレーク、tail windowのedge_distance、
++vote_count=1での4方式一致、probability=0.5のtie、いずれも実装通りの結果になることを確認した。
++
++Step A2試行時に判明した`.sh`の不具合を修正した（2026-09-09）。空の`VAL_LIST`
++（train-sanityのみのsmoke run用）を渡すと、存在確認が`-s`（非空要求）になっていたため
++`Validation list not found or empty`で誤って停止していた。`check_stage5_overlap_aggregation.sh`の
++検証を`-f`（存在確認のみ）へ変更し、空ファイルの場合は停止せず警告表示のみとした。
++Python側`read_path_list`は元々空ファイルを許容しており（0件のリストを返す）、
++`main()`側も`selected_train_paths`か`val_paths`のどちらかが非空であれば処理を続行する
++設計だったため、この修正でPython側の変更は不要だった。
++
++Step A2 smoke run（train sanity 3件、PLY: `train_sanity_fixed_001`）が完走した
++（2026-09-09、ユーザー実機、`Stage5 overlap aggregation checker passed.`）。ただし完走直後の
++レビューで、共有可能とするはずの`share_output_dir/overlap_aggregation_summary.json`に
++checkpointと`reference_h5_metrics_csv`の**絶対パス**が含まれていることを発見した。制約9・
++8章の「共有しないもの: 元H5や絶対データパスの一覧」に反する実装上の不備であり、
++ユーザーへ共有を依頼する前にこちらで検出・修正した。
++
++修正内容（2026-09-09）。
++
++- `overlap_aggregation_summary.json`（share側）は`checkpoint_name`・`run_name`
++  （いずれもbasenameのみ）と`mean_baseline_parity_reference`（`h5_metrics.csv`という
++  ファイル名のみ）に置き換え、絶対パスを含めないようにした。
++- 絶対パス（checkpoint、reference CSV、selected_train_list、val_list）は
++  `private_output_dir/overlap_aggregation_run_info_DO_NOT_SHARE.json`へ分離した。
++- parity失敗時の`summary["parity_failure_csv"]`も絶対パスをやめ、ファイル名のみの参照に変更した。
++- 実行完了時に`export_anonymized_stage5_metrics.assert_share_bundle_anonymous`を再利用した
++  自己検査を追加し、`share_output_dir`配下に絶対パス・タイムスタンプ型video ID・private
++  mappingが残っていないことをchecker自身が毎回確認するようにした（8章の検査項目と同じ基準）。
++
++この修正により、直前のsmoke runで生成された`share_metrics/overlap_aggregation_summary.json`
++（絶対パスを含む版）は共有不可であり、再実行して置き換える必要がある。CSV各種
++（`overlap_probability_statistics.csv`等）はvideo_aliasのみを含み、この問題の影響を
++受けていない。
++
++修正後にoutput directoryを削除して再実行し、Step A2完了を確認した（2026-09-09、
++ユーザー実機）。
++
++- `Stage5 overlap aggregation checker passed.`まで到達し、anonymization self-check
++  （`assert_share_bundle_anonymous`）もエラーなく通過した。`overlap_aggregation_summary.json`に
++  絶対パスは含まれていない。
++- mean baseline parity合格。train sanity（3動画合計、mean_probability方式）の
++  `TP=407, FP=16602, TN=600976, FN=9349`が、本書2.5節に既に記録済みのbest.pt評価結果と
++  完全一致した。checkerの独立実装が本番`evaluate_stage5.py`の結果を正確に再現できることを
++  確認した。
++- PLY smoke test合格。`train_sanity_fixed_001`について4方式×probability/positive-onlyの
++  8ファイルが生成され、全てPLY headerとして正しい形式
++  （`ply`/`format ascii 1.0`/`element vertex N`/xyz+rgb properties/`end_header`）だった。
++  probability PLY（全点）は4方式とも188301頂点で一致（同一動画・同一点群のため一致が正しい）。
++  positive-only PLYの頂点数はmean(13161) < center_weighted(14218) < center_nearest(17251) <
++  max(22408)であり、3動画合計のcheckpoint_summaryにおける`predicted_positive_count`の並び
++  （17009 < 18305 < 22959 < 30356）およびtp_zero_video_count（mean/center系=1動画、
++  max=0動画）と整合していた。3動画のsmoke sampleに留まるため結論扱いはしないが、
++  調査対象の仮説（mean集約によるpositive抑制）の方向性と一致する参考情報として記録する。
++
++Step A3（full run、train sanity 3件+validation 18件、計21動画）完了を確認した
++（2026-09-09、ユーザー実機）。`Stage5 overlap aggregation checker passed.`まで到達し、
++anonymization self-checkも合格した。`share_metrics/`一式（8ファイル）を
++`/workspace/.tmp/overlap_aggregation_share/`へ配置してもらい、実装チャット側でも
++絶対パス・timestamp型video IDが含まれていないことを独立に`grep`確認した上で内容を精査した。
++
++mean baseline parityはvalidation split（TP=2691, FP=85785, TN=6421265, FN=66760,
++valid=6576501, ignore=19050）についても本書2.5節の記録値と完全一致した。固定train sanity動画
++単体のF1（0.0293）も9.4節の記録値と一致した。
++
++Step A4として、`stage5_pointnext_s_training_evaluation_report.md`の9.5節へ
++「実装事項A: overlap probability / aggregation checker 検証結果（2026-09-09）」を追記した。
++suppressed-positive率（GT positive点でtrain 21.54%/validation 10.56%）、video別disagreement率
++（0.2%〜79.7%と大きくばらつく）、`min_edge_distance`別disagreement率がほぼ一定（5.9〜6.0%、
++window境界仮説を支持しない）、動画内相対位置別disagreement率が後半で緩やかに上昇する傾向、
++4 aggregation方式のsplit集約比較表（F1/IoU/recall/FP/TP0動画数）を記録した。詳細は同節を参照。
++
++未実施（GPU・`/mnt/data`・numpy/torch/h5pyが必要で、実装チャットのdevコンテナでは実行できない）。
++
++- 実装事項B（BatchNorm train/eval parity）: 6章の仕様通り、事項Aの記録後に着手する。
++  方針管理チャットが事項Aの結果を確認し、着手を承認してからとする。
++
++ユーザー実機で次の順に実行する（Step A1〜A3は完了済み、参考として残す）。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage5
++
++# Step A1: synthetic accumulator test（checkpoint/H5不要、numpyのみで完結）
++SELF_TEST=1 bash checks/real_h5/check_stage5_overlap_aggregation.sh
++
++# Step A2: train sanity 3件のみのsmoke run + 固定train sanity 1件でPLY smoke test
++#   （validationを一時的に空リストにしてGPU時間を絞る）
++: > /tmp/stage5_empty_val_list.txt
++VAL_LIST=/tmp/stage5_empty_val_list.txt \
++EXPORT_PLY_ALIASES="train_sanity_fixed_001" \
++bash checks/real_h5/check_stage5_overlap_aggregation.sh
++
++# Step A3: full run（既定のRUN_DIR/EVALUATION_DIRのまま、train sanity 3件+validation 18件）
++bash checks/real_h5/check_stage5_overlap_aggregation.sh
++```
++
++Step A2・A3とも、事前に`evaluate_stage5.sh`でbest.ptの評価が完了しており
++`${EVALUATION_DIR}/best/h5_metrics.csv`と`${EVALUATION_DIR}/evaluation_data/summary.json`が
++存在している必要がある（mean baseline parityの参照元）。
++
++### 0.3 方針管理チャットの判断（2026-09-10）
++
++実装事項Aの結果報告に対する方針管理チャットの判断は次の通り。
++
++1. production aggregationは変更しない。現行の`mean_probability`を維持する。
++   理由: `max`はFP増加が大きく、`center_nearest`もvalidation FPが約2.4倍。`center_weighted`は
++   TP0動画数が悪化しており、明確な採用候補がない。
++2. `center_weighted`の重み式は再設計しない。理由: 境界距離との相関が無く現在の重み式に
++   根拠がない。動画後半ほど不一致が多いという結果も「どちらのwindow予測が正しいか」を
++   示すものではないため、時間位置による重み付けにも直結させない。
++3. 次は実装事項B（BatchNorm train/eval parity）へ進む。best.ptを対象に、再学習不要で
++   label policy/class weight実験に残る交絡を先に切り分ける。
++4. Ablationの順序: 事項B → Label policy ablation（9.6節） → Class weight比較（9.7節）。
++   200 epoch学習はまだ行わない。
++
++実装指示（2026-09-10）。
++
++- 実装事項Aは受入完了。production aggregationはmeanのまま変更せず、center weightingも
++  再設計しない。
++- 実装事項Bへ進む。best.ptを対象に、独立model instanceによる`eval()`と`train()`の同一window
++  比較を行い、train sanity 3件とvalidation 18件を評価する。`dropout=0`をassertし、checkpointや
++  productionコードは変更しない。probability差、class disagreement、window/mean集約metrics、
++  TP0動画数、BatchNorm running statisticsを匿名化して記録する。
++- 判定後の分岐: train/eval差が大きい場合はLabel policy実験前にBatchNorm対策を検討する。
++  差が小さい場合はBatchNormを主要因から外し、同一split・初期重み・seedによる5 epochの
++  Label policy ablationへ進む。
++- aggregation方式の優劣はモデルを再学習すると変わり得るため、最終モデル確定後に改めて比較する
++  （今回の4方式比較結果を恒久的な結論として扱わない）。
++
+ ## 1. 関連文書と読み方
+ 
+ ### 1.1 Stage 5の現在状態を示す正本
+ 
+-- `Stage2to4/docs/stage5/stage5_pointnext_s_training_evaluation_report.md`
++- `docs/stage5/stage5_pointnext_s_training_evaluation_report.md`
+   - Stage 5調査結果の正本。
+   - 特に9.1のbatch integrity、9.2のpadding parity、9.4のpadding-free baseline、
+     9.5のoverlap検証方針を読むこと。
+   - 「Teacher v6 5 epoch pilot結果」と「Teacher v6 5 epoch checkpoint評価」が直近状態である。
+   - 今後の検証結果も、既存記録を消さず同文書へ追記する。
+ 
+-- `Stage5/FILES.md`
++- `docs/stage5/FILES.md`
+   - Stage 5のコード、checker、work directoryの配置案内。
+   - 新規checkerは`Stage5/checks/real_h5/`へ配置する。
+ 
+ ### 1.2 Stage 4 teacher v6の正本
+ 
+-- `Stage2to4/docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+   - CVAT snapshot対象frameではCVAT maskをpositive authorityとする契約の正本。
+ 
+-- `Stage2to4/docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
++- `docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
+   - 削除済みXMLをframe-level tombstoneとして反映したteacher v6の正本。
+   - v6は最終受入済みで、Stage 5学習利用可能である。
+ 
+-- `Stage2to4/docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
++- `docs/stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
+   - CVAT full-video reviewの実装履歴。
+   - 冒頭の「最新のlabel authority方針」を優先すること。
+   - 「129 targetだけ反映」「contextは反映しない」などの古い記述は履歴であり、現在仕様ではない。
+ 
+ ### 1.3 履歴資料
+ 
+-- `Stage5/TRAINING_IMPROVEMENT_PLAN.md`
++- `docs/stage5/TRAINING_IMPROVEMENT_PLAN.md`
+   - 初期調査時の計画であり、履歴資料としてのみ参照する。
+   - grid=1、empty-valid window、paddingありbatchを前提とする箇所は最新状態ではない。
+   - 現在の優先順位はStage 5評価レポートの9.5を正とする。
+ 
+-- `Stage5/assets/`
+-  - 過去runの比較資料。teacher v2やpaddingありrunを現在baselineと誤認しないこと。
++- 過去runのmetricsや一時共有artifact
++  - teacher v2やpaddingありrunを現在baselineと誤認しないこと。
++  - `/workspace/.tmp/`は一時共有場所であり、正本文書として扱わない。
+ 
+ ## 2. 現在の確定状態
+ 
+@@ -265,9 +462,43 @@ disagreement: positiveとbackgroundがwindow間で混在
+ 
+ - GT positive/background/ignore別のclass disagreement count/rate
+ - disagreement点のうちmean aggregationでbackgroundとなる点数
+-- frame_orderとwindow中心/境界距離でgroup化した不一致率
+ - positive vote ratioの分布
+ 
++境界距離と動画内時間位置は別の要因なので、次の2表へ分離する。
++
++```text
++disagreement_by_edge_distance.csv
++disagreement_by_relative_frame_decile.csv
++```
++
++`disagreement_by_edge_distance.csv`では、各window内のvoteについて次を計算する。
++
++```python
++edge_distance = min(
++    frame_order - window_start,
++    window_end - frame_order,
++)
++```
++
++同一点が複数windowへ含まれる場合、その点のgroup keyには全vote中の最小値
++`min_edge_distance`を使用する。値は事前bucket化せず、生の非負整数として記録する。
++size 16 / stride 8では通常0から3が中心になるが、tail windowや将来のwindow設定を考慮し、
++値域をhard-codeしない。
++
++`disagreement_by_relative_frame_decile.csv`では、動画ごとに次の相対位置を計算する。
++
++```python
++relative_frame_position = (
++    (frame_order - video_min_frame_order)
++    / (video_max_frame_order - video_min_frame_order)
++)
++frame_decile = min(floor(relative_frame_position * 10), 9)
++```
++
++`video_max_frame_order == video_min_frame_order`の場合は`frame_decile = 0`とする。動画長が異なるため、
++生の`frame_order`を動画間で直接group化しない。境界距離表とrelative decile表は、いずれも
++split、GT class、group keyごとのpoint count、disagreement count/rateを最低限含める。
++
+ ### 4.3 事項3: 4 aggregation方式の比較
+ 
+ 同じforward結果から次を計算する。
+@@ -298,9 +529,15 @@ weight = 1 + min(
+ - TP 0のvideo数
+ - GT-positive windowまたはvideoの検出率
+ 
+-現行`mean_probability`は既存評価CSVと完全一致することをassertする。丸めを許容するのは
+-float metricだけとし、TP/FP/TN/FNは完全一致させる。不一致なら他方式の結果を採用せず、
+-checkerと既存評価処理の差を先に解消する。
++現行`mean_probability`は、同じprocess内で`predict_h5`を再実行して作る自己参照値ではなく、
++既存評価の`${EVALUATION_DIR}/best/h5_metrics.csv`と突き合わせる。匿名aliasとsplitを対応付け、
++video別およびsplit集約のTP/FP/TN/FNを完全一致させる。丸めを許容するのはcountから導出した
++float metricだけとする。
++
++不一致の場合は許容誤差で通さず、他方式の比較を採用可能な結果として扱わない。最低限、
++alias別count差分、checker設定、比較元CSV情報をparity failure artifactへ保存して停止する。
++必要ならthreshold 0.5近傍の点数を追加診断として記録し、その後にCUDA非決定性と実装差を
++切り分ける。事前にcount toleranceを導入しない。
+ 
+ `max_probability`はrecall上限を見る診断用であり、FPが大幅に増える場合は採用候補にしない。
+ 方式比較ではF1/IoUだけでなくFP増加、TP 0動画数、固定train sanityの変化を併記する。
+@@ -311,14 +548,17 @@ checkerと既存評価処理の差を先に解消する。
+ overlap_aggregation_summary.json
+ overlap_probability_statistics.csv
+ overlap_class_disagreement.csv
++disagreement_by_edge_distance.csv
++disagreement_by_relative_frame_decile.csv
+ aggregation_checkpoint_summary.csv
+ aggregation_h5_metrics.csv
+ aggregation_comparison.csv
+ ```
+ 
+-必要ならローカル確認用に、固定train sanityと少数validationについて方式別probability PLY、
+-positive-only PLYを出力できるoptionを追加する。ただし既定ではmetricsだけとし、PLYは共有bundleへ
+-含めない。
++ローカル確認用として、匿名aliasを明示指定する薄いPLY export optionを追加する。例えば
++repeat可能な`--export-ply-alias`とし、未指定時はoff、既定出力はmetricsだけとする。指定aliasでは
++4方式それぞれのprobability PLYとpositive-only PLYを、同じforwardで得た集約結果から出力する。
++既存のPLY writerを再利用し、PLYを共有bundleへ含めない。
+ 
+ 共有用artifactには既存命名と同じ匿名aliasを使う。
+ 
+@@ -345,6 +585,7 @@ validation_001 ... validation_018
+ - tail window
+ - vote count 1の点は全方式で元予測と一致
+ - probability 0.5のtieはbackground
++- PLY export aliasの選択と方式別出力filename
+ 
+ ### Step A2: static/smoke test
+ 
+@@ -354,6 +595,8 @@ validation_001 ... validation_018
+ - train sanity 1件またはvalidation 1件でsmoke run
+ - mean baseline parity assertion
+ - NaN/Infなし
++- 固定train sanity 1件でPLY optionを有効化し、4方式 x probability/positive-onlyの8ファイルを確認
++- 各PLYのheader、元点群を保持するPLYのvertex count、positive-only PLYのvertex countを確認
+ 
+ workspace環境から`/mnt/data`へアクセスできない場合、実データrunを無理に行わず、ユーザー向け
+ 実行コマンドを提示する。
+@@ -365,6 +608,7 @@ workspace環境から`/mnt/data`へアクセスできない場合、実データ
+ - validation 18件
+ - GPU、physical batch size 1
+ - 全方式を1回のforwardから算出
++- PLYが必要な場合も固定train sanity aliasだけを指定し、validation PLYは定量結果を見て後から対象を選ぶ
+ 
+ ### Step A4: 結果記録
+ 
+@@ -425,6 +669,128 @@ Stage5/checks/real_h5/check_stage5_batchnorm_mode_parity.sh
+ 
+ 結果はStage 5評価レポート9.5へ、事項Aと同じ形式で追記する。
+ 
++### 6.4 コード実装完了（2026-09-10）
++
++次の2ファイルを新規作成した。
++
++```text
++Stage5/checks/real_h5/check_stage5_batchnorm_mode_parity.py
++Stage5/checks/real_h5/check_stage5_batchnorm_mode_parity.sh
++```
++
++devコンテナで完了した検証。
++
++- `python3 -m py_compile check_stage5_batchnorm_mode_parity.py` 合格。
++- `bash -n check_stage5_batchnorm_mode_parity.sh` 合格。
++
++実装の要点。
++
++- 同じ`best.pt`から`evaluate_stage5.model_from_checkpoint`を2回独立に呼び出し、eval-mode
++  instance（A）とtrain-mode instance（B、`.train()`を明示的に呼ぶ）を構築する。
++  `load_state_dict`は値をコピーするため、同一checkpoint dictを2回使ってもA/B間でtensorは
++  aliasしない。dropoutはconfigから`0.0`であることをassertする。
++- 各windowについて、同じ`points`/`features`/`window`、同じRNG seed（`set_seed`、
++  `checks.real_h5.check_stage5_padding_parity`から再利用）でAとBを`torch.inference_mode()`下で
++  forwardし、直接差分（positive probabilityのabs diff、class disagreement、GT class別内訳）を
++  window出現単位で記録する。同時に、window単位の混同行列（重複除去なし）と、元点ごとの
++  mean probability集約後の混同行列（現行production集約と同じ方式）を、A/B独立に集計する。
++- A（eval-mode、mean集約後）の結果は、事項Aで実装した`load_reference_h5_metrics`/
++  `check_mean_probability_parity`（`checks.real_h5.check_stage5_overlap_aggregation`から再利用）で
++  既存`evaluate_stage5.py`の記録値と完全一致することを確認する。Aは本来production評価と
++  同一の経路のはずであり、これが崩れている場合はA/B比較そのものが無効であるため、
++  事項Aと同じくhard gateとして扱い、不一致ならparity failure artifactを保存して停止する。
++- BatchNorm moduleごとのrunning_mean/running_var finite性、running_var負値件数、
++  `num_batches_tracked`を記録する`inspect_batchnorm_modules`を新規実装した（eval-mode
++  instanceから取得。eval-mode forwardはrunning bufferを更新しないため、これは
++  checkpointに保存された値そのものである）。
++- 出力ファイル: `batchnorm_mode_parity_summary.json`、
++  `batchnorm_probability_difference.csv`（GT class別diff統計）、
++  `batchnorm_window_metrics.csv`、`batchnorm_aggregation_metrics.csv`、
++  `batchnorm_checkpoint_summary.csv`（window単位/aggregated両方、TP0動画数含む）、
++  `batchnorm_mode_delta.csv`（train－eval差分）、`batchnorm_buffer_report.csv`。
++  事項Aと同じくshare/private分離とprivacy self-check（`assert_share_bundle_anonymous`）を
++  適用し、絶対パスは`private_output_dir`側のJSONのみに含める（事項Aで発見した不備の再発防止）。
++- synthetic self-testを`--self_test`として実装した（BatchNorm buffer異常値検知、diff集計、
++  空maskでのNone/0安全処理、mean集約の手計算一致、dropout assertionの動作、計5ケース）。
++
++self-test完了（2026-09-10、ユーザー実機）。
++
++```text
++$ SELF_TEST=1 bash checks/real_h5/check_stage5_batchnorm_mode_parity.sh
++Stage5 BatchNorm mode parity self-test
++Stage5 BatchNorm mode parity self-test passed.
++```
++
++5ケース全て合格。BatchNorm buffer異常値検知、diff集計、空maskでのNone/0安全処理、mean集約の
++手計算一致、dropout assertionの動作、いずれも実装通りの結果になることを確認した。
++
++train sanity 3件のみのsmoke run完了（2026-09-10、ユーザー実機、
++`Stage5 BatchNorm mode parity checker passed.`）。mean baseline parity（eval-modeのmean集約結果と
++既存`evaluate_stage5.py`の一致）も合格した。share側出力を`/workspace/.tmp/batchnorm_mode_parity_share/`
++へ配置してもらい、絶対パス・timestamp型video IDが含まれていないことを実装チャット側で独立に
++`grep`確認した上で内容を精査した。
++
++**train sanityのみだが、極めて大きなmode差が観測された**（train sanity 3動画合計）。
++
++| granularity | mode | TP | FP | FN | recall | F1 | IoU |
++| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
++| window | eval | 2516 | 28784 | 15210 | 14.19% | 0.1026 | 0.0541 |
++| window | train | 11259 | 128376 | 6467 | 63.52% | 0.1431 | 0.0771 |
++| aggregated | eval | 407 | 16602 | 9349 | 4.17% | 0.0304 | 0.0154 |
++| aggregated | train | 5952 | 84789 | 3804 | 61.01% | 0.1185 | 0.0630 |
++
++aggregated（現行mean集約後）のTP0動画数は、eval-modeで1/3だったのがtrain-modeでは0/3になった。
++probability差はGT positive点でmean abs diff 0.19〜0.32、disagreement率21.7%〜64.4%と、
++数値誤差ではなく大きな乖離だった。BatchNorm module 17個の`running_mean`/`running_var`は
++全moduleでfinite、負のvarianceも無く、`num_batches_tracked`は全module一致（16859）で
++異常な値ではなかった。
++
++train sanityの範囲では、6.3節の判定基準のうち「train-statistics側だけ大幅に良い」
++（BatchNorm running statisticsまたはphysical batch size 1の影響を支持）に明確に該当する。
++ただしtrain sanity（学習に使ったデータ）だけでは汎化の確認にならないため、validationでも
++同じ傾向が出るかをfull runで確認する必要がある。
++
++full run完了（2026-09-10、ユーザー実機、`Stage5 BatchNorm mode parity checker passed.`）。
++mean baseline parityも合格。**validation（学習に使っていない18動画）でも同じ傾向が確認された**。
++
++| split | granularity | TP0動画数（eval→train） | recall（eval→train） |
++| --- | --- | --- | --- |
++| train_sanity | aggregated | 1/3 → 0/3 | 4.17% → 61.01% |
++| validation | aggregated | 10/18 → 0/18 | 3.87% → 33.12% |
++
++validation全体でGT positive点のdisagreement率は38.15%、mean abs diff 0.260。詳細な比較表と
++判定は`stage5_pointnext_s_training_evaluation_report.md` 9.5節「実装事項B: BatchNorm train/eval
++parity 検証結果」に記録した。6.3節の判定基準「train-statistics側だけ大幅に良い」に該当し、
++BatchNorm running statisticsまたはphysical batch size 1学習の影響を支持する結果が、train sanity
++だけでなくvalidationでも再現した。
++
++事項Bはこれで完了。実装・実行・レポート記録が完了したので、方針管理チャットへ結果を返す。
++
++未実施（GPU・`/mnt/data`・numpy/torch/h5pyが必要で、実装チャットのdevコンテナでは実行できない）。
++
++- 6.2節のBN recalibration診断（方針管理チャットがBatchNorm対策の検討を承認した場合のみ着手）。
++
++ユーザー実機で次の順に実行する（self-test・smoke run・full runは完了済み、参考として残す）。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage5
++
++# self-test（checkpoint/H5不要、numpyとtorchのみで完結。完了済み）
++SELF_TEST=1 bash checks/real_h5/check_stage5_batchnorm_mode_parity.sh
++
++# train sanity 3件のみのsmoke run（validationを一時的に空リストにしてGPU時間を絞る）
++: > /tmp/stage5_empty_val_list.txt
++VAL_LIST=/tmp/stage5_empty_val_list.txt \
++bash checks/real_h5/check_stage5_batchnorm_mode_parity.sh
++
++# full run（既定のRUN_DIR/EVALUATION_DIRのまま、train sanity 3件+validation 18件）
++bash checks/real_h5/check_stage5_batchnorm_mode_parity.sh
++```
++
++事前に`evaluate_stage5.sh`でbest.ptの評価が完了しており`${EVALUATION_DIR}/best/h5_metrics.csv`と
++`${EVALUATION_DIR}/evaluation_data/summary.json`が存在している必要がある
++（eval-mode sanity parityの参照元、事項Aと共通）。
++
+ ## 7. 実行環境
+ 
+ ユーザー実行環境はDockerではなく、SSH接続した実機である。

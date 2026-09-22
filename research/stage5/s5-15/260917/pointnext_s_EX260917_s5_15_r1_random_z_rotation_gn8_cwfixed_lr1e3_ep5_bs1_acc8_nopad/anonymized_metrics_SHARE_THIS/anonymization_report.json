@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "schema": "stage5_anonymized_metrics_v1",
+  "num_train_sanity_videos": 3,
+  "num_validation_videos": 18,
+  "num_checkpoints": 1,
+  "share_files": [
+    "train_sanity_evaluation/train_sanity_h5_metrics.csv",
+    "train_sanity_evaluation/train_sanity_window_metrics.csv",
+    "train_sanity_evaluation/train_sanity_checkpoint_summary.csv",
+    "validation_accuracy/validation_h5_metrics.csv",
+    "validation_accuracy/validation_window_metrics.csv",
+    "validation_accuracy/validation_checkpoint_summary.csv",
+    "training_history/training_config_anonymized.json",
+    "training_history/training_epoch_metrics.jsonl",
+    "anonymized_metrics_manifest.json",
+    "SHARE_THIS_DIRECTORY.txt"
+  ],
+  "privacy_checks": {
+    "original_identifiers_absent": true,
+    "timestamp_like_video_ids_absent": true,
+    "absolute_host_paths_absent": true
+  }
+}

@@ -1,0 +1,592 @@
+diff --git a/Stage2to4/docs/README.md b/docs/README.md
+similarity index 100%
+rename from Stage2to4/docs/README.md
+rename to docs/README.md
+diff --git a/Stage2to4/docs/legacy/dualtrack_legacy.md b/docs/stage2to4/legacy/dualtrack_legacy.md
+similarity index 100%
+rename from Stage2to4/docs/legacy/dualtrack_legacy.md
+rename to docs/stage2to4/legacy/dualtrack_legacy.md
+diff --git a/Stage2to4/docs/stage4/cvat_segmentation_mask_1_1_import_spec.md b/docs/stage2to4/stage4/cvat_segmentation_mask_1_1_import_spec.md
+similarity index 100%
+rename from Stage2to4/docs/stage4/cvat_segmentation_mask_1_1_import_spec.md
+rename to docs/stage2to4/stage4/cvat_segmentation_mask_1_1_import_spec.md
+diff --git a/Stage2to4/docs/stage4/edit_prompt.md b/docs/stage2to4/stage4/edit_prompt.md
+similarity index 100%
+rename from Stage2to4/docs/stage4/edit_prompt.md
+rename to docs/stage2to4/stage4/edit_prompt.md
+diff --git a/stage4_edit_prompt.md b/docs/stage2to4/stage4/stage4_bbox_independent_sampling_edit_prompt.md
+similarity index 100%
+rename from stage4_edit_prompt.md
+rename to docs/stage2to4/stage4/stage4_bbox_independent_sampling_edit_prompt.md
+diff --git a/Stage2to4/docs/stage4/stage4_contour_teacher_improvement_plan.md b/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
+similarity index 100%
+rename from Stage2to4/docs/stage4/stage4_contour_teacher_improvement_plan.md
+rename to docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
+diff --git a/Stage2to4/docs/stage4/stage4_phase7_report.md b/docs/stage2to4/stage4/stage4_phase7_report.md
+similarity index 100%
+rename from Stage2to4/docs/stage4/stage4_phase7_report.md
+rename to docs/stage2to4/stage4/stage4_phase7_report.md
+diff --git a/Stage2to4/docs/stage4/stage4_sampling_investigation_progress.md b/docs/stage2to4/stage4/stage4_sampling_investigation_progress.md
+similarity index 100%
+rename from Stage2to4/docs/stage4/stage4_sampling_investigation_progress.md
+rename to docs/stage2to4/stage4/stage4_sampling_investigation_progress.md
+diff --git a/stage4_invest_edit_prompt.md b/docs/stage2to4/stage4/stage4_sampling_sweep_investigation_edit_prompt.md
+similarity index 100%
+rename from stage4_invest_edit_prompt.md
+rename to docs/stage2to4/stage4/stage4_sampling_sweep_investigation_edit_prompt.md
+diff --git a/stage4_invest_rule.md b/docs/stage2to4/stage4/stage4_sampling_sweep_investigation_rule.md
+similarity index 100%
+rename from stage4_invest_rule.md
+rename to docs/stage2to4/stage4/stage4_sampling_sweep_investigation_rule.md
+diff --git a/Stage2to4/docs/submission/README.md b/docs/stage2to4/submission/README.md
+similarity index 100%
+rename from Stage2to4/docs/submission/README.md
+rename to docs/stage2to4/submission/README.md
+diff --git a/Stage5/FILES.md b/docs/stage5/FILES.md
+similarity index 100%
+rename from Stage5/FILES.md
+rename to docs/stage5/FILES.md
+diff --git a/Stage5/TRAINING_IMPROVEMENT_PLAN.md b/docs/stage5/TRAINING_IMPROVEMENT_PLAN.md
+similarity index 100%
+rename from Stage5/TRAINING_IMPROVEMENT_PLAN.md
+rename to docs/stage5/TRAINING_IMPROVEMENT_PLAN.md
+diff --git a/data_construct.md b/docs/stage5/data_construct.md
+similarity index 100%
+rename from data_construct.md
+rename to docs/stage5/data_construct.md
+diff --git a/stage5_edit_prompt.md b/docs/stage5/stage5_edit_prompt.md
+similarity index 100%
+rename from stage5_edit_prompt.md
+rename to docs/stage5/stage5_edit_prompt.md
+diff --git a/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md b/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md
+new file mode 100644
+index 0000000..382a7ba
+--- /dev/null
++++ b/docs/stage5/stage5_overlap_aggregation_handoff_prompt.md
+@@ -0,0 +1,526 @@
++# Stage 5 overlap aggregation検証・実装チャット引継ぎプロンプト
++
++## 0. この文書の使い方
++
++この文書は、Stage 5の実装と検証を別チャットへ引き継ぐための作業プロンプトである。
++新しい実装チャットでは、最初に本書と「1. 関連文書」に示す正本文書を読み、既存コードを
++確認してから作業を開始すること。
++
++チャットの役割を次のように分ける。
++
++- 実装チャット: checker実装、synthetic/static test、実行bash作成、ユーザー実行結果の機械的解析、検証レポートへの事実記録を担当する。
++- 方針管理チャット: 検証結果に基づく採用aggregation、再学習、BatchNorm対策などの最終判断を担当する。
++
++実装チャットは、本書で指定した診断を完了する前にproduction推論方式を変更したり、200 epoch
++学習を開始したりしないこと。結果から次の方針判断が必要になった時点で、成果物と要約を
++方針管理チャットへ返す。
++
++## 1. 関連文書と読み方
++
++### 1.1 Stage 5の現在状態を示す正本
++
++- `Stage2to4/docs/stage5/stage5_pointnext_s_training_evaluation_report.md`
++  - Stage 5調査結果の正本。
++  - 特に9.1のbatch integrity、9.2のpadding parity、9.4のpadding-free baseline、
++    9.5のoverlap検証方針を読むこと。
++  - 「Teacher v6 5 epoch pilot結果」と「Teacher v6 5 epoch checkpoint評価」が直近状態である。
++  - 今後の検証結果も、既存記録を消さず同文書へ追記する。
++
++- `Stage5/FILES.md`
++  - Stage 5のコード、checker、work directoryの配置案内。
++  - 新規checkerは`Stage5/checks/real_h5/`へ配置する。
++
++### 1.2 Stage 4 teacher v6の正本
++
++- `Stage2to4/docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++  - CVAT snapshot対象frameではCVAT maskをpositive authorityとする契約の正本。
++
++- `Stage2to4/docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
++  - 削除済みXMLをframe-level tombstoneとして反映したteacher v6の正本。
++  - v6は最終受入済みで、Stage 5学習利用可能である。
++
++- `Stage2to4/docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
++  - CVAT full-video reviewの実装履歴。
++  - 冒頭の「最新のlabel authority方針」を優先すること。
++  - 「129 targetだけ反映」「contextは反映しない」などの古い記述は履歴であり、現在仕様ではない。
++
++### 1.3 履歴資料
++
++- `Stage5/TRAINING_IMPROVEMENT_PLAN.md`
++  - 初期調査時の計画であり、履歴資料としてのみ参照する。
++  - grid=1、empty-valid window、paddingありbatchを前提とする箇所は最新状態ではない。
++  - 現在の優先順位はStage 5評価レポートの9.5を正とする。
++
++- `Stage5/assets/`
++  - 過去runの比較資料。teacher v2やpaddingありrunを現在baselineと誤認しないこと。
++
++## 2. 現在の確定状態
++
++### 2.1 データセット
++
++現在のStage 5入力正本はteacher v6である。
++
++```text
++/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
++  global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1/
++    collected/
++```
++
++H5 pattern:
++
++```text
++*_pointcloud_annotated_foreground_combined_v2_global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1.h5
++```
++
++固定件数と契約:
++
++- H5は181動画。
++- 59動画・3014 Task frameでCVAT snapshotをpositive authorityとして使用。
++- XML invalidationは2動画・7 frame。
++- invalidationによりpositive 2124点とBBox 7行を除去。
++- invalidated frameは全点`point_label=0`かつ`valid_mask=True`。
++- crop不良の`20250626_090758_8000`は除外済み。
++- `train_stage5.sh`のteacher v6 provenance preflightは1 epoch/5 epoch runで合格済み。
++
++### 2.2 現在のモデルと学習条件
++
++- model: official OpenPoints PointNeXt-Sを使う`pointnext_s` wrapper
++- input features: `intensity,confidence`
++- window: frame_order基準、size 16、stride 8、tailあり
++- physical batch size: 1
++- gradient accumulation: 8 windows
++- padding: なし
++- loss: class-weighted CrossEntropyLoss
++- class weight: auto、`[0.0596385561, 1.9403614998]`
++- label smoothing: 0.0
++- optimizer: AdamW、lr `1e-3`、weight decay `1e-4`
++- initial weight: S3DIS PointNeXt-Sからshape一致部分を転移したcheckpoint
++
++Datasetはwindowごとに元H5内の`point_indices`を保持している。batch integrity testはtrain/validation
++全件で合格済みであり、H5、window、point index、labelの取り違えは強く除外されている。
++
++padding parity testでは、可変長sampleのzero paddingが実点logits、gradient、BatchNorm統計へ
++大きく影響することを確認した。このため現在はphysical batch size 1とgradient accumulationを使い、
++train/validationともpadding point countは0である。
++
++### 2.3 現在のtraining run
++
++```text
++RUN_DIR=/mnt/data/3d_projects/stage5_runs/260908/pointnext_s_EX260908_260711_w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep5_bs1_acc8_nopad
++```
++
++- `best.pt`: epoch 4、学習中validation window IoU最大
++- `last.pt`: epoch 5
++- train: 163 files / 729 windows
++- validation: 18 files / 79 windows
++- `train_files.txt`と`val_files.txt`はrun directory内に保存済み
++
++このrunは5 epochすべてで次を満たした。
++
++- padding point count 0
++- empty-valid window 0
++- train microbatch 729
++- optimizer step 92 = `ceil(729 / 8)`
++- confusion matrix、valid/ignore/total、weighted loss normalizerが再計算値と一致
++
++### 2.4 現在のevaluation run
++
++```text
++EVALUATION_DIR=/mnt/data/3d_projects/stage5_evaluations/260908/pointnext_s_EX260908_260711_w16_s8_bboxrankv6_cvatxmlinv_glocal_ce_smooth00_auto_weight_lr1e3_ep5_bs1_acc8_nopad
++```
++
++既存評価対象:
++
++- train sanity: 固定1動画`20250626_124212_7300` + seed固定random 2動画
++- validation: `val_files.txt`の全18動画
++- checkpoint: `best.pt`と`last.pt`
++- inference mode: `model.eval()`、windowごとにphysical batch size 1
++- current aggregation: 元H5の同一点に対するclass probabilityの単純平均
++
++再利用するlist:
++
++```text
++${RUN_DIR}/train_files.txt
++${RUN_DIR}/val_files.txt
++${EVALUATION_DIR}/evaluation_data/selected_train_files.txt
++```
++
++### 2.5 直近の評価結果
++
++| checkpoint | train window F1 / IoU | train mean集約 F1 / IoU | val window F1 / IoU | val mean集約 F1 / IoU |
++| --- | ---: | ---: | ---: | ---: |
++| best, epoch 4 | 0.1026 / 0.0541 | 0.0304 / 0.0154 | 0.0455 / 0.0233 | 0.0341 / 0.0173 |
++| last, epoch 5 | 0.0363 / 0.0185 | 0.0140 / 0.0070 | 0.0394 / 0.0201 | 0.0314 / 0.0160 |
++
++`best.pt`の現行mean aggregation baseline count:
++
++```text
++train sanity:
++  TP=407, FP=16602, TN=600976, FN=9349
++  valid=627334, ignore=4966
++
++validation:
++  TP=2691, FP=85785, TN=6421265, FN=66760
++  valid=6576501, ignore=19050
++```
++
++重要な観測:
++
++- bestのtrain sanity recallはwindow集計14.19%からmean集約4.17%へ低下。
++- bestのvalidation recallはwindow集計8.54%からmean集約3.87%へ低下。
++- validation 18動画中10動画でTP 0、video-level median F1は0。
++- validationのGT-positive window 54個中36個でTP 0。
++- negative-only window 25個中16個にbestのFPが存在。
++- ignore上のbest positive予測はtrain 2/4966点、validation 520/19050点。
++- valid background FPはtrain 16602点、validation 85785点であり、ignoreだけではFPを説明できない。
++
++現時点の第一検証候補は、同一点に対するoverlap window間予測の不一致と、単純平均による
++positive予測の打ち消しである。BatchNormによる全面的なeval崩壊は第一候補ではないが、まだ
++棄却していない。
++
++## 3. 実装上の制約
++
++1. 事項1から3は同じforward結果から計算し、方式ごとにモデルを再実行しない。
++2. まず`best.pt`だけを対象とする。`last.pt`は必要になった場合のみ追加する。
++3. productionの`infer_stage5.py`、`evaluate_stage5.py`の既定aggregationは診断結果が出るまで変更しない。
++4. 再学習、loss変更、class weight変更、threshold tuningを行わない。
++5. Focal Loss、Dice Loss、Hard Negative Mining、random point samplingを追加しない。
++6. point cloudやH5を書き換えない。入力はread-onlyで扱う。
++7. 1 H5ずつ処理し、全動画のper-point配列を同時に保持しない。
++8. 既存のdirty worktreeやユーザー変更をrevertしない。変更はStage 5 checker、必要な共有export、レポートへ限定する。
++9. 元動画名、絶対パス、座標、per-point probabilityを共有用artifactへ含めない。
++10. checker完走と仮説支持・棄却を区別して報告する。
++
++binary class判定は既存の`np.argmax([p0, p1])`と一致させる。厳密なtieではbackgroundとなるため、
++positive判定をスカラーで実装する場合は`p1 > 0.5`を使用する。
++
++## 4. 実装事項A: overlap probability / aggregation checker
++
++次を新規作成する。
++
++```text
++Stage5/checks/real_h5/check_stage5_overlap_aggregation.py
++Stage5/checks/real_h5/check_stage5_overlap_aggregation.sh
++```
++
++既存実装から再利用するもの:
++
++- `evaluate_stage5.py`のcheckpoint/model構築
++- H5 loaderとfeature構築
++- `generate_frame_order_windows`
++- `point_indices_for_window`
++- metrics計算
++- train sanity/validationのlist
++
++### 4.1 事項1: 重複点のwindow間確率分布
++
++各H5について、元H5内の点indexごとに次を蓄積する。
++
++```text
++vote_count
++probability_sum
++probability_sum_squared
++probability_min
++probability_max
++positive_vote_count
++```
++
++導出値:
++
++```text
++probability_mean = sum / vote_count
++probability_std  = sqrt(max(sum_squared / vote_count - mean^2, 0))
++probability_range = max - min
++positive_vote_ratio = positive_vote_count / vote_count
++```
++
++集計区分:
++
++- valid background
++- valid positive
++- ignore
++- 全valid点
++- vote count 1
++- vote count 2以上
++
++最低限記録する統計:
++
++- point countとoverlap point count/rate
++- mean/std/rangeの平均
++- std/rangeのp50、p90、p95、p99
++- `max_probability > 0.5`かつ`mean_probability <= 0.5`となるsuppressed-positive数
++- split別、匿名video別、GT class別
++
++### 4.2 事項2: window間class不一致
++
++vote count 2以上の点を次へ分類する。
++
++```text
++all_negative: 全windowでbackground
++all_positive: 全windowでpositive
++disagreement: positiveとbackgroundがwindow間で混在
++```
++
++次を出力する。
++
++- GT positive/background/ignore別のclass disagreement count/rate
++- disagreement点のうちmean aggregationでbackgroundとなる点数
++- frame_orderとwindow中心/境界距離でgroup化した不一致率
++- positive vote ratioの分布
++
++### 4.3 事項3: 4 aggregation方式の比較
++
++同じforward結果から次を計算する。
++
++1. `mean_probability`: 現行単純平均
++2. `max_probability`: positive probabilityの最大値
++3. `center_nearest`: 点のframe_orderにwindow中心が最も近いwindowの予測
++4. `center_weighted`: window内部ほど大きい重みでの加重平均
++
++`center_nearest`のwindow中心は`(start_frame + end_frame) / 2`とし、距離が同じ場合は小さい
++`window_id`を選ぶ。
++
++`center_weighted`の初期重みは次に固定する。端でも重みを0にしない。
++
++```python
++weight = 1 + min(
++    frame_order - window_start,
++    window_end - frame_order,
++)
++```
++
++各方式について、split集約とvideo別に次を出力する。
++
++- TP、FP、TN、FN
++- precision、recall、F1、femur IoU、FPR、FNR
++- predicted positive count/rate
++- video-level mean/median F1、IoU
++- TP 0のvideo数
++- GT-positive windowまたはvideoの検出率
++
++現行`mean_probability`は既存評価CSVと完全一致することをassertする。丸めを許容するのは
++float metricだけとし、TP/FP/TN/FNは完全一致させる。不一致なら他方式の結果を採用せず、
++checkerと既存評価処理の差を先に解消する。
++
++`max_probability`はrecall上限を見る診断用であり、FPが大幅に増える場合は採用候補にしない。
++方式比較ではF1/IoUだけでなくFP増加、TP 0動画数、固定train sanityの変化を併記する。
++
++### 4.4 推奨出力
++
++```text
++overlap_aggregation_summary.json
++overlap_probability_statistics.csv
++overlap_class_disagreement.csv
++aggregation_checkpoint_summary.csv
++aggregation_h5_metrics.csv
++aggregation_comparison.csv
++```
++
++必要ならローカル確認用に、固定train sanityと少数validationについて方式別probability PLY、
++positive-only PLYを出力できるoptionを追加する。ただし既定ではmetricsだけとし、PLYは共有bundleへ
++含めない。
++
++共有用artifactには既存命名と同じ匿名aliasを使う。
++
++```text
++train_sanity_fixed_001
++train_sanity_random_001
++train_sanity_random_002
++validation_001 ... validation_018
++```
++
++元IDとの対応はprivate outputへ分離し、共有しない。
++
++## 5. 実装事項Aのテストと実行順
++
++### Step A1: synthetic accumulator test
++
++小さい人工frame/window/probability配列で次を検証する。
++
++- vote count、sum、sum squared、min、max
++- mean、std、range
++- all-negative/all-positive/disagreement
++- mean/max/center-nearest/center-weighted
++- center-nearest tie break
++- tail window
++- vote count 1の点は全方式で元予測と一致
++- probability 0.5のtieはbackground
++
++### Step A2: static/smoke test
++
++- Python compile
++- bash `-n`
++- 既存dummy testへの回帰がないこと
++- train sanity 1件またはvalidation 1件でsmoke run
++- mean baseline parity assertion
++- NaN/Infなし
++
++workspace環境から`/mnt/data`へアクセスできない場合、実データrunを無理に行わず、ユーザー向け
++実行コマンドを提示する。
++
++### Step A3: full run
++
++- `best.pt`
++- train sanity 3件
++- validation 18件
++- GPU、physical batch size 1
++- 全方式を1回のforwardから算出
++
++### Step A4: 結果記録
++
++Stage 5評価レポート9.5へ次の形式で追記する。
++
++```text
++実施日
++対象run/checkpoint
++checkerの完走状態
++mean baseline parity
++事項1の結果
++事項2の結果
++事項3の比較表
++仮説に対する暫定判断
++方針管理チャットへ返す判断事項
++```
++
++## 6. 実装事項B: BatchNorm train/eval parity
++
++事項Aの結果記録後に実装する。
++
++```text
++Stage5/checks/real_h5/check_stage5_batchnorm_mode_parity.py
++Stage5/checks/real_h5/check_stage5_batchnorm_mode_parity.sh
++```
++
++### 6.1 比較条件
++
++同じ`best.pt`から独立したモデルinstanceを2個構築する。
++
++- A: `model.eval()`で保存済みrunning statisticsを使用
++- B: `model.train()`で各windowのbatch statisticsを使用
++- `dropout=0.0`であることをconfigからassert
++- `torch.inference_mode()`を使用し、backward/optimizer updateを行わない
++- Bが更新するrunning bufferがAや後続caseへ影響しないようinstanceを分離する
++- 同じ入力window、同じpoint順序、physical batch size 1で比較する
++
++### 6.2 記録内容
++
++- positive probabilityのmean/max absolute difference
++- p50、p90、p95、p99 absolute difference
++- class disagreement count/rate
++- GT positive/background/ignore別の差
++- window単位F1/IoU
++- 現行mean aggregation後のF1/IoU
++- BatchNorm module数
++- running mean/variance、`num_batches_tracked`のfinite/妥当性
++
++必要なら、direct parityで大差が出た場合だけ、train H5をforwardしてrunning statisticsを再計算した
++コピーを評価するBN recalibration診断を追加する。recalibrated checkpointをproductionへ保存・採用する
++判断は方針管理チャットへ戻す。
++
++### 6.3 判定
++
++- train-statistics側だけ大幅に良い: BatchNorm running statisticsまたはphysical batch size 1の影響を支持。
++- 両modeが近い: BatchNormを主要因から下げ、overlap不一致とper-window検出不足を優先。
++- mode差とaggregation差が両方大きい: それぞれを独立要因として報告し、一度にproduction変更しない。
++
++結果はStage 5評価レポート9.5へ、事項Aと同じ形式で追記する。
++
++## 7. 実行環境
++
++ユーザー実行環境はDockerではなく、SSH接続した実機である。
++
++```text
++Python: /home/kodaira/anaconda3/envs/dualtrack311/bin/python
++PyTorch: 2.7.1+cu128
++GPU: NVIDIA GeForce RTX 5090
++CUDA available: True
++```
++
++PointNeXt/OpenPointsと`pointnet2_batch_cuda`を使うbashでは次を設定する。
++
++```bash
++SCRIPT_DIR="/mnt/data/3d_projects/models/Stage5"
++PYTHON="/home/kodaira/anaconda3/envs/dualtrack311/bin/python"
++if [[ -z "${CONDA_PREFIX:-}" ]]; then
++  CONDA_PREFIX="$(dirname "$(dirname "${PYTHON}")")"
++fi
++
++export CUDA_HOME="${CONDA_PREFIX}"
++export TORCH_CUDA_ARCH_LIST="12.0"
++
++TORCH_LIB="$("${PYTHON}" - <<'PY'
++import torch
++from pathlib import Path
++print(Path(torch.__file__).resolve().parent / "lib")
++PY
++)"
++export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
++export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/PointNeXt/openpoints:${PYTHONPATH:-}"
++```
++
++`libtinfo.so.6: no version information available`というbash warningは既知であり、処理が継続する場合は
++今回の失敗条件ではない。`pointnet2_batch_cuda`のimport/forwardは確認済みである。
++
++## 8. Privacyと共有
++
++実データ結果を別チャットへ共有するときは、匿名化済みsummary CSV/JSONだけを
++`/workspace/.tmp/`へ配置する。
++
++共有してよいもの:
++
++- 匿名aliasだけを含む集約CSV
++- 個人・動画識別子を除いたsummary JSON
++- 実行設定の匿名版
++- checker logの識別情報を除いた部分
++
++共有しないもの:
++
++- private alias mapping
++- 元H5や絶対データパスの一覧
++- checkpoint
++- prediction NPZ/H5
++- PLY
++- point座標やper-point probability
++
++匿名化exportでは最低限次を検査する。
++
++- original identifiers absent
++- timestamp-like video IDs absent
++- absolute host paths absent
++- share bundleにprivate mappingが含まれない
++
++## 9. 今回の停止条件と方針管理チャットへ返す内容
++
++事項AとBの実装・実行・レポート記録が完了したら、次を要約して方針管理チャットへ返す。
++
++1. mean baseline parityの成否
++2. GT positive/background別のwindow disagreement率
++3. suppressed-positive数と割合
++4. 4 aggregation方式のtrain sanity/validation F1、IoU、FP、recall、TP 0動画数
++5. BatchNorm train/eval probability差とclass disagreement率
++6. checkerが示した事実と、まだ判断できない事項
++7. 変更ファイル、実行コマンド、出力先、テスト結果
++
++この時点では、次のいずれも自動決定・実装しない。
++
++- production aggregationの変更
++- center-only loss
++- overlap出現回数の逆数weight
++- BatchNorm freeze/recalibration/別normへの変更
++- 追加学習または200 epoch学習
++
++これらは、方針管理チャットで検証結果を比較した後に決定する。
++
++## 10. 実装品質の完了条件
++
++- 既存コードを読み、共通処理を必要以上に複製していない。
++- 事項1から3を同一forwardで計算している。
++- mean baseline countが既存評価と完全一致する。
++- synthetic testがaggregation式とtail/tieを覆う。
++- 実データは1 H5ずつ処理し、メモリ使用量が点数に対して線形である。
++- checkerの出力にNaN/Infがない。
++- share/private出力が分離されている。
++- `git diff --check`、Python compile、bash syntax checkが通る。
++- 既存のユーザー変更や無関係ファイルをrevertしていない。
++- Stage 5評価レポートへ結果を追記した。
++- 最後に、方針管理チャットが判断できる短い結果要約を提示した。

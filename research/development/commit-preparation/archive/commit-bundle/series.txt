@@ -1,0 +1,37 @@
+001	chore: record local workspace ignore rules
+002	build: move the container Dockerfile to the repository root
+003	build: install Claude Code in the development container
+004	docs: consolidate existing documents under docs
+005	feat(stage4): convert and validate CVAT segmentation mask archives
+006	feat(stage4): define contour refinement candidates and frozen configurations
+007	feat(stage4): add read-only contour refinement screening
+008	feat(stage4): define manual review mask and label contracts
+009	feat(stage4): export review packages and import manual corrections
+010	feat(stage4): validate full-video review inputs and transfer packages
+011	feat(stage4): rebuild text-free review packages and verify round trips
+012	feat(stage4): apply accepted automatic refinements to teacher v3
+013	feat(stage4): export all Phase 3 decisions for manual review
+014	feat(stage4): track reversible video exclusions
+015	feat(stage4): create and resume CVAT review tasks
+016	feat(stage4): export verified CVAT task snapshots
+017	feat(stage4): import full-video snapshots with versioned label authority
+018	feat(stage4): add the teacher v4 build entry point
+019	feat(stage4): visualize saved point labels and frame provenance
+020	feat(stage4): preflight authoritative CVAT labels without rewriting inputs
+021	feat(stage4): build and accept teacher v5 authoritative labels
+022	feat(stage4): audit deleted XML annotations against saved teacher data
+023	feat(stage4): validate explicit frame invalidation manifests
+024	feat(stage4): apply XML invalidations with auditable H5 provenance
+025	feat(stage4): batch build and collect teacher v6
+026	feat(stage4): verify invalidation overlays and export final teacher point clouds
+027	docs(stage4): record teacher evolution and deferred contour revisions
+028	test(stage5): audit H5 dataset and batch integrity
+029	test(stage5): diagnose padding effects on predictions and gradients
+030	feat(stage5): expose weighted loss sums and normalization factors
+031	feat(stage5): accumulate point-weighted microbatch gradients
+032	feat(stage5): use padding-free training and teacher v6 run paths
+033	test(stage5): compare overlap probability aggregation methods
+034	test(stage5): diagnose BatchNorm train and eval parity
+035	test(stage5): diagnose training-only BatchNorm recalibration
+036	feat(stage5): support GroupNorm throughout model and checkpoint workflows
+037	docs(stage5): record diagnostics and refresh project navigation

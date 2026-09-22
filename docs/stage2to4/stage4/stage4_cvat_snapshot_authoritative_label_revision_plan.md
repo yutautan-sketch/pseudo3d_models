@@ -413,7 +413,7 @@ maskを再現したため、削除意図が反映されずBBox/positiveが残る
 CVAT-authoritative適用の失敗ではなく、v5の入力artifactがXML削除前に固定されていることによる。
 対処は次の独立文書へ分離する。
 
-- `docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
+- `docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
 
 2026-09-07、上記の後続計画はStep 1〜Step 6まで完了した。削除済みXML 7件を明示的に無効化した
 teacher v6を181動画で構築し、保存ラベル可視化の目視確認にも問題がないことを確認した。これにより、

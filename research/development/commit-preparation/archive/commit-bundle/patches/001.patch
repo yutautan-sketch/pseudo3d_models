@@ -1,0 +1,15 @@
+diff --git a/.gitignore b/.gitignore
+index fd182d03f15007ec88e505f624f9ddae5378e499..91132e03422dbf2b345edf39425db7fba83f18e4
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,8 +5,10 @@
+ .venv/
+ .codex/
+ .devcontainer/
++.tmp/
+ codex_config.toml
+ Stage2to4/dualtrack_checkpoints/
+ *.pt
+ *.pth
+ *.ckpt
++CLAUDE.md

@@ -1,4 +1,4 @@
-`stage4_invest_edit_prompt.md`を確認しました。調査は「基盤実装」と「実データparameter sweep」を分離し、以下の順序で進めるのが適切です。
+`stage4_sampling_sweep_investigation_edit_prompt.md`を確認しました。調査は「基盤実装」と「実データparameter sweep」を分離し、以下の順序で進めるのが適切です。
 
 ## 全体構成
 

@@ -1,0 +1,108 @@
+{
+  "train_list": null,
+  "train_dir": "REDACTED_PATH",
+  "val_list": null,
+  "val_dir": null,
+  "h5_pattern": "*_pointcloud_annotated_foreground_combined_v2_global_local_l75_w31_c12_area15_bboxrank_v7_cvat_authoritative_crop_quality_v1.h5",
+  "val_fraction": 0.1,
+  "max_train_files": 0,
+  "max_val_files": 0,
+  "output_dir": "REDACTED_PATH",
+  "model": "pointnext_s",
+  "checkpoint": "REDACTED_PATH",
+  "strict_checkpoint": true,
+  "num_classes": 2,
+  "width": 32,
+  "depth": 6,
+  "expansion": 4,
+  "dropout": 0.0,
+  "no_global_context": false,
+  "pointnext_radius": 0.1,
+  "pointnext_nsample": 32,
+  "pointnext_sa_layers": 2,
+  "pointnext_sa_use_res": true,
+  "pointnext_norm": "groupnorm",
+  "pointnext_norm_groups": 8,
+  "features": "intensity,confidence",
+  "num_points": 0,
+  "sampling_mode": "video",
+  "frame_window_size": null,
+  "exclude_ignore_in_sampling": false,
+  "positive_oversample_ratio": 0.0,
+  "label_policy": "bbox_noncontour_ignore",
+  "window_mode": "overlap",
+  "window_size_frames": 16,
+  "window_stride_frames": 8,
+  "include_tail_window": true,
+  "no_normalize_points": false,
+  "cache_data": false,
+  "loss": "cross_entropy",
+  "ignore_index": -1,
+  "class_weight": [
+    0.05963856,
+    1.9403615
+  ],
+  "auto_class_weight_epsilon": 0.02,
+  "normalize_auto_class_weight": true,
+  "label_smoothing": 0.0,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 8,
+  "epochs": 5,
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "grad_clip_norm": 10.0,
+  "num_workers": 4,
+  "val_every": 1,
+  "best_metric": "iou_femur",
+  "save_every": 10,
+  "seed": 42,
+  "device": "cuda",
+  "feature_names": [
+    "intensity",
+    "confidence"
+  ],
+  "feature_dim": 2,
+  "class_weight_info": {
+    "mode": "manual",
+    "requested": "0.05963856,1.94036150",
+    "counts": null,
+    "epsilon": null,
+    "normalize": null,
+    "resolved": [
+      0.05963856,
+      1.9403615
+    ]
+  },
+  "num_train_files": 162,
+  "num_val_files": 18,
+  "num_train_samples": 715,
+  "num_val_samples": 87,
+  "label_policy_diagnostics": {
+    "train": {
+      "policy": "bbox_noncontour_ignore",
+      "num_files": 162,
+      "totals": {
+        "converted_point_count": 0,
+        "source_positive_count": 688292,
+        "source_background_count": 61192000,
+        "source_ignore_count": 238377,
+        "effective_positive_count": 688292,
+        "effective_background_count": 61192000,
+        "effective_ignore_count": 238377
+      }
+    },
+    "val": {
+      "policy": "bbox_noncontour_ignore",
+      "num_files": 18,
+      "totals": {
+        "converted_point_count": 0,
+        "source_positive_count": 75033,
+        "source_background_count": 7098960,
+        "source_ignore_count": 23867,
+        "effective_positive_count": 75033,
+        "effective_background_count": 7098960,
+        "effective_ignore_count": 23867
+      }
+    }
+  }
+}

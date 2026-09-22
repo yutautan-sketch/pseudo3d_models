@@ -1,0 +1,1523 @@
+diff --git a/Stage5/checks/dummy/check_dummy_pointnext_s_groupnorm.py b/Stage5/checks/dummy/check_dummy_pointnext_s_groupnorm.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..525b9808324b7077f757d78b49e923f50df345f7
+--- /dev/null
++++ b/Stage5/checks/dummy/check_dummy_pointnext_s_groupnorm.py
+@@ -0,0 +1,473 @@
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from pathlib import Path
++from typing import Any
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++import torch
++from torch import nn
++
++from checks.dummy.check_dummy_pointnext_s_forward import make_window_dummy_h5, move_batch_to_device
++from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
++from stage5.models import build_stage5_model
++from stage5.models.model_factory import _extract_state_dict
++from stage5.models.norm_layers import Stage5GroupNorm, resolve_pointnext_norm_args
++from stage5.models.pointnext_s_segmentor import build_pointnext_s_config
++
++
++def require(condition: bool, message: str) -> None:
++    if not condition:
++        raise AssertionError(message)
++
++
++# ----------------------------------------------------------------------------
++# S5-11 Step D2/D3 structural checks (require CUDA: OpenPoints ball
++# query/FPS are CUDA-only, same constraint as every other PointNeXt-S checker).
++# ----------------------------------------------------------------------------
++
++
++def count_batchnorm_modules(model: nn.Module) -> int:
++    return sum(1 for module in model.modules() if isinstance(module, nn.modules.batchnorm._BatchNorm))
++
++
++def count_groupnorm_modules(model: nn.Module) -> list[nn.GroupNorm]:
++    return [module for module in model.modules() if isinstance(module, nn.GroupNorm)]
++
++
++def build_dummy_batch(*, work_dir: Path, args: argparse.Namespace, device: torch.device) -> tuple[dict[str, Any], int]:
++    h5_path = work_dir / "dummy_pointnext_s_groupnorm_grid.h5"
++    make_window_dummy_h5(
++        h5_path,
++        num_frames=args.num_frames,
++        points_per_frame=args.points_per_frame,
++        seed=args.seed,
++    )
++    dataset = Pseudo3DPointCloudDataset(
++        [h5_path],
++        num_points=None,
++        features="intensity,confidence",
++        window_mode="overlap",
++        window_size_frames=args.window_size_frames,
++        window_stride_frames=args.window_stride_frames,
++        include_tail_window=True,
++    )
++    loader = torch.utils.data.DataLoader(
++        dataset,
++        batch_size=args.batch_size,
++        shuffle=False,
++        num_workers=0,
++        collate_fn=pad_point_window_collate,
++    )
++    batch = move_batch_to_device(next(iter(loader)), device)
++    return batch, dataset.num_feature_channels
++
++
++def build_model(*, norm: str, norm_groups: int, feature_dim: int, args: argparse.Namespace, device: torch.device) -> nn.Module:
++    model = build_stage5_model(
++        "pointnext_s",
++        num_classes=2,
++        feature_dim=feature_dim,
++        width=args.width,
++        expansion=args.expansion,
++        dropout=args.dropout,
++        pointnext_radius=args.radius,
++        pointnext_nsample=args.nsample,
++        pointnext_sa_layers=args.sa_layers,
++        pointnext_norm=norm,
++        pointnext_norm_groups=norm_groups,
++    ).to(device)
++    return model
++
++
++def run_backward_compat_checks(
++    *, feature_dim: int, batch: dict[str, Any], args: argparse.Namespace, device: torch.device
++) -> dict[str, Any]:
++    model = build_model(norm="batchnorm", norm_groups=args.norm_groups, feature_dim=feature_dim, args=args, device=device)
++    require(model.pointnext_norm == "batchnorm", "Default pointnext_norm must resolve to 'batchnorm'")
++
++    bn_count = count_batchnorm_modules(model)
++    gn_count = len(count_groupnorm_modules(model))
++    require(bn_count > 0, "Default (batchnorm) model must contain BatchNorm modules")
++    require(gn_count == 0, f"Default (batchnorm) model must contain no GroupNorm modules, found {gn_count}")
++
++    default_norm_args = resolve_pointnext_norm_args("batchnorm", args.norm_groups)
++    require(
++        default_norm_args == {"norm": "bn"},
++        f"pointnext_norm='batchnorm' must resolve to the historical {{'norm': 'bn'}} config, "
++        f"got {default_norm_args}",
++    )
++    cfg = build_pointnext_s_config(
++        num_classes=2, feature_dim=feature_dim, width=args.width, norm="batchnorm", norm_groups=args.norm_groups
++    )
++    for site in ("encoder_args", "decoder_args", "cls_args"):
++        require(
++            dict(cfg[site]["norm_args"]) == {"norm": "bn"},
++            f"batchnorm config's {site}.norm_args must be exactly {{'norm': 'bn'}}, "
++            f"got {dict(cfg[site]['norm_args'])}",
++        )
++
++    model.eval()
++    with torch.inference_mode():
++        output = model(batch)
++    logits = output["logits"]
++    expected_shape = (batch["points"].shape[0], batch["points"].shape[1], 2)
++    require(tuple(logits.shape) == expected_shape, f"Unexpected logits shape: {tuple(logits.shape)}")
++    require(bool(torch.isfinite(logits).all()), "Backward-compat (batchnorm) logits contain NaN/Inf")
++
++    legacy_report: dict[str, Any] = {"legacy_checkpoint_strict_load": None}
++    if args.legacy_checkpoint:
++        checkpoint = torch.load(args.legacy_checkpoint, map_location="cpu")
++        state_dict = _extract_state_dict(checkpoint)
++        result = model.load_state_dict(state_dict, strict=True)
++        require(
++            not result.missing_keys and not result.unexpected_keys,
++            f"Legacy checkpoint strict load failed: missing={result.missing_keys}, "
++            f"unexpected={result.unexpected_keys}",
++        )
++        with torch.inference_mode():
++            legacy_output = model(batch)
++        require(
++            bool(torch.isfinite(legacy_output["logits"]).all()),
++            "Legacy-checkpoint forward produced non-finite logits",
++        )
++        legacy_report["legacy_checkpoint_strict_load"] = "passed"
++        legacy_report["legacy_checkpoint"] = str(args.legacy_checkpoint)
++
++    return {
++        "batchnorm_module_count": bn_count,
++        "groupnorm_module_count_in_batchnorm_model": gn_count,
++        **legacy_report,
++    }
++
++
++def run_groupnorm_structure_checks(
++    *, feature_dim: int, batch: dict[str, Any], args: argparse.Namespace, device: torch.device, expected_norm_sites: int
++) -> dict[str, Any]:
++    model = build_model(
++        norm="groupnorm", norm_groups=args.norm_groups, feature_dim=feature_dim, args=args, device=device
++    )
++    require(model.pointnext_norm == "groupnorm", "pointnext_norm must resolve to 'groupnorm'")
++
++    bn_count = count_batchnorm_modules(model)
++    gn_modules = count_groupnorm_modules(model)
++    require(bn_count == 0, f"GroupNorm model must contain 0 BatchNorm modules, found {bn_count}")
++    require(
++        len(gn_modules) == expected_norm_sites,
++        f"GroupNorm module count {len(gn_modules)} != expected normalization site count "
++        f"{expected_norm_sites} (from the batchnorm control model)",
++    )
++    for module in gn_modules:
++        require(
++            module.num_channels % module.num_groups == 0,
++            f"GroupNorm module has num_channels={module.num_channels} not divisible by "
++            f"num_groups={module.num_groups}",
++        )
++        require(isinstance(module, Stage5GroupNorm), "All GroupNorm sites must use the Stage5GroupNorm adapter")
++
++    cfg = build_pointnext_s_config(
++        num_classes=2, feature_dim=feature_dim, width=args.width, norm="groupnorm", norm_groups=args.norm_groups
++    )
++    for site in ("encoder_args", "decoder_args", "cls_args"):
++        norm_args = dict(cfg[site]["norm_args"])
++        require(
++            norm_args.get("norm") is Stage5GroupNorm and norm_args.get("num_groups") == args.norm_groups,
++            f"groupnorm config's {site}.norm_args must use Stage5GroupNorm with num_groups="
++            f"{args.norm_groups}, got {norm_args}",
++        )
++
++    model.eval()
++    torch.manual_seed(args.seed)
++    with torch.inference_mode():
++        eval_logits = model(batch)["logits"].clone()
++
++    model.train()
++    torch.manual_seed(args.seed)
++    with torch.inference_mode():
++        train_logits = model(batch)["logits"].clone()
++    model.eval()
++
++    max_abs_diff = float((train_logits - eval_logits).abs().max().item())
++    require(
++        torch.allclose(train_logits, eval_logits, atol=1e-4),
++        f"GroupNorm train()/eval() logits differ (max abs diff={max_abs_diff}); GroupNorm has no "
++        "running-statistics dependency and must behave identically in both modes",
++    )
++    require(bool(torch.isfinite(eval_logits).all()), "GroupNorm logits contain NaN/Inf")
++
++    # Invalid group count must fail fast, not silently adjust.
++    invalid_channels = args.width  # stem width is never divisible by a too-large odd factor below
++    invalid_groups = invalid_channels + 1
++    raised = False
++    try:
++        Stage5GroupNorm(invalid_channels, num_groups=invalid_groups)
++    except ValueError:
++        raised = True
++    require(raised, "Stage5GroupNorm must reject a num_groups that does not divide num_channels")
++
++    # Checkpoint save/reload + logits parity.
++    checkpoint_path = Path(args.work_dir) / "groupnorm_model_checkpoint.pt"
++    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
++    torch.save({"model": model.state_dict(), "config": model.get_config()}, checkpoint_path)
++    reloaded = build_model(
++        norm="groupnorm", norm_groups=args.norm_groups, feature_dim=feature_dim, args=args, device=device
++    )
++    checkpoint = torch.load(checkpoint_path, map_location=device)
++    result = reloaded.load_state_dict(checkpoint["model"], strict=True)
++    require(
++        not result.missing_keys and not result.unexpected_keys,
++        f"GroupNorm checkpoint reload mismatch: missing={result.missing_keys}, "
++        f"unexpected={result.unexpected_keys}",
++    )
++    reloaded.eval()
++    with torch.inference_mode():
++        reloaded_logits = reloaded(batch)["logits"]
++    require(
++        torch.equal(reloaded_logits, eval_logits),
++        "GroupNorm logits after checkpoint reload do not exactly match the pre-save logits",
++    )
++
++    return {
++        "groupnorm_module_count": len(gn_modules),
++        "num_groups": args.norm_groups,
++        "train_eval_max_abs_diff": max_abs_diff,
++        "checkpoint_reload": "passed",
++        "invalid_group_count_rejected": True,
++    }
++
++
++# ----------------------------------------------------------------------------
++# Synthetic self-test: CPU-only, no CUDA / OpenPoints / real PointNeXt-S needed.
++# ----------------------------------------------------------------------------
++
++
++def test_stage5_groupnorm_forward_shapes() -> None:
++    layer_1d = Stage5GroupNorm(8, num_groups=4)
++    x_1d = torch.randn(2, 8, 5)
++    out_1d = layer_1d(x_1d)
++    require(tuple(out_1d.shape) == tuple(x_1d.shape), "Stage5GroupNorm must preserve [B, C, N] shape")
++    require(bool(torch.isfinite(out_1d).all()), "Stage5GroupNorm [B, C, N] output must be finite")
++
++    layer_2d = Stage5GroupNorm(8, num_groups=4)
++    x_2d = torch.randn(2, 8, 3, 6)
++    out_2d = layer_2d(x_2d)
++    require(tuple(out_2d.shape) == tuple(x_2d.shape), "Stage5GroupNorm must preserve [B, C, *, *] shape")
++    require(bool(torch.isfinite(out_2d).all()), "Stage5GroupNorm [B, C, *, *] output must be finite")
++
++
++def test_stage5_groupnorm_rejects_indivisible_groups() -> None:
++    raised = False
++    try:
++        Stage5GroupNorm(10, num_groups=3)
++    except ValueError:
++        raised = True
++    require(raised, "Stage5GroupNorm(10, num_groups=3) must raise ValueError (10 %% 3 != 0)")
++
++
++def test_stage5_groupnorm_train_eval_identical() -> None:
++    layer = Stage5GroupNorm(8, num_groups=4)
++    x = torch.randn(3, 8, 7)
++    layer.eval()
++    with torch.no_grad():
++        eval_out = layer(x)
++    layer.train()
++    with torch.no_grad():
++        train_out = layer(x)
++    require(
++        torch.equal(eval_out, train_out),
++        "Stage5GroupNorm has no running-statistics buffers; train()/eval() outputs must be identical",
++    )
++    require(
++        not any(True for _ in layer.buffers()),
++        "Stage5GroupNorm must not register any running-statistics buffers",
++    )
++
++
++def test_resolve_pointnext_norm_args_batchnorm_matches_legacy_default() -> None:
++    result = resolve_pointnext_norm_args("batchnorm", 8)
++    require(result == {"norm": "bn"}, f"batchnorm norm_args must equal the historical {{'norm': 'bn'}}, got {result}")
++
++
++def test_resolve_pointnext_norm_args_groupnorm() -> None:
++    result = resolve_pointnext_norm_args("groupnorm", 8)
++    require(result.get("norm") is Stage5GroupNorm, "groupnorm norm_args must use the Stage5GroupNorm class")
++    require(result.get("num_groups") == 8, f"groupnorm norm_args must carry num_groups=8, got {result}")
++
++
++def test_resolve_pointnext_norm_args_rejects_unknown_and_nonpositive() -> None:
++    raised = False
++    try:
++        resolve_pointnext_norm_args("layernorm", 8)
++    except ValueError:
++        raised = True
++    require(raised, "Unsupported pointnext_norm values must raise ValueError")
++
++    raised = False
++    try:
++        resolve_pointnext_norm_args("groupnorm", 0)
++    except ValueError:
++        raised = True
++    require(raised, "pointnext_norm_groups <= 0 must raise ValueError")
++
++
++def test_stage5_pointnext_decoder_honors_norm_args() -> None:
++    # Regression test for a real bug found while running this checker: the
++    # official OpenPoints PointNextDecoder accepts norm_args/act_args via
++    # **kwargs but never uses them, so its decoder always built BatchNorm
++    # regardless of what Stage5 configured. See pointnext_decoder_patch.py.
++    from stage5.models.pointnext_decoder_patch import ensure_stage5_pointnext_decoder_registered
++    from stage5.models.pointnext_s_segmentor import _ensure_openpoints_importable
++
++    _ensure_openpoints_importable()
++    ensure_stage5_pointnext_decoder_registered()
++    from openpoints.models.build import MODELS
++
++    decoder_cls = MODELS.get("Stage5PointNextDecoder")
++    require(decoder_cls is not None, "Stage5PointNextDecoder must be registered")
++
++    encoder_channel_list = [8, 16, 32, 64, 128]
++    decoder_bn = decoder_cls(encoder_channel_list=encoder_channel_list, norm_args={"norm": "bn"})
++    bn_norm_modules = [m for m in decoder_bn.modules() if isinstance(m, nn.modules.batchnorm._BatchNorm)]
++    require(
++        len(bn_norm_modules) > 0,
++        "Stage5PointNextDecoder(norm_args={'norm': 'bn'}) must build BatchNorm modules",
++    )
++    require(
++        not any(isinstance(m, nn.GroupNorm) for m in decoder_bn.modules()),
++        "batchnorm-configured decoder must contain no GroupNorm modules",
++    )
++
++    decoder_gn = decoder_cls(
++        encoder_channel_list=encoder_channel_list,
++        norm_args={"norm": Stage5GroupNorm, "num_groups": 4},
++    )
++    gn_norm_modules = [m for m in decoder_gn.modules() if isinstance(m, nn.GroupNorm)]
++    require(
++        len(gn_norm_modules) == len(bn_norm_modules),
++        f"groupnorm-configured decoder must replace every norm site 1:1, got "
++        f"{len(gn_norm_modules)} GroupNorm vs {len(bn_norm_modules)} BatchNorm sites",
++    )
++    require(
++        not any(isinstance(m, nn.modules.batchnorm._BatchNorm) for m in decoder_gn.modules()),
++        "groupnorm-configured decoder must contain 0 BatchNorm modules "
++        "(this is exactly the bug this patch fixes)",
++    )
++
++
++def test_build_pointnext_s_config_propagates_norm_to_all_sites() -> None:
++    cfg_bn = build_pointnext_s_config(num_classes=2, feature_dim=2, width=32, norm="batchnorm", norm_groups=8)
++    for site in ("encoder_args", "decoder_args", "cls_args"):
++        require(
++            dict(cfg_bn[site]["norm_args"]) == {"norm": "bn"},
++            f"batchnorm config {site}.norm_args must equal {{'norm': 'bn'}}",
++        )
++
++    cfg_gn = build_pointnext_s_config(num_classes=2, feature_dim=2, width=32, norm="groupnorm", norm_groups=8)
++    for site in ("encoder_args", "decoder_args", "cls_args"):
++        norm_args = dict(cfg_gn[site]["norm_args"])
++        require(
++            norm_args.get("norm") is Stage5GroupNorm and norm_args.get("num_groups") == 8,
++            f"groupnorm config {site}.norm_args must use Stage5GroupNorm with num_groups=8, got {norm_args}",
++        )
++    # The three sites must not share a single mutated dict instance.
++    cfg_gn["encoder_args"]["norm_args"]["num_groups"] = 999
++    require(
++        dict(cfg_gn["decoder_args"]["norm_args"])["num_groups"] == 8,
++        "norm_args dicts must be independent copies across encoder/decoder/head sites",
++    )
++
++
++def run_self_test() -> None:
++    test_stage5_groupnorm_forward_shapes()
++    test_stage5_groupnorm_rejects_indivisible_groups()
++    test_stage5_groupnorm_train_eval_identical()
++    test_resolve_pointnext_norm_args_batchnorm_matches_legacy_default()
++    test_resolve_pointnext_norm_args_groupnorm()
++    test_resolve_pointnext_norm_args_rejects_unknown_and_nonpositive()
++    test_stage5_pointnext_decoder_honors_norm_args()
++    test_build_pointnext_s_config_propagates_norm_to_all_sites()
++
++
++def parse_args() -> argparse.Namespace:
++    parser = argparse.ArgumentParser(
++        description="S5-11 Step D2/D3: PointNeXt-S BatchNorm backward-compat and GroupNorm structure checks"
++    )
++    parser.add_argument("--self_test", action="store_true", help="Run CPU-only synthetic tests and exit")
++    parser.add_argument("--work_dir", default=str(REPO_ROOT / "work_dirs" / "_dummy_pointnext_s_groupnorm_check"))
++    parser.add_argument("--num_frames", type=int, default=20)
++    parser.add_argument("--points_per_frame", type=int, default=80)
++    parser.add_argument("--window_size_frames", type=int, default=8)
++    parser.add_argument("--window_stride_frames", type=int, default=4)
++    parser.add_argument("--batch_size", type=int, default=2)
++    parser.add_argument("--width", type=int, default=32)
++    parser.add_argument("--expansion", type=int, default=4)
++    parser.add_argument("--dropout", type=float, default=0.0)
++    parser.add_argument("--radius", type=float, default=0.1)
++    parser.add_argument("--nsample", type=int, default=16)
++    parser.add_argument("--sa_layers", type=int, default=2)
++    parser.add_argument("--norm_groups", type=int, default=8)
++    parser.add_argument("--seed", type=int, default=123)
++    parser.add_argument("--device", default="cuda")
++    parser.add_argument(
++        "--legacy_checkpoint",
++        default=None,
++        help="Optional: an existing production BatchNorm checkpoint (e.g. teacher v6 pilot best.pt) "
++        "to strict-load into the default (batchnorm) wrapper as an extra real-world backward-compat check",
++    )
++    return parser.parse_args()
++
++
++def main() -> None:
++    args = parse_args()
++    if args.self_test:
++        run_self_test()
++        print("Stage5 PointNeXt-S GroupNorm self-test passed.")
++        return
++
++    if args.device != "cuda":
++        raise RuntimeError("PointNeXt-S GroupNorm structure check requires --device cuda")
++    if not torch.cuda.is_available():
++        raise RuntimeError("CUDA is not available")
++
++    device = torch.device(args.device)
++    work_dir = Path(args.work_dir)
++    work_dir.mkdir(parents=True, exist_ok=True)
++
++    torch.manual_seed(args.seed)
++    batch, feature_dim = build_dummy_batch(work_dir=work_dir, args=args, device=device)
++
++    backward_compat_report = run_backward_compat_checks(
++        feature_dim=feature_dim, batch=batch, args=args, device=device
++    )
++    groupnorm_report = run_groupnorm_structure_checks(
++        feature_dim=feature_dim,
++        batch=batch,
++        args=args,
++        device=device,
++        expected_norm_sites=backward_compat_report["batchnorm_module_count"],
++    )
++
++    summary = {
++        "status": "passed",
++        "backward_compat": backward_compat_report,
++        "groupnorm": groupnorm_report,
++    }
++    with (work_dir / "groupnorm_structure_summary.json").open("w", encoding="utf-8") as f:
++        json.dump(summary, f, indent=2, ensure_ascii=False)
++
++    print("Stage5 PointNeXt-S GroupNorm structure check passed.")
++    print(f"batchnorm module count (control): {backward_compat_report['batchnorm_module_count']}")
++    print(f"groupnorm module count: {groupnorm_report['groupnorm_module_count']}")
++    print(f"train/eval max abs diff: {groupnorm_report['train_eval_max_abs_diff']:.3e}")
++    if backward_compat_report.get("legacy_checkpoint_strict_load"):
++        print(f"legacy checkpoint strict load: {backward_compat_report['legacy_checkpoint_strict_load']}")
++    print(f"work_dir: {work_dir}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage5/checks/dummy/check_dummy_pointnext_s_groupnorm.sh b/Stage5/checks/dummy/check_dummy_pointnext_s_groupnorm.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..896ad3c5303962953e6036e1eb27607db37e96bc
+--- /dev/null
++++ b/Stage5/checks/dummy/check_dummy_pointnext_s_groupnorm.sh
+@@ -0,0 +1,77 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++# ------------------------------------------------------------
++# S5-11 Step D2/D3: verify that the default (batchnorm) PointNeXt-S wrapper
++# path is unchanged, and that pointnext_norm=groupnorm structurally replaces
++# every normalization site 1:1 with the Stage5GroupNorm adapter, with
++# identical train()/eval() behavior and a clean checkpoint round-trip.
++#
++# Synthetic self-test (CPU only, no CUDA/checkpoint/H5 required):
++#   SELF_TEST=1 bash checks/dummy/check_dummy_pointnext_s_groupnorm.sh
++#
++# Full structural check (requires CUDA; dummy H5 data only):
++#   bash checks/dummy/check_dummy_pointnext_s_groupnorm.sh
++#
++# Optional: also strict-load a real production BatchNorm checkpoint into the
++# default wrapper path as an extra backward-compat check:
++#   LEGACY_CHECKPOINT=/mnt/data/.../best.pt bash checks/dummy/check_dummy_pointnext_s_groupnorm.sh
++# ------------------------------------------------------------
++
++SCRIPT_DIR="/mnt/data/3d_projects/models/Stage5"
++cd "${SCRIPT_DIR}"
++
++PYTHON="/home/kodaira/anaconda3/envs/dualtrack311/bin/python"
++
++if [[ -z "${CONDA_PREFIX:-}" ]]; then
++  CONDA_PREFIX="$(dirname "$(dirname "${PYTHON}")")"
++fi
++
++export CUDA_HOME="${CONDA_PREFIX}"
++export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-12.0}"
++
++TORCH_LIB="$("${PYTHON}" - <<'PY'
++import torch
++from pathlib import Path
++print(Path(torch.__file__).resolve().parent / "lib")
++PY
++)"
++export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
++export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/PointNeXt/openpoints:${PYTHONPATH:-}"
++
++SELF_TEST="${SELF_TEST:-0}"
++
++if [[ "${SELF_TEST}" == "1" ]]; then
++  echo "Stage5 PointNeXt-S GroupNorm self-test"
++  "${PYTHON}" "${SCRIPT_DIR}/checks/dummy/check_dummy_pointnext_s_groupnorm.py" --self_test
++  exit 0
++fi
++
++WORK_DIR="${WORK_DIR:-${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_groupnorm_check}"
++NORM_GROUPS="${NORM_GROUPS:-8}"
++LEGACY_CHECKPOINT="${LEGACY_CHECKPOINT:-}"
++DEVICE="${DEVICE:-cuda}"
++SEED="${SEED:-123}"
++
++echo "Stage5 PointNeXt-S GroupNorm structure check"
++echo "  python            : ${PYTHON}"
++echo "  work dir          : ${WORK_DIR}"
++echo "  norm_groups       : ${NORM_GROUPS}"
++echo "  legacy checkpoint : ${LEGACY_CHECKPOINT:-<none>}"
++echo "  device            : ${DEVICE}"
++
++cmd=(
++  "${PYTHON}" "${SCRIPT_DIR}/checks/dummy/check_dummy_pointnext_s_groupnorm.py"
++  --work_dir "${WORK_DIR}"
++  --norm_groups "${NORM_GROUPS}"
++  --device "${DEVICE}"
++  --seed "${SEED}"
++)
++if [[ -n "${LEGACY_CHECKPOINT}" ]]; then
++  cmd+=(--legacy_checkpoint "${LEGACY_CHECKPOINT}")
++fi
++
++"${cmd[@]}"
++
++echo "Done."
++echo "  summary: ${WORK_DIR}/groupnorm_structure_summary.json"
+diff --git a/Stage5/checks/dummy/check_dummy_pointnext_s_training.py b/Stage5/checks/dummy/check_dummy_pointnext_s_training.py
+index 8128cac84d58a83877eada63dcfa88c95e58a3de..2c69e693b4b930d871674b5b30d6de3fbf18ec2c
+--- a/Stage5/checks/dummy/check_dummy_pointnext_s_training.py
++++ b/Stage5/checks/dummy/check_dummy_pointnext_s_training.py
+@@ -15,6 +15,7 @@
+ 
+ from checks.dummy.check_dummy_pointnext_s_forward import make_window_dummy_h5
+ from stage5.models import build_stage5_model
++from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
+ 
+ 
+ def write_list_file(path: Path, h5_paths: list[Path]) -> None:
+@@ -94,6 +95,8 @@
+         str(args.window_stride_frames),
+         "--batch_size",
+         str(args.batch_size),
++        "--gradient_accumulation_steps",
++        str(args.gradient_accumulation_steps),
+         "--epochs",
+         str(args.epochs),
+         "--lr",
+@@ -114,6 +117,10 @@
+         str(args.nsample),
+         "--pointnext_sa_layers",
+         str(args.sa_layers),
++        "--pointnext_norm",
++        args.pointnext_norm,
++        "--pointnext_norm_groups",
++        str(args.pointnext_norm_groups),
+         "--num_workers",
+         "0",
+         "--device",
+@@ -130,7 +137,13 @@
+     subprocess.run(cmd, check=True)
+ 
+ 
+-def validate_training_outputs(output_dir: Path, *, expected_epochs: int) -> dict:
++def validate_training_outputs(
++    output_dir: Path,
++    *,
++    expected_epochs: int,
++    expected_batch_size: int,
++    expected_gradient_accumulation_steps: int,
++) -> dict:
+     required_paths = [
+         output_dir / "config.json",
+         output_dir / "metrics.jsonl",
+@@ -152,6 +165,19 @@
+         raise AssertionError(f"Unexpected window_mode in config.json: {config.get('window_mode')}")
+     if int(config.get("feature_dim", -1)) != 2:
+         raise AssertionError(f"Unexpected feature_dim in config.json: {config.get('feature_dim')}")
++    if int(config.get("batch_size", 0)) != expected_batch_size:
++        raise AssertionError(
++            f"Unexpected batch size: {config.get('batch_size')} != {expected_batch_size}"
++        )
++    if (
++        int(config.get("gradient_accumulation_steps", 0))
++        != expected_gradient_accumulation_steps
++    ):
++        raise AssertionError(
++            "Unexpected gradient accumulation setting: "
++            f"{config.get('gradient_accumulation_steps')} != "
++            f"{expected_gradient_accumulation_steps}"
++        )
+ 
+     records = []
+     with (output_dir / "metrics.jsonl").open("r", encoding="utf-8") as f:
+@@ -162,6 +188,11 @@
+     if len(records) != expected_epochs:
+         raise AssertionError(f"Expected {expected_epochs} metric records, got {len(records)}")
+ 
++    num_train_samples = int(config["num_train_samples"])
++    expected_microbatches = math.ceil(num_train_samples / expected_batch_size)
++    expected_optimizer_steps = math.ceil(
++        expected_microbatches / expected_gradient_accumulation_steps
++    )
+     for record in records:
+         train = record.get("train") or {}
+         val = record.get("val") or {}
+@@ -180,6 +211,21 @@
+             ):
+                 if key not in metrics:
+                     raise AssertionError(f"{split} metrics do not contain {key}")
++        if int(train.get("debug_microbatch_count", -1)) != expected_microbatches:
++            raise AssertionError(
++                "Unexpected train microbatch count: "
++                f"{train.get('debug_microbatch_count')} != {expected_microbatches}"
++            )
++        if int(train.get("debug_optimizer_step_count", -1)) != expected_optimizer_steps:
++            raise AssertionError(
++                "Unexpected optimizer step count: "
++                f"{train.get('debug_optimizer_step_count')} != {expected_optimizer_steps}"
++            )
++        if (
++            int(train.get("debug_gradient_accumulation_steps", -1))
++            != expected_gradient_accumulation_steps
++        ):
++            raise AssertionError("Training metrics lost the gradient accumulation setting")
+ 
+     return config
+ 
+@@ -197,6 +243,8 @@
+         pointnext_nsample=int(config["pointnext_nsample"]),
+         pointnext_sa_layers=int(config["pointnext_sa_layers"]),
+         pointnext_sa_use_res=bool(config["pointnext_sa_use_res"]),
++        pointnext_norm=str(config.get("pointnext_norm", "batchnorm")),
++        pointnext_norm_groups=int(config.get("pointnext_norm_groups", 8)),
+     )
+     result = model.load_state_dict(checkpoint["model"], strict=True)
+     if result.missing_keys or result.unexpected_keys:
+@@ -218,6 +266,7 @@
+     parser.add_argument("--window_size_frames", type=int, default=8)
+     parser.add_argument("--window_stride_frames", type=int, default=4)
+     parser.add_argument("--batch_size", type=int, default=1)
++    parser.add_argument("--gradient_accumulation_steps", type=int, default=2)
+     parser.add_argument("--epochs", type=int, default=1)
+     parser.add_argument("--width", type=int, default=32)
+     parser.add_argument("--expansion", type=int, default=4)
+@@ -227,6 +276,10 @@
+     parser.add_argument("--sa_layers", type=int, default=2)
+     parser.add_argument("--no_sa_use_res", dest="sa_use_res", action="store_false")
+     parser.set_defaults(sa_use_res=True)
++    parser.add_argument(
++        "--pointnext_norm", choices=sorted(SUPPORTED_POINTNEXT_NORMS), default="batchnorm"
++    )
++    parser.add_argument("--pointnext_norm_groups", type=int, default=8)
+     parser.add_argument("--lr", type=float, default=1e-3)
+     parser.add_argument("--weight_decay", type=float, default=0.0)
+     parser.add_argument("--seed", type=int, default=123)
+@@ -238,6 +291,8 @@
+     args = parse_args()
+     if args.device != "cuda":
+         raise RuntimeError("PointNeXt-S training smoke test requires --device cuda")
++    if args.batch_size != 1:
++        raise ValueError("Padding-free PointNeXt-S training smoke test requires --batch_size 1")
+     if not torch.cuda.is_available():
+         raise RuntimeError("CUDA is not available")
+ 
+@@ -258,7 +313,12 @@
+         output_dir=output_dir,
+         args=args,
+     )
+-    config = validate_training_outputs(output_dir, expected_epochs=args.epochs)
++    config = validate_training_outputs(
++        output_dir,
++        expected_epochs=args.epochs,
++        expected_batch_size=args.batch_size,
++        expected_gradient_accumulation_steps=args.gradient_accumulation_steps,
++    )
+     validate_checkpoint_reload(output_dir, config, device=args.device)
+ 
+     print("PointNeXt-S Stage5 training CLI check passed.")
+diff --git a/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh b/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh
+index cf5f1538ca01a3d5d625c12ca50b61607bf75249..5d40adc67c8dfd2adcddffc80a37172bfa17f410
+--- a/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh
++++ b/Stage5/checks/dummy/check_dummy_pointnext_s_training.sh
+@@ -30,7 +30,7 @@
+ # ------------------------------------------------------------
+ # Dummy data / training settings
+ # ------------------------------------------------------------
+-WORK_DIR="${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_training_check"
++WORK_DIR="${WORK_DIR:-${SCRIPT_DIR}/work_dirs/_dummy_pointnext_s_training_check_${POINTNEXT_NORM:-batchnorm}}"
+ NUM_TRAIN=2
+ NUM_VAL=1
+ NUM_FRAMES=16
+@@ -38,6 +38,7 @@
+ WINDOW_SIZE_FRAMES=8
+ WINDOW_STRIDE_FRAMES=4
+ BATCH_SIZE=1
++GRADIENT_ACCUMULATION_STEPS=2
+ EPOCHS=1
+ 
+ WIDTH=32
+@@ -47,6 +48,8 @@
+ NSAMPLE=16
+ SA_LAYERS=2
+ SA_USE_RES=1
++POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
++POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
+ 
+ LR=1e-3
+ WEIGHT_DECAY=0.0
+@@ -62,8 +65,10 @@
+ echo "  frames/points   : ${NUM_FRAMES}/${POINTS_PER_FRAME}"
+ echo "  window frames   : size=${WINDOW_SIZE_FRAMES}, stride=${WINDOW_STRIDE_FRAMES}"
+ echo "  batch/epochs    : ${BATCH_SIZE}/${EPOCHS}"
++echo "  grad accumulation: ${GRADIENT_ACCUMULATION_STEPS}"
+ echo "  model width     : ${WIDTH}"
+ echo "  radius/nsample  : ${RADIUS}/${NSAMPLE}"
++echo "  norm/groups     : ${POINTNEXT_NORM}/${POINTNEXT_NORM_GROUPS}"
+ 
+ cmd=(
+   "${PYTHON}" "${SCRIPT_DIR}/checks/dummy/check_dummy_pointnext_s_training.py"
+@@ -75,6 +80,7 @@
+   --window_size_frames "${WINDOW_SIZE_FRAMES}"
+   --window_stride_frames "${WINDOW_STRIDE_FRAMES}"
+   --batch_size "${BATCH_SIZE}"
++  --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}"
+   --epochs "${EPOCHS}"
+   --width "${WIDTH}"
+   --expansion "${EXPANSION}"
+@@ -82,6 +88,8 @@
+   --radius "${RADIUS}"
+   --nsample "${NSAMPLE}"
+   --sa_layers "${SA_LAYERS}"
++  --pointnext_norm "${POINTNEXT_NORM}"
++  --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
+   --lr "${LR}"
+   --weight_decay "${WEIGHT_DECAY}"
+   --seed "${SEED}"
+diff --git a/Stage5/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.py b/Stage5/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d3e7a68d03230239f259638641597601a2c94616
+--- /dev/null
++++ b/Stage5/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.py
+@@ -0,0 +1,302 @@
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from pathlib import Path
++from typing import Any
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++import torch
++from torch.utils.data import DataLoader
++
++from checks.dummy.check_dummy_pointnext_s_forward import make_window_dummy_h5, move_batch_to_device
++from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
++from stage5.models import build_stage5_model
++from stage5.models.model_factory import _extract_state_dict
++from stage5.models.norm_layers import BN_BUFFER_SUFFIXES
++from stage5.training import build_loss
++
++
++def require(condition: bool, message: str) -> None:
++    if not condition:
++        raise AssertionError(message)
++
++
++# ----------------------------------------------------------------------------
++# S5-11 Step D5: transfer a BatchNorm Stage5 checkpoint's trainable parameters
++# (convs/linear/head + norm affine weight/bias) into a freshly constructed
++# GroupNorm model, excluding only the BatchNorm-specific running buffers,
++# which GroupNorm does not have. Stage5GroupNorm subclasses nn.GroupNorm
++# directly (see stage5/models/norm_layers.py), so a norm site's `.weight`/
++# `.bias` sit at the exact same dotted key as they did under BatchNorm --
++# no key remapping is required, only a shape-checked key intersection.
++# ----------------------------------------------------------------------------
++
++
++def transfer_batchnorm_to_groupnorm_state(
++    source_state: dict[str, Any],
++    target_state: dict[str, Any],
++) -> tuple[dict[str, Any], list[str], list[dict[str, Any]], list[str]]:
++    """Return (filtered_state, source_unused_bn_buffer_keys, shape_mismatches, target_missing_keys)."""
++    filtered: dict[str, Any] = {}
++    target_missing: list[str] = []
++    shape_mismatches: list[dict[str, Any]] = []
++
++    for key, target_value in target_state.items():
++        source_value = source_state.get(key)
++        if source_value is None:
++            target_missing.append(key)
++            continue
++        if tuple(source_value.shape) != tuple(target_value.shape):
++            shape_mismatches.append(
++                {
++                    "key": key,
++                    "source_shape": tuple(source_value.shape),
++                    "target_shape": tuple(target_value.shape),
++                }
++            )
++            continue
++        filtered[key] = source_value
++
++    source_unused = [key for key in source_state if key not in target_state]
++    return filtered, source_unused, shape_mismatches, target_missing
++
++
++def classify_source_unused(source_unused: list[str]) -> tuple[list[str], list[str]]:
++    """Split source-only keys into expected BatchNorm buffer keys vs anything else."""
++    expected_bn_buffers = [key for key in source_unused if key.endswith(BN_BUFFER_SUFFIXES)]
++    unexpected = [key for key in source_unused if not key.endswith(BN_BUFFER_SUFFIXES)]
++    return expected_bn_buffers, unexpected
++
++
++def parse_args() -> argparse.Namespace:
++    parser = argparse.ArgumentParser(
++        description="S5-11 Step D5: transfer a BatchNorm Stage5 partial-init checkpoint's trainable "
++        "parameters into a freshly constructed GroupNorm PointNeXt-S model."
++    )
++    parser.add_argument("--self_test", action="store_true", help="Run CPU-only synthetic tests and exit")
++    parser.add_argument(
++        "--source_checkpoint",
++        default=str(
++            REPO_ROOT
++            / "work_dirs"
++            / "_s3dis_to_stage5_pointnext_s_transfer"
++            / "stage5_pointnext_s_s3dis_partial_init.pt"
++        ),
++        help="Existing Stage5 BatchNorm S3DIS partial-init checkpoint (the same one the "
++        "teacher v6 BatchNorm control run initializes from)",
++    )
++    parser.add_argument(
++        "--output_checkpoint",
++        default=str(
++            REPO_ROOT
++            / "work_dirs"
++            / "_s3dis_to_stage5_pointnext_s_transfer"
++            / "stage5_pointnext_s_s3dis_partial_init_groupnorm.pt"
++        ),
++    )
++    parser.add_argument("--report_path", default=None, help="Defaults to <output_checkpoint>.transfer_report.json")
++    parser.add_argument("--norm_groups", type=int, default=8)
++    parser.add_argument("--features", default="intensity,confidence")
++    parser.add_argument("--num_frames", type=int, default=20)
++    parser.add_argument("--points_per_frame", type=int, default=80)
++    parser.add_argument("--window_size_frames", type=int, default=8)
++    parser.add_argument("--window_stride_frames", type=int, default=4)
++    parser.add_argument("--batch_size", type=int, default=2)
++    parser.add_argument("--seed", type=int, default=123)
++    parser.add_argument("--device", default="cuda")
++    return parser.parse_args()
++
++
++def run_self_test() -> None:
++    source_state = {
++        "pointnext.encoder.encoder.1.0.convs.0.1.weight": torch.zeros(32),
++        "pointnext.encoder.encoder.1.0.convs.0.1.bias": torch.zeros(32),
++        "pointnext.encoder.encoder.1.0.convs.0.1.running_mean": torch.zeros(32),
++        "pointnext.encoder.encoder.1.0.convs.0.1.running_var": torch.ones(32),
++        "pointnext.encoder.encoder.1.0.convs.0.1.num_batches_tracked": torch.tensor(0),
++        "pointnext.encoder.encoder.1.0.convs.0.0.weight": torch.zeros(32, 4, 1),
++        "pointnext.head.head.0.1.weight": torch.zeros(16),
++        "pointnext.head.head.0.1.bias": torch.zeros(16),
++        "pointnext.head.head.0.1.running_mean": torch.zeros(16),
++        "pointnext.head.head.0.1.running_var": torch.ones(16),
++        "pointnext.head.head.0.1.num_batches_tracked": torch.tensor(0),
++    }
++    # Target (GroupNorm) has the same conv/affine keys, no running buffers, and
++    # deliberately one shape-mismatched key to exercise the mismatch path.
++    target_state = {
++        "pointnext.encoder.encoder.1.0.convs.0.1.weight": torch.ones(32),
++        "pointnext.encoder.encoder.1.0.convs.0.1.bias": torch.ones(32),
++        "pointnext.encoder.encoder.1.0.convs.0.0.weight": torch.ones(32, 4, 1),
++        "pointnext.head.head.0.1.weight": torch.ones(16),
++        "pointnext.head.head.0.1.bias": torch.ones(16),
++    }
++
++    filtered, source_unused, shape_mismatches, target_missing = transfer_batchnorm_to_groupnorm_state(
++        source_state, target_state
++    )
++    require(set(filtered.keys()) == set(target_state.keys()), "All target keys must be filled from a matching source")
++    require(not target_missing, f"No target key should be missing in this fixture, got {target_missing}")
++    require(not shape_mismatches, f"No shape mismatch expected in this fixture, got {shape_mismatches}")
++
++    expected_bn_buffers, unexpected = classify_source_unused(source_unused)
++    require(
++        set(expected_bn_buffers)
++        == {
++            "pointnext.encoder.encoder.1.0.convs.0.1.running_mean",
++            "pointnext.encoder.encoder.1.0.convs.0.1.running_var",
++            "pointnext.encoder.encoder.1.0.convs.0.1.num_batches_tracked",
++            "pointnext.head.head.0.1.running_mean",
++            "pointnext.head.head.0.1.running_var",
++            "pointnext.head.head.0.1.num_batches_tracked",
++        },
++        f"Unexpected set of classified BN buffer keys: {expected_bn_buffers}",
++    )
++    require(not unexpected, f"No unexpected source-only keys expected in this fixture, got {unexpected}")
++
++    # Negative control: a genuinely unexpected source-only key (not a BN buffer)
++    # must be classified as unexpected, not silently absorbed.
++    source_state_with_stray_key = dict(source_state)
++    source_state_with_stray_key["pointnext.some_removed_module.weight"] = torch.zeros(4)
++    _, source_unused_2, _, _ = transfer_batchnorm_to_groupnorm_state(source_state_with_stray_key, target_state)
++    _, unexpected_2 = classify_source_unused(source_unused_2)
++    require(
++        unexpected_2 == ["pointnext.some_removed_module.weight"],
++        f"A non-BN-buffer source-only key must be classified as unexpected, got {unexpected_2}",
++    )
++
++    # Negative control: a missing target key (present in target, absent from source) must surface.
++    target_state_with_extra_key = dict(target_state)
++    target_state_with_extra_key["pointnext.new_head.weight"] = torch.zeros(2)
++    _, _, _, target_missing_2 = transfer_batchnorm_to_groupnorm_state(source_state, target_state_with_extra_key)
++    require(
++        target_missing_2 == ["pointnext.new_head.weight"],
++        f"An unmatched target key must be reported as missing, got {target_missing_2}",
++    )
++
++
++def main() -> None:
++    args = parse_args()
++    if args.self_test:
++        run_self_test()
++        print("Stage5 BatchNorm->GroupNorm transfer self-test passed.")
++        return
++
++    if args.device != "cuda":
++        raise RuntimeError("PointNeXt-S CUDA ops require --device cuda")
++    if not torch.cuda.is_available():
++        raise RuntimeError("CUDA is not available")
++    device = torch.device(args.device)
++
++    source_path = Path(args.source_checkpoint)
++    require(source_path.is_file(), f"Source (BatchNorm) checkpoint not found: {source_path}")
++    source_checkpoint = torch.load(source_path, map_location="cpu")
++    source_state = _extract_state_dict(source_checkpoint)
++    source_config = source_checkpoint.get("config", {}) if isinstance(source_checkpoint, dict) else {}
++
++    output_path = Path(args.output_checkpoint)
++    report_path = Path(args.report_path) if args.report_path else output_path.with_suffix(".transfer_report.json")
++
++    work_dir = output_path.parent / "_batchnorm_to_groupnorm_transfer_dummy_data"
++    work_dir.mkdir(parents=True, exist_ok=True)
++    h5_path = work_dir / "dummy_transfer_check_grid.h5"
++    make_window_dummy_h5(h5_path, num_frames=args.num_frames, points_per_frame=args.points_per_frame, seed=args.seed)
++    dataset = Pseudo3DPointCloudDataset(
++        [h5_path],
++        num_points=None,
++        features=args.features,
++        window_mode="overlap",
++        window_size_frames=args.window_size_frames,
++        window_stride_frames=args.window_stride_frames,
++        include_tail_window=True,
++    )
++    loader = DataLoader(
++        dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=pad_point_window_collate
++    )
++    batch = move_batch_to_device(next(iter(loader)), device)
++
++    model_kwargs = dict(
++        num_classes=int(source_config.get("num_classes", 2)),
++        feature_dim=dataset.num_feature_channels,
++        width=int(source_config.get("width", 32)),
++        expansion=int(source_config.get("expansion", 4)),
++        dropout=float(source_config.get("dropout", 0.0)),
++        pointnext_radius=float(source_config.get("pointnext_radius", source_config.get("radius", 0.1))),
++        pointnext_nsample=int(source_config.get("pointnext_nsample", source_config.get("nsample", 16))),
++        pointnext_sa_layers=int(source_config.get("pointnext_sa_layers", source_config.get("sa_layers", 2))),
++        pointnext_sa_use_res=bool(source_config.get("pointnext_sa_use_res", source_config.get("sa_use_res", True))),
++        pointnext_norm="groupnorm",
++        pointnext_norm_groups=int(args.norm_groups),
++    )
++    model = build_stage5_model("pointnext_s", **model_kwargs).to(device)
++    target_state = model.state_dict()
++
++    filtered, source_unused, shape_mismatches, target_missing = transfer_batchnorm_to_groupnorm_state(
++        source_state, target_state
++    )
++    expected_bn_buffers, unexpected_source_unused = classify_source_unused(source_unused)
++
++    require(not target_missing, f"GroupNorm model has keys with no BatchNorm-checkpoint counterpart: {target_missing}")
++    require(not shape_mismatches, f"Shape mismatch(es) between BatchNorm source and GroupNorm target: {shape_mismatches}")
++    require(
++        not unexpected_source_unused,
++        f"Unexpected unused BatchNorm-checkpoint key(s) beyond running buffers: {unexpected_source_unused}",
++    )
++
++    load_result = model.load_state_dict(filtered, strict=False)
++    require(
++        not load_result.missing_keys and not load_result.unexpected_keys,
++        f"load_state_dict reported missing={load_result.missing_keys}, "
++        f"unexpected={load_result.unexpected_keys} despite the pre-check finding none",
++    )
++
++    loss_fn = build_loss("cross_entropy", ignore_index=-1).to(device)
++    model.eval()
++    with torch.inference_mode():
++        output = model(batch)
++        loss_dict = loss_fn(output, batch)
++    logits = output["logits"]
++    require(bool(torch.isfinite(logits).all()), "GroupNorm transfer-initialized model produced non-finite logits")
++    require(bool(torch.isfinite(loss_dict["loss"])), f"Loss is not finite: {loss_dict['loss']}")
++
++    summary = {
++        "source_checkpoint": str(source_path),
++        "source_keys": len(source_state),
++        "target_keys": len(target_state),
++        "loaded_keys": len(filtered),
++        "excluded_batchnorm_buffer_keys": len(expected_bn_buffers),
++        "target_missing_keys": target_missing,
++        "shape_mismatches": shape_mismatches,
++        "unexpected_source_unused_keys": unexpected_source_unused,
++        "norm_groups": int(args.norm_groups),
++        "feature_dim": dataset.num_feature_channels,
++        "logits_shape": tuple(logits.shape),
++        "loss": float(loss_dict["loss"].item()),
++    }
++    output_path.parent.mkdir(parents=True, exist_ok=True)
++    torch.save(
++        {
++            "model": model.state_dict(),
++            "config": {**source_config, **model.get_config()},
++            "transfer": summary,
++        },
++        output_path,
++    )
++    with report_path.open("w", encoding="utf-8") as f:
++        json.dump(summary, f, indent=2, ensure_ascii=False)
++
++    print("Stage5 BatchNorm -> GroupNorm transfer check passed.")
++    print(f"source checkpoint: {source_path}")
++    print(f"source keys: {len(source_state)} / target keys: {len(target_state)}")
++    print(f"loaded keys: {len(filtered)} (excluded BN buffer keys: {len(expected_bn_buffers)})")
++    print(f"loss: {float(loss_dict['loss'].item()):.6f}")
++    print(f"output checkpoint: {output_path}")
++    print(f"report: {report_path}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage5/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh b/Stage5/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..13686a431afd1f1feb5d0c21a8a660728c9d9bcd
+--- /dev/null
++++ b/Stage5/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh
+@@ -0,0 +1,73 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++# ------------------------------------------------------------
++# S5-11 Step D5: transfer the existing Stage5 BatchNorm S3DIS partial-init
++# checkpoint's trainable parameters into a freshly constructed GroupNorm
++# PointNeXt-S model (norm affine weight/bias included; BatchNorm running
++# buffers excluded since GroupNorm has none). Fails fast on any other
++# missing/unexpected/shape-mismatched key.
++#
++# Synthetic self-test (CPU only, no CUDA/checkpoint required):
++#   SELF_TEST=1 bash checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh
++#
++# Full transfer (requires CUDA + the existing BatchNorm partial-init checkpoint):
++#   bash checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh
++# ------------------------------------------------------------
++
++SCRIPT_DIR="/mnt/data/3d_projects/models/Stage5"
++cd "${SCRIPT_DIR}"
++
++PYTHON="/home/kodaira/anaconda3/envs/dualtrack311/bin/python"
++
++if [[ -z "${CONDA_PREFIX:-}" ]]; then
++  CONDA_PREFIX="$(dirname "$(dirname "${PYTHON}")")"
++fi
++
++export CUDA_HOME="${CONDA_PREFIX}"
++export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-12.0}"
++
++TORCH_LIB="$("${PYTHON}" - <<'PY'
++import torch
++from pathlib import Path
++print(Path(torch.__file__).resolve().parent / "lib")
++PY
++)"
++export LD_LIBRARY_PATH="${TORCH_LIB}:${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
++export PYTHONPATH="${SCRIPT_DIR}/external/PointNeXt:${SCRIPT_DIR}/external/PointNeXt/openpoints:${PYTHONPATH:-}"
++
++SELF_TEST="${SELF_TEST:-0}"
++
++if [[ "${SELF_TEST}" == "1" ]]; then
++  echo "Stage5 BatchNorm -> GroupNorm transfer self-test"
++  "${PYTHON}" "${SCRIPT_DIR}/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.py" --self_test
++  exit 0
++fi
++
++SOURCE_CHECKPOINT="${SOURCE_CHECKPOINT:-${SCRIPT_DIR}/work_dirs/_s3dis_to_stage5_pointnext_s_transfer/stage5_pointnext_s_s3dis_partial_init.pt}"
++OUTPUT_CHECKPOINT="${OUTPUT_CHECKPOINT:-${SCRIPT_DIR}/work_dirs/_s3dis_to_stage5_pointnext_s_transfer/stage5_pointnext_s_s3dis_partial_init_groupnorm.pt}"
++NORM_GROUPS="${NORM_GROUPS:-8}"
++DEVICE="${DEVICE:-cuda}"
++
++if [[ ! -f "${SOURCE_CHECKPOINT}" ]]; then
++  echo "Source BatchNorm checkpoint not found: ${SOURCE_CHECKPOINT}" >&2
++  echo "Run checks/transfer/check_s3dis_to_stage5_pointnext_s_transfer.sh --save_checkpoint first." >&2
++  exit 1
++fi
++
++echo "Stage5 BatchNorm -> GroupNorm transfer check"
++echo "  python             : ${PYTHON}"
++echo "  source checkpoint  : ${SOURCE_CHECKPOINT}"
++echo "  output checkpoint  : ${OUTPUT_CHECKPOINT}"
++echo "  norm_groups        : ${NORM_GROUPS}"
++echo "  device             : ${DEVICE}"
++
++"${PYTHON}" "${SCRIPT_DIR}/checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.py" \
++  --source_checkpoint "${SOURCE_CHECKPOINT}" \
++  --output_checkpoint "${OUTPUT_CHECKPOINT}" \
++  --norm_groups "${NORM_GROUPS}" \
++  --device "${DEVICE}"
++
++echo "Done."
++echo "  output checkpoint: ${OUTPUT_CHECKPOINT}"
++echo "  report           : ${OUTPUT_CHECKPOINT%.pt}.transfer_report.json"
+diff --git a/Stage5/evaluate_stage5.py b/Stage5/evaluate_stage5.py
+index 6ba308fa89a439b51ee77d9eefcc10f3cd6b631f..8edf749819d7689374b767f6da2d94fac3d9f598
+--- a/Stage5/evaluate_stage5.py
++++ b/Stage5/evaluate_stage5.py
+@@ -197,6 +197,8 @@
+                 "pointnext_sa_use_res": bool(
+                     config.get("pointnext_sa_use_res", config.get("sa_use_res", True))
+                 ),
++                "pointnext_norm": str(config.get("pointnext_norm", "batchnorm")),
++                "pointnext_norm_groups": int(config.get("pointnext_norm_groups", 8)),
+             }
+         )
+ 
+diff --git a/Stage5/infer_stage5.py b/Stage5/infer_stage5.py
+index 068328543473ea324b59ac317015ce9a389e8ee7..6fdfb75b549bab4b4d7b2f0fa95fa468c902ad74
+--- a/Stage5/infer_stage5.py
++++ b/Stage5/infer_stage5.py
+@@ -17,6 +17,7 @@
+ 
+ from stage5.models import build_stage5_model
+ from stage5.models.model_factory import _extract_state_dict
++from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
+ from stage5.utils.feature_normalization import (
+     normalize_frame_order,
+     normalize_pixel_xy,
+@@ -110,6 +111,8 @@
+                 "pointnext_sa_use_res": bool(
+                     value("pointnext_sa_use_res", config.get("sa_use_res", True))
+                 ),
++                "pointnext_norm": str(value("pointnext_norm", "batchnorm")),
++                "pointnext_norm_groups": int(value("pointnext_norm_groups", 8)),
+             }
+         )
+     return kwargs
+@@ -468,6 +471,8 @@
+     parser.add_argument("--pointnext_sa_layers", type=int, default=None)
+     parser.add_argument("--pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_true", default=None)
+     parser.add_argument("--no_pointnext_sa_use_res", dest="pointnext_sa_use_res", action="store_false")
++    parser.add_argument("--pointnext_norm", choices=sorted(SUPPORTED_POINTNEXT_NORMS), default=None)
++    parser.add_argument("--pointnext_norm_groups", type=int, default=None)
+     parser.add_argument("--window_size_frames", type=int, default=None)
+     parser.add_argument("--window_stride_frames", type=int, default=None)
+     parser.add_argument("--include_tail_window", dest="include_tail_window", action="store_true", default=None)
+diff --git a/Stage5/stage5/models/norm_layers.py b/Stage5/stage5/models/norm_layers.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a87b68c5d5cc0705121880fb6034fe07b12998de
+--- /dev/null
++++ b/Stage5/stage5/models/norm_layers.py
+@@ -0,0 +1,51 @@
++from __future__ import annotations
++
++from typing import Any
++
++from torch import nn
++
++SUPPORTED_POINTNEXT_NORMS: tuple[str, ...] = ("batchnorm", "groupnorm")
++BN_BUFFER_SUFFIXES: tuple[str, ...] = (".running_mean", ".running_var", ".num_batches_tracked")
++
++
++class Stage5GroupNorm(nn.GroupNorm):
++    """GroupNorm adapter for OpenPoints PointNeXt-S (S5-11).
++
++    Subclassing nn.GroupNorm (rather than wrapping it) keeps `.weight`/`.bias`
++    at the same dotted module path that BatchNorm occupied, so a BatchNorm
++    checkpoint's norm affine parameters can be transferred by plain key match
++    (see checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.py).
++    forward() is inherited unchanged and already supports both [B, C, N] and
++    [B, C, *, *] inputs since nn.GroupNorm normalizes over any trailing dims.
++    """
++
++    def __init__(
++        self,
++        num_channels: int,
++        num_groups: int = 8,
++        eps: float = 1e-5,
++        affine: bool = True,
++        **kwargs: Any,
++    ) -> None:
++        if kwargs:
++            raise ValueError(f"Stage5GroupNorm received unsupported argument(s): {sorted(kwargs)}")
++        if num_channels % num_groups != 0:
++            raise ValueError(
++                f"Stage5GroupNorm: num_channels={num_channels} is not divisible by "
++                f"num_groups={num_groups}. Group count is never silently adjusted."
++            )
++        super().__init__(num_groups=num_groups, num_channels=num_channels, eps=eps, affine=affine)
++
++
++def resolve_pointnext_norm_args(norm: str, norm_groups: int) -> dict[str, Any]:
++    """Build the OpenPoints `norm_args` dict for a Stage5 PointNeXt-S normalization choice."""
++    key = str(norm).lower()
++    if key == "batchnorm":
++        return {"norm": "bn"}
++    if key == "groupnorm":
++        if int(norm_groups) <= 0:
++            raise ValueError(f"pointnext_norm_groups must be positive, got {norm_groups}")
++        return {"norm": Stage5GroupNorm, "num_groups": int(norm_groups)}
++    raise ValueError(
++        f"Unsupported pointnext_norm={norm!r}. Supported values: {SUPPORTED_POINTNEXT_NORMS}"
++    )
+diff --git a/Stage5/stage5/models/pointnext_decoder_patch.py b/Stage5/stage5/models/pointnext_decoder_patch.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d6309923e31f80c77d8a9fa11f0d8bae105d1c1b
+--- /dev/null
++++ b/Stage5/stage5/models/pointnext_decoder_patch.py
+@@ -0,0 +1,64 @@
++from __future__ import annotations
++
++from typing import Any
++
++
++def ensure_stage5_pointnext_decoder_registered() -> str:
++    """Register Stage5PointNextDecoder with OpenPoints' MODELS registry (idempotent).
++
++    The official OpenPoints `PointNextDecoder.__init__` accepts `**kwargs` but never
++    reads `norm_args`/`act_args`, and its `_make_dec()` always builds
++    `FeaturePropogation` without passing them through -- so `FeaturePropogation`'s own
++    hardcoded `{'norm': 'bn1d'}` default is used unconditionally, regardless of what
++    Stage5's `decoder_args` configures (discovered via a failing S5-11 GroupNorm
++    structure check: 8 decoder BatchNorm modules remained after requesting
++    `pointnext_norm=groupnorm`). This subclass only overrides `_make_dec()` to
++    forward the configured `norm_args`/`act_args` into `FeaturePropogation`, without
++    editing `external/PointNeXt`. It is registered under a new name, so
++    `decoder_args={"NAME": "Stage5PointNextDecoder", ...}` resolves to it while the
++    original `"PointNextDecoder"` registration is left untouched.
++
++    Passing `norm_args={"norm": "bn"}` here reproduces `FeaturePropogation`'s
++    original hardcoded default exactly (`create_norm` appends the '1d' dimension
++    suffix internally), so switching `decoder_args["NAME"]` to this class does not
++    change the batchnorm-default module graph or its state_dict keys.
++
++    Returns the registered module name.
++    """
++    from openpoints.models.backbone.pointnext import FeaturePropogation, PointNextDecoder
++    from openpoints.models.build import MODELS
++    from torch import nn
++
++    name = "Stage5PointNextDecoder"
++    if MODELS.get(name) is not None:
++        return name
++
++    class Stage5PointNextDecoder(PointNextDecoder):
++        def __init__(
++            self,
++            encoder_channel_list: list[int],
++            decoder_layers: int = 2,
++            decoder_stages: int = 4,
++            **kwargs: Any,
++        ) -> None:
++            # Stored before super().__init__() (nn.Module.__init__ included), which
++            # internally calls the overridden _make_dec() below via polymorphic
++            # dispatch. Writing directly to __dict__ bypasses nn.Module.__setattr__,
++            # so this is safe even though nn.Module.__init__() has not run yet.
++            self.__dict__["norm_args"] = dict(kwargs.get("norm_args", {"norm": "bn1d"}))
++            self.__dict__["act_args"] = dict(kwargs.get("act_args", {"act": "relu"}))
++            super().__init__(
++                encoder_channel_list,
++                decoder_layers=decoder_layers,
++                decoder_stages=decoder_stages,
++                **kwargs,
++            )
++
++        def _make_dec(self, skip_channels: int, fp_channels: int) -> nn.Sequential:
++            mlp = [skip_channels + self.in_channels] + [fp_channels] * self.decoder_layers
++            layers = [FeaturePropogation(mlp, norm_args=self.norm_args, act_args=self.act_args)]
++            self.in_channels = fp_channels
++            return nn.Sequential(*layers)
++
++    MODELS.register_module(name=name, module=Stage5PointNextDecoder)
++    return name
+diff --git a/Stage5/stage5/models/pointnext_s_segmentor.py b/Stage5/stage5/models/pointnext_s_segmentor.py
+index ff979cfe54f5b8423e4ae7e31952249526409b9a..33fa88bc345653993f6363d2663c2d79eae069ae
+--- a/Stage5/stage5/models/pointnext_s_segmentor.py
++++ b/Stage5/stage5/models/pointnext_s_segmentor.py
+@@ -7,6 +7,8 @@
+ import torch
+ 
+ from .base_segmentor import BasePointSegmentor
++from .norm_layers import resolve_pointnext_norm_args
++from .pointnext_decoder_patch import ensure_stage5_pointnext_decoder_registered
+ 
+ 
+ class AttrDict(dict):
+@@ -54,7 +56,10 @@
+     nsample: int = 16,
+     sa_layers: int = 2,
+     sa_use_res: bool = True,
++    norm: str = "batchnorm",
++    norm_groups: int = 8,
+ ) -> AttrDict:
++    norm_args = resolve_pointnext_norm_args(norm, norm_groups)
+     return _attrdict(
+         {
+             "NAME": "BaseSeg",
+@@ -83,21 +88,23 @@
+                 "act_args": {
+                     "act": "relu",
+                 },
+-                "norm_args": {
+-                    "norm": "bn",
+-                },
++                "norm_args": dict(norm_args),
+             },
++            # NAME="Stage5PointNextDecoder", not the official "PointNextDecoder":
++            # the official class accepts norm_args/act_args via **kwargs but never
++            # actually uses them (see pointnext_decoder_patch.py), so decoder norm
++            # would otherwise stay hardcoded to FeaturePropogation's own bn1d default
++            # regardless of what is configured here.
+             "decoder_args": {
+-                "NAME": "PointNextDecoder",
++                "NAME": "Stage5PointNextDecoder",
++                "norm_args": dict(norm_args),
+             },
+             "cls_args": {
+                 "NAME": "SegHead",
+                 "num_classes": int(num_classes),
+                 "in_channels": None,
+                 "dropout": float(dropout),
+-                "norm_args": {
+-                    "norm": "bn",
+-                },
++                "norm_args": dict(norm_args),
+             },
+         }
+     )
+@@ -118,6 +125,8 @@
+         nsample: int = 16,
+         sa_layers: int = 2,
+         sa_use_res: bool = True,
++        pointnext_norm: str = "batchnorm",
++        pointnext_norm_groups: int = 8,
+     ) -> None:
+         super().__init__(num_classes=num_classes, feature_dim=feature_dim)
+         self.width = int(width)
+@@ -127,6 +136,8 @@
+         self.nsample = int(nsample)
+         self.sa_layers = int(sa_layers)
+         self.sa_use_res = bool(sa_use_res)
++        self.pointnext_norm = str(pointnext_norm)
++        self.pointnext_norm_groups = int(pointnext_norm_groups)
+ 
+         _ensure_openpoints_importable()
+         try:
+@@ -136,6 +147,7 @@
+                 "Failed to import OpenPoints. Ensure PointNeXt/openpoints dependencies "
+                 "are installed in the active environment."
+             ) from exc
++        ensure_stage5_pointnext_decoder_registered()
+ 
+         cfg = build_pointnext_s_config(
+             num_classes=self.num_classes,
+@@ -147,6 +159,8 @@
+             nsample=self.nsample,
+             sa_layers=self.sa_layers,
+             sa_use_res=self.sa_use_res,
++            norm=self.pointnext_norm,
++            norm_groups=self.pointnext_norm_groups,
+         )
+         self.pointnext = build_model_from_cfg(cfg)
+ 
+@@ -201,6 +215,8 @@
+                 "nsample": self.nsample,
+                 "sa_layers": self.sa_layers,
+                 "sa_use_res": self.sa_use_res,
++                "pointnext_norm": self.pointnext_norm,
++                "pointnext_norm_groups": self.pointnext_norm_groups,
+             }
+         )
+         return config
+@@ -219,6 +235,8 @@
+     nsample = int(kwargs.pop("nsample", kwargs.pop("pointnext_nsample", 16)))
+     sa_layers = int(kwargs.pop("sa_layers", kwargs.pop("pointnext_sa_layers", 2)))
+     sa_use_res = bool(kwargs.pop("sa_use_res", kwargs.pop("pointnext_sa_use_res", True)))
++    pointnext_norm = str(kwargs.pop("norm", kwargs.pop("pointnext_norm", "batchnorm")))
++    pointnext_norm_groups = int(kwargs.pop("norm_groups", kwargs.pop("pointnext_norm_groups", 8)))
+ 
+     # Accepted for compatibility with train_stage5.py's shared model kwargs.
+     kwargs.pop("depth", None)
+@@ -238,4 +256,6 @@
+         nsample=nsample,
+         sa_layers=sa_layers,
+         sa_use_res=sa_use_res,
++        pointnext_norm=pointnext_norm,
++        pointnext_norm_groups=pointnext_norm_groups,
+     )
+diff --git a/Stage5/train_stage5.py b/Stage5/train_stage5.py
+index c20a4b92ddee48a64b1857ec18270256c2195218..108796923cd3f269e2fd9e93c787e1553f681f4b
+--- a/Stage5/train_stage5.py
++++ b/Stage5/train_stage5.py
+@@ -20,6 +20,7 @@
+ 
+ from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
+ from stage5.models import build_stage5_model
++from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
+ from stage5.training import SegmentationMetricAccumulator, build_loss
+ 
+ 
+@@ -703,6 +704,8 @@
+                 "pointnext_nsample": args.pointnext_nsample,
+                 "pointnext_sa_layers": args.pointnext_sa_layers,
+                 "pointnext_sa_use_res": args.pointnext_sa_use_res,
++                "pointnext_norm": args.pointnext_norm,
++                "pointnext_norm_groups": args.pointnext_norm_groups,
+             }
+         )
+     return kwargs
+@@ -735,6 +738,8 @@
+         raise ValueError("--pointnext_nsample must be positive")
+     if args.pointnext_sa_layers <= 0:
+         raise ValueError("--pointnext_sa_layers must be positive")
++    if args.pointnext_norm_groups <= 0:
++        raise ValueError("--pointnext_norm_groups must be positive")
+     if args.save_every < 0:
+         raise ValueError("--save_every must be non-negative")
+     if (
+@@ -1007,6 +1012,13 @@
+         help="Disable residual set-abstraction blocks in the PointNeXt-S wrapper",
+     )
+     parser.set_defaults(pointnext_sa_use_res=True)
++    parser.add_argument(
++        "--pointnext_norm",
++        choices=sorted(SUPPORTED_POINTNEXT_NORMS),
++        default="batchnorm",
++        help="Normalization used throughout the PointNeXt-S encoder/decoder/head (S5-11)",
++    )
++    parser.add_argument("--pointnext_norm_groups", type=int, default=8)
+ 
+     parser.add_argument("--features", default="intensity,confidence")
+     parser.add_argument("--num_points", type=int, default=8192)
+diff --git a/Stage5/train_stage5.sh b/Stage5/train_stage5.sh
+index a96251fd77545eb6d87f8c7a065746e3f2d654da..85e697649627d99c5caaa5978b66d79b9ca1c856
+--- a/Stage5/train_stage5.sh
++++ b/Stage5/train_stage5.sh
+@@ -115,6 +115,12 @@
+ POINTNEXT_SA_LAYERS=2
+ POINTNEXT_SA_USE_RES=1
+ 
++# Normalization used throughout the PointNeXt-S encoder/decoder/head (S5-11).
++# "batchnorm" is the historical default. For a GroupNorm pilot, set this to
++# "groupnorm" and point INIT_CHECKPOINT at the GroupNorm-transferred init
++# checkpoint produced by checks/transfer/check_stage5_batchnorm_to_groupnorm_transfer.sh.
++POINTNEXT_NORM="${POINTNEXT_NORM:-batchnorm}"
++POINTNEXT_NORM_GROUPS="${POINTNEXT_NORM_GROUPS:-8}"
+ 
+ # Sampling knobs.
+ # In WINDOW_MODE="overlap", each frame-order window is one training sample and
+@@ -394,7 +400,7 @@
+   echo "  auto cls weight: epsilon=${AUTO_CLASS_WEIGHT_EPSILON}, normalize=${NORMALIZE_AUTO_CLASS_WEIGHT}"
+ fi
+ if [[ "${MODEL_NAME}" == "pointnext_s" ]]; then
+-  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}"
++  echo "  pointnext      : radius=${POINTNEXT_RADIUS}, nsample=${POINTNEXT_NSAMPLE}, sa_layers=${POINTNEXT_SA_LAYERS}, sa_use_res=${POINTNEXT_SA_USE_RES}, norm=${POINTNEXT_NORM}, norm_groups=${POINTNEXT_NORM_GROUPS}"
+ fi
+ 
+ cmd=(
+@@ -417,6 +423,8 @@
+   --pointnext_radius "${POINTNEXT_RADIUS}"
+   --pointnext_nsample "${POINTNEXT_NSAMPLE}"
+   --pointnext_sa_layers "${POINTNEXT_SA_LAYERS}"
++  --pointnext_norm "${POINTNEXT_NORM}"
++  --pointnext_norm_groups "${POINTNEXT_NORM_GROUPS}"
+   --num_workers "${NUM_WORKERS}"
+   --device "${DEVICE}"
+   --seed "${SEED}"

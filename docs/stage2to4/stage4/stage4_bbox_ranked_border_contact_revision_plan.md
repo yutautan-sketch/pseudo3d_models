@@ -9,7 +9,7 @@ CVAT snapshot対象frameの最終positive authorityは、次の新契約を優�
 border-contact変更はCVAT maskを上書きせず、snapshot非対象frameまたはCVAT編集開始前のseedに
 だけ影響する。
 
-- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
 
 ## 1. 背景
 
@@ -133,7 +133,7 @@ teacher/run tokenを使用する。
 境界接触ロジックを変更する前に、次の計画に従ってteacher v4の保存済みpoint labelを直接
 可視化する。既存automatic contour表示だけでH5再作成を判断しない。
 
-- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
+- `docs/stage2to4/stage4/stage4_v4_point_label_visualization_plan.md`
 
 ### 6.1 Synthetic
 

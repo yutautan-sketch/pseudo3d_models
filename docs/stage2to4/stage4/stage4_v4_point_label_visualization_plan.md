@@ -64,7 +64,7 @@ frame単位provenanceで照合し、target/contextを問わずCVAT maskを描画
 
 最終positiveも同じCVAT mask内だけから生成する。詳細は次を正本とする。
 
-- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
 
 ## 4. 描画契約
 

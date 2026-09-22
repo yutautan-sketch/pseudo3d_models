@@ -1,0 +1,5 @@
+split,granularity,f1_delta_recalibrated_minus_original,iou_delta_recalibrated_minus_original,recall_delta_recalibrated_minus_original,false_positive_count_delta_recalibrated_minus_original,tp_zero_video_count_delta_recalibrated_minus_original
+train_sanity,window,-0.04374809664521997,-0.023756881555070383,-0.0713076836285682,-5243,
+validation,window,-0.0005126913590615262,-0.00026835650175579054,-0.010393443896376281,-52612,
+train_sanity,aggregated,-0.00492642968533967,-0.002533535291127341,-0.011172611726117259,-3271,1
+validation,aggregated,0.004631792628166868,0.00240254437959201,0.0018430260183438657,-12411,0

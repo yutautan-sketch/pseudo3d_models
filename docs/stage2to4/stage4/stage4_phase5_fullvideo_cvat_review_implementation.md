@@ -20,12 +20,12 @@ CVAT snapshot maskを最終positiveの唯一の根拠とする。
 という記述は、当時のv4実装履歴としてのみ残し、今後の実装仕様としては無効とする。新契約と
 修正手順は次を正本とする。
 
-- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
 
 CVAT snapshot作成後に誤BBoxのXMLを削除したframeを、保存済みH5/CVATより上位の明示的な
 annotation tombstoneとして反映する後続方針は次を参照する。
 
-- `docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
+- `docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
 
 ## 1. 目的
 
@@ -772,11 +772,11 @@ exit code  : 0
 自動輪郭で確認されたBBox境界接触globalの過採用は、full-video CVAT運用とは分離して次へ記録する。
 既存CVAT修正済みmaskを再編集せず再利用することも同文書の必須契約とする。
 
-- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
 
 teacher v4の最終受入に使うpoint-label直接可視化は、automatic contour表示と分離して次へ記録する。
 
-- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
+- `docs/stage2to4/stage4/stage4_v4_point_label_visualization_plan.md`
 
 ### 15.2 CVAT適用範囲の不整合と受入保留
 
@@ -797,7 +797,7 @@ manual applied         : false
 修正版ではsnapshot対象動画の全Task frameでCVAT maskを唯一のpositive authorityとし、既存automatic
 positiveを利用しない。CVAT Taskと返却snapshotは再編集せず、新しいversioned runへ再適用する。
 
-- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
 
 ## 16. 後続補正と最終学習データ（2026-09-07）
 
@@ -819,4 +819,4 @@ v6はcrop不良として除外した`20250626_090758_8000`を含まず、annotat
 
 詳細な無効化契約、構築件数、可視化および最終受入結果は次を参照する。
 
-- `docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
+- `docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`

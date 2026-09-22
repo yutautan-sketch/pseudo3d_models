@@ -11,7 +11,7 @@
 - `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
 - `docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
 - `docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md`
-- `.tmp/stage5_s5_12_stage4_crop_quality_investigation_request.md`
+- `docs/stage2to4/stage4/stage5_s5_12_stage4_crop_quality_investigation_request.md`
 
 ## 1. 背景
 

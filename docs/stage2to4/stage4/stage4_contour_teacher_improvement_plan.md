@@ -28,7 +28,7 @@ CVATとのannotation交換形式は、次の仕様に固定する。
 - CVAT format: `Segmentation Mask 1.1`
 - class: `background=0`、`femur=1`
 - CVAT import時の`Convert masks to polygons`: OFF
-- 詳細仕様: `docs/stage4/cvat_segmentation_mask_1_1_import_spec.md`
+- 詳細仕様: `docs/stage2to4/stage4/cvat_segmentation_mask_1_1_import_spec.md`
 
 ## 2. 現在の固定条件
 
@@ -2534,7 +2534,7 @@ selected-frameだけを格納したTask 5では、crop境界に達するまで�
 
 実装手順、data contract、出力構成、crop metric、CVAT運用、再importの詳細は次へ分離する。
 
-- `docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
+- `docs/stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
 
 2026-08-28時点でStep 1、Step 2を実装し、合成検査のexit code 0を確認済み。実データを
 変更しないpreflight（Step 3）も60動画・3,048 frame・129 targetで成功済み。full-video
@@ -2595,19 +2595,19 @@ H5、XML、可視化処理へ変更を加えない。
 globalが採用される例が確認された。原因調査、境界接触による最小変更案、既存CVAT maskの
 再利用契約は次の独立文書へ分離する。現時点では未実装である。
 
-- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
 
 H5再作成の要否を判断する前に、保存済みteacher v4の3値point labelとprovenanceを直接表示する。
 既存automatic contour可視化とは分離し、次の計画に従う。
 
-- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
+- `docs/stage2to4/stage4/stage4_v4_point_label_visualization_plan.md`
 
 その比較により、full-video CVAT Taskのcontext frameでCVAT mask外の旧automatic positiveが
 残ることを確認した。旧Phase 5-Dの「112 target BBoxだけへ部分適用する」契約は廃止し、
 snapshot対象動画の全Task frameでCVAT maskをpositiveの唯一の根拠にする。修正仕様と実装手順は
 次を正本とする。
 
-- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
+- `docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
 
 ### Phase 6: Stage 5比較
 
@@ -2652,7 +2652,7 @@ pseudo3d/batch/annotation/batch_annotate_pseudo3d_point_cloud.py
 pseudo3d/batch/export/batch_export_annotation_mask_visualization.py
 pseudo3d/batch/export/batch_export_annotation_mask_visualization.sh
 pseudo3d/pipelines/build_stage4_bbox_ranked_annotations.sh
-docs/stage4/stage4_sampling_investigation_progress.md
+docs/stage2to4/stage4/stage4_sampling_investigation_progress.md
 ../../../Stage5/train_stage5.sh
 ```
 

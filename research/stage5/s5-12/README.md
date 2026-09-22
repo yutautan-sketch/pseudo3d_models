@@ -1,0 +1,23 @@
+# s5-12: Label policy preflight・Run A/B比較
+
+[調査一覧](../README.md)
+
+## 対応する文書
+
+- [Stage 5 S5-12: GroupNorm固定Label Policy Ablation 実装引き継ぎプロンプト](../../../docs/stage5/s5-12/stage5_s5_12_label_policy_implementation_handoff_prompt.md)
+- [Stage 5 S5-12 完了報告: GroupNorm固定Label policy ablation](../../../docs/stage5/s5-12/stage5_s5_12_report_to_policy_chat.md)
+
+## 保存成果物
+
+元の実験名・日付・パッケージ階層を保持しています。圧縮版と展開版は重複排除せず保管しています。
+
+- [label_policy_ablation_RunA_share_metrics/label_policy_ablation_checkpoint_summary.csv](label_policy_ablation_RunA_share_metrics/label_policy_ablation_checkpoint_summary.csv)
+- [label_policy_ablation_RunA_share_metrics/label_policy_ablation_region_stats.csv](label_policy_ablation_RunA_share_metrics/label_policy_ablation_region_stats.csv)
+- [label_policy_ablation_RunA_share_metrics/label_policy_ablation_summary.json](label_policy_ablation_RunA_share_metrics/label_policy_ablation_summary.json)
+- [label_policy_ablation_RunA_share_metrics/label_policy_ablation_video_metrics.csv](label_policy_ablation_RunA_share_metrics/label_policy_ablation_video_metrics.csv)
+- [label_policy_ablation_RunB_share_metrics/label_policy_ablation_checkpoint_summary.csv](label_policy_ablation_RunB_share_metrics/label_policy_ablation_checkpoint_summary.csv)
+- [label_policy_ablation_RunB_share_metrics/label_policy_ablation_region_stats.csv](label_policy_ablation_RunB_share_metrics/label_policy_ablation_region_stats.csv)
+- [label_policy_ablation_RunB_share_metrics/label_policy_ablation_summary.json](label_policy_ablation_RunB_share_metrics/label_policy_ablation_summary.json)
+- [label_policy_ablation_RunB_share_metrics/label_policy_ablation_video_metrics.csv](label_policy_ablation_RunB_share_metrics/label_policy_ablation_video_metrics.csv)
+- [label_policy_bbox_preflight_share_metrics/label_policy_bbox_preflight_per_file.csv](label_policy_bbox_preflight_share_metrics/label_policy_bbox_preflight_per_file.csv)
+- [label_policy_bbox_preflight_share_metrics/label_policy_bbox_preflight_summary.json](label_policy_bbox_preflight_share_metrics/label_policy_bbox_preflight_summary.json)

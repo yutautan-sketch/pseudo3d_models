@@ -1,0 +1,4341 @@
+diff --git a/docs/stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md b/docs/stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..a344f8cfe9dde86cd8c45ac43e9e2191006417f2
+--- /dev/null
++++ b/docs/stage2to4/stage4/stage4_bbox_ranked_border_contact_revision_plan.md
+@@ -0,0 +1,179 @@
++# Stage 4 BBox-ranked輪郭の境界接触見直し計画
++
++作成日: 2026-09-05  
++最終更新日: 2026-09-05  
++編集対象ディレクトリ: `/workspace/Stage2to4`  
++状態: 調査・方針固定中（未実装）
++
++CVAT snapshot対象frameの最終positive authorityは、次の新契約を優先する。自動輪郭の
++border-contact変更はCVAT maskを上書きせず、snapshot非対象frameまたはCVAT編集開始前のseedに
++だけ影響する。
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++
++## 1. 背景
++
++teacher v4 build後の自動輪郭可視化を目視したところ、local percentile候補が大腿骨断面に
++適合して見える一方、それを内包してBBoxの辺まで膨張したglobal候補が採用される例が複数
++確認された。BBox制約から見て過度な輪郭であり、自動輪郭選択を小規模に見直す。
++
++本件は自動輪郭処理だけを対象とする。既存のCVAT修正済みmask、Task snapshot、元画像、
++XML BBox、foreground point cloudは変更せず、CVATでの再編集も要求しない。
++
++## 2. 現行ロジックの調査結果
++
++`bbox_ranked_global_local`はglobal/localの各二値maskをBBoxで切り出し、外部連結成分を
++独立候補として抽出する。現在の適格条件と順位は次のとおりである。
++
++```text
++min_area_ratio          : 0.02
++sufficient_area_ratio   : 0.10
++max_center_distance_norm: 0.50
++center_weight           : 0.75
++area_weight             : 0.25
++```
++
++面積スコアは面積比0.10以上で上限に達し、過大な候補を減点しない。BBox境界接触も基本選択の
++適格条件・scoreに含まれない。同程度のscoreでは中心距離、面積score、最後に大きい
++`filled_area`が優先される。このため、BBoxでclipされて中心が安定した過抽出global候補が、
++内側のlocal候補より有利になり得る。
++
++Phase 3にはすでに`border_contact_ratio`がある。
++
++```text
++border_contact_ratio = BBox辺上の輪郭境界画素数 / 輪郭境界画素総数
++```
++
++既存の129 BBox screeningでは、baselineの`border_contact_high`が56件、baseline
++border-contact分布のp75/p95が1.0だった。一方、選択proposalはp75=0.0275、p95=0.2065、
++max=0.3103であり、Phase 3の適格上限0.35を初期値として再利用する根拠がある。
++
++## 3. 最小変更案
++
++### 3.1 第1段階: border-contact上限だけを追加
++
++global/localの両方へ、source非依存の適格条件を1つ追加する。
++
++```text
++max_border_contact_ratio: 0.35
++```
++
++- `border_contact_ratio > 0.35`の候補を不適格にする
++- globalだけが不適格でlocalが適格ならlocalを採用する
++- localにも同じ条件を適用し、localを無条件には優先しない
++- 両方が不適格なら誤ったpositiveを作らず、輪郭なしとしてBBox内ignoreを維持する
++- 1画素でも接触したら棄却する規則にはしない
++
++第1段階ではcenter/area weight、`sufficient_area_ratio`、tie処理を変更しない。これにより
++観察された境界膨張だけの効果を分離する。
++
++### 3.2 第2段階: 残存時だけ面積上限を追加
++
++第1段階の差分監査後も、BBox辺との接触率が低い過抽出が残る場合に限り次を検討する。
++
++```text
++max_area_ratio: 0.65
++```
++
++これもPhase 3で使用済みの値である。最初から同時に変更せず、必要性が確認された場合だけ
++2つ目の条件として追加する。
++
++### 3.3 今回行わない変更
++
++- global/local maskのORまたはAND
++- `local`というsource名による固定優先
++- center/area weightの再探索
++- local percentile、global threshold、foreground samplingの変更
++- XML BBox、crop、point cloudの変更
++- CVAT修正済みmaskの編集・再作成
++
++## 4. CVAT修正済みmaskの再利用契約
++
++自動輪郭を再生成しても、video、frame stem、frame order/index、画像shape、local座標、
++`pixel_xy`、BBox geometryが同じなら、既存CVAT maskは座標変換なしで再利用できる。
++
++ただし現行final importerはreview packageに記録されたsource v3 H5のSHA-256完全一致を要求する。
++自動輪郭変更後のH5はSHAが変わるため、この検査を単純に無効化してはならない。実装時は次の
++明示的なrebase手順を設ける。
++
++1. border guard適用済みの自動teacherを新しいrunへ生成する
++2. 旧/new間でframe stem・順序、画像shape、point cloud配列、BBox geometryを完全照合する
++3. 照合に成功した動画だけ、既存CVAT snapshot maskを新しい自動teacherへ最後に適用する
++4. snapshot対象動画の全Task frameではCVAT maskだけからpositiveを再構築する
++5. 旧v2/v3/v4 H5、CVAT ZIP、Task backup、snapshotを上書きしない
++6. 新しい自動config fingerprint、rebase元/先H5 SHA、CVAT ZIP SHAをprovenanceへ保存する
++
++これは既存CVAT annotationの内容を変更する処理ではなく、同一座標契約を検証したうえで
++新しいautomatic baselineへ再適用するための安全処理である。
++
++## 5. 実装時の変更候補
++
++主な自動輪郭側の対象:
++
++```text
++pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
++pseudo3d/analysis/audit_stage4_contour_teacher.py
++pseudo3d/analysis/configs/<new_bbox_ranked_teacher_config>.yaml
++pseudo3d/pipelines/<new_bbox_ranked_build_pipeline>.sh
++checks/stage4/check_stage4_bbox_ranked_teacher.py
++```
++
++CVAT再利用側は、現行の厳格なSHA検査を維持したまま、専用rebase検査または明示optionを追加する。
++
++```text
++pseudo3d/batch/annotation/batch_import_stage4_phase5_fullvideo_cvat.py
++checks/stage4/check_stage4_phase5_fullvideo_final_import.py
++```
++
++既存`stage4_bbox_ranked_teacher_v2.yaml`の意味やfingerprintは書き換えず、新しいconfig名と
++teacher/run tokenを使用する。
++
++## 6. 検証計画
++
++境界接触ロジックを変更する前に、次の計画に従ってteacher v4の保存済みpoint labelを直接
++可視化する。既存automatic contour表示だけでH5再作成を判断しない。
++
++- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
++
++### 6.1 Synthetic
++
++- 適切なlocalを、BBox辺まで膨張したglobalが内包する場合にlocalが採用される
++- わずかな境界接触は0.35以下として許容される
++- local側の過度な境界接触も同じ規則で棄却される
++- 両候補が不適格な場合はpositiveを捏造せずignoreを維持する
++- 既存のcentered-global、off-center-global、shared、ambiguous判定を壊さない
++- config validation、H5 metadata、再読込、決定性が一致する
++- CVAT rebaseで座標契約の一致を要求し、不一致と単純なSHA bypassを拒否する
++
++### 6.2 Real data差分監査
++
++181動画を対象に、少なくとも次を旧automatic teacherと比較する。
++
++```text
++global -> local
++global -> none
++local  -> none
++source unchanged
++positive point増減
++valid/invalid BBox増減
++border_contact_ratio分布
++area_ratio分布
++```
++
++最初に境界接触が明らかな目視例を確認し、その後全件集計を行う。第1段階で解消できない
++過抽出だけを抽出し、`max_area_ratio`追加の要否を判断する。
++
++### 6.3 受入条件
++
++- 目視対象の過抽出globalがlocalへ置換される、または安全に輪郭なしになる
++- 境界非接触の既存良好例を不必要に変更しない
++- foreground point cloudと3値label policyを維持する
++- 既存CVAT maskを再編集せず、同一pixelで再適用できる
++- reviewed BBoxの最終ラベルが現在のCVAT結果と一致する
++- 新runを作成し、既存artifactを上書きしない
++
++## 7. 現在の判断
++
++実装開始時は`max_border_contact_ratio=0.35`の1変更だけを採用候補とする。実データ差分で
++残存問題が確認された場合のみ、2つ目として`max_area_ratio=0.65`を検討する。現時点では
++調査・方針記録までとし、コード、config、H5、CVAT artifactは変更しない。
+diff --git a/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md b/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
+index 4ac24b048b5062fd874241a94d4b0b45193eaa0d..4712b4a3c80f286defc2eead0040a516afd495a2
+--- a/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
++++ b/docs/stage2to4/stage4/stage4_contour_teacher_improvement_plan.md
+@@ -1,7 +1,7 @@
+ # Stage 4 BBox-aware輪郭教師・positive判定 改修計画
+ 
+ 作成日: 2026-08-17  
+-最終更新日: 2026-08-17  
++最終更新日: 2026-09-05
+ 編集対象ディレクトリ: `/workspace/Stage2to4`（主要）、`/workspace/Stage5`（入力契約・事前検査のみ）
+ 
+ ## 1. 目的
+@@ -18,9 +18,10 @@
+ 
+ 人力修正には、ローカルホスト上で運用するCVAT Community Editionを使用する。
+ 画像、mask、manifestを外部SaaS、クラウドストレージ、外部AI/ML backendへ送信しない。
+-Stage 4パイプラインもCVAT APIやネットワークへ接続せず、ローカルimport用artifactの
+-生成までを担当する。CVATへのuploadと修正済みannotationのexportは、利用者が
+-ローカル環境で明示的に実行する。
++通常のStage 4教師生成パイプラインはCVAT APIへ接続せず、ローカルimport用artifactの
++生成までを担当する。Phase 5のTask作成だけは独立した明示実行スクリプトから
++`localhost`のCVAT APIへ接続し、`--apply`指定時に限ってuploadする。外部hostや
++cloud storageは使用しない。
+ 
+ CVATとのannotation交換形式は、次の仕様に固定する。
+ 
+@@ -657,13 +658,14 @@
+   --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
+   --annotated_root "${RUN_ROOT}/annotated" \
+   --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
+-  --output_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --output_root "${RUN_ROOT}/contour_teacher_audit_phase1_preflight" \
+   --expected_videos 182 \
+   --preflight_only \
+   --continue_on_error
+ ```
+ 
+-preflight通過後、`--preflight_only`を外して全監査を実行する。
++preflight通過後、`--preflight_only`を外し、正式な`contour_teacher_audit_phase1`へ全監査結果を
++生成する。preflight専用rootと分離するため`--overwrite`は不要である。
+ 
+ ```bash
+ cd /mnt/data/3d_projects/models/Stage2to4
+@@ -683,15 +685,970 @@
+ 
+ 同じoutput rootで再実行する場合に限り、内容を置換する明示的な`--overwrite`を付ける。
+ 
++#### Phase 1 Synthetic check結果（2026-08-19）
++
++`dualtrack311`環境で次の全項目が成功した。
++
++- shape、center、BBox border metric
++- candidate comparisonとteacher-selection isolation
++- audit category rankingの決定性
++- 複数BBox、非連続frame index、BBoxなしframeを含むend-to-end監査
++- 保存済みannotation H5と再計算teacherの一致
++- 2回の独立実行におけるCSVとoverlayの決定性
++- 入力pseudo3D H5、annotated H5、XMLの不変性
++- teacher configおよびmanifest validation failure
++
++結果は次のとおりである。
++
++```text
++videos_checked        : 1/1
++bbox_rows             : 2
++valid_contours        : 2
++invalid_contours      : 0
++failure_rows          : 0
++input_files_unchanged : true
++phase1_synthetic_exit_code=0
++```
++
++これによりPhase 1の実装基盤は確認済みとする。Phase 1全体の完了には、引き続き182件の
++preflight、全監査、category上位overlayの目視確認が必要である。
++
+ ### Phase 2: CVAT最小converterとgolden round trip
+ 
+ 2〜3画像のbinary maskを`Segmentation Mask 1.1`へ変換し、ZIP構造、labelmap、stem、
+ shape、indexを検証する。ローカルCVATへのimport/export round tripを行い、仕様を固定する。
+ 
++#### Phase 2の実装範囲
++
++Phase 2では、Stage 4全件のmanual-review package生成に先立ち、CVATとの最小data contractを
++独立したconverterで確定する。対象はflat directoryに置かれた2〜3画像と、同stemの
++single-class binary maskである。
++
++Phase 2に含める。
++
++- 元画像とbinary maskのstrict pairing
++- binary `0/255`からindexed `0/1`への変換
++- `Segmentation Mask 1.1` ZIPの決定的生成
++- 生成ZIPを再度開くself validation
++- CVATからexportした同形式ZIPのread-only validation
++- 2〜3画像のlocal CVAT golden round trip
++
++Phase 2には含めない。
++
++- Phase 1 audit結果からのmanual-review対象自動選択
++- H5からのreview画像・proposal mask抽出
++- 複数class、RGB mask、任意class ID
++- 複数instanceとBBox indexの対応付け
++- CVAT APIへの接続または自動upload
++- CVAT修正maskのH5 import
++- 元H5、元画像、元maskの変更
++
++これらはPhase 4のreview export/manual importで実装する。
++
++#### Phase 2実装ファイル
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++checks/stage4/check_stage4_cvat_segmentation_mask_export.py
++```
++
++converter内部のZIP validation関数は、Phase 4のbatch exporterおよびmanual importerから
++再利用できるpure/read-only APIとして設計する。
++
++#### Phase 2入力契約
++
++初期versionでは次の構成だけを受け付ける。
++
++```text
++images/
++├── image_00001.png
++├── image_00002.jpg
++└── image_00003.png
++
++masks/
++├── image_00001.png
++├── image_00002.png
++└── image_00003.png
++```
++
++- imageはflat directoryの`.png`、`.jpg`、`.jpeg`に限定する
++- maskはflat directoryの`.png`に限定する
++- image/maskは拡張子を除くstemで対応させる
++- stemはdirectory内で一意でなければならない
++- imageとmaskのstem集合は完全一致させる
++- maskは2-D、1-channel、`uint8`とする
++- mask pixelは`{0, 255}`の部分集合だけを許可する
++- `0=background`、`255=femur proposal`とする
++- imageとmaskのwidth/heightは完全一致させる
++- symlink、nested directory、未対応拡張子を拒否する
++- 自動rename、自動resize、補間、輪郭化を行わない
++
++all-background maskは形式上有効とする。golden sample全体では、変換確認のため少なくとも
++1枚にforeground pixelを含める。
++
++#### Phase 2 CLI案
++
++converterは少なくとも`convert`と`validate`の2 modeを提供する。
++
++```text
++convert:
++  --images_dir
++  --masks_dir
++  --output_zip
++  --label_name femur
++  --background_value 0
++  --foreground_value 255
++  --summary_json
++  --keep_unpacked_dir
++  --overwrite
++
++validate:
++  --input_zip
++  --images_dir
++  --summary_json
++```
++
++`convert`はZIP生成後に必ず同じvalidatorを実行し、validationが失敗した場合は最終ZIPを
++残さない。`validate`はCVATから再exportしたZIPをread-onlyで検査するために使用する。
++既存ZIPの置換は明示的な`--overwrite`がある場合だけ許可する。
++
++#### Phase 2変換処理
++
++stemをlexicographical sortし、各maskを次のように変換する。
++
++```text
++input mask : uint8 {0, 255}
++output mask: uint8 {0, 1}
++
++0   -> 0 (background)
++255 -> 1 (femur)
++```
++
++出力maskはgrayscale/indexed PNGとし、palette画像やRGB画像へ暗黙変換しない。
++
++`labelmap.txt`は次の内容に固定する。
++
++```text
++background:0,0,0::
++femur:255,0,0::
++```
++
++foreground label名を変更可能にする場合も、改行、区切り文字、空文字、重複、path文字を
++検査し、mask index `1`との対応を維持する。
++
++`ImageSets/Segmentation/default.txt`には、sort済みstemを拡張子なしで1行ずつ記録する。
++
++#### Phase 2 ZIP契約
++
++ZIP rootを次に固定する。
++
++```text
++annotations_segmentation_mask_1_1.zip
++├── labelmap.txt
++├── ImageSets/
++│   └── Segmentation/
++│       └── default.txt
++├── SegmentationClass/
++│   ├── image_00001.png
++│   ├── image_00002.png
++│   └── image_00003.png
++└── SegmentationObject/
++    ├── image_00001.png
++    ├── image_00002.png
++    └── image_00003.png
++```
++
++Phase 2はsingle foreground objectを前提とし、`SegmentationClass`と
++`SegmentationObject`へ同じ`0/1` maskを格納する。複数instance frameへの一般化は
++golden sampleでCVAT exportの挙動を確認した後、Phase 4で設計する。
++
++ZIPには元画像、summary、外側の親directory、絶対path、`..`を含むmemberを入れない。
++
++#### 決定的ZIP生成
++
++同一入力からbyte-identical ZIPを生成できるよう、次を固定する。
++
++- memberの順序
++- stemのsort順
++- text fileのUTF-8 encodingとLF改行
++- PNG encoding
++- ZIP timestamp
++- ZIP permission/external attributes
++- compression methodとcompression level
++
++最終ZIPは一時fileへ生成・検査してからatomicに配置し、途中失敗時に不完全なZIPを
++残さない。ZIP SHA-256をsummaryへ保存する。
++
++#### Phase 2 strict validation
++
++converter実行前に次を検査する。
++
++- image/maskのmissing、extra、duplicate stem
++- unsupported extension、nested file、symlink
++- image decode failure、mask decode failure
++- image/mask shape mismatch
++- maskのdimension、dtype、unique value
++- label名と出力先
++
++生成後またはCVAT export後のZIPについて次を検査する。
++
++- ZIP member pathにabsolute path、`..`、backslash、余分なrootがない
++- duplicate memberがない
++- `labelmap.txt`がroot直下に1個だけ存在する
++- `ImageSets/Segmentation/default.txt`が存在する
++- `SegmentationClass`と`SegmentationObject`に全stemのPNGが存在する
++- default stem、class stem、object stemの集合が完全一致する
++- default stemに拡張子、空行、重複がない
++- class/object PNGが2-D `uint8`である
++- unique indexが`{0, 1}`の部分集合である
++- class/object PNGのshapeが元画像と一致する
++- labelmapの0-based行indexとmask indexが一致する
++- 宣言外memberが存在しない
++
++validation結果は標準出力とZIP外のJSONへ保存する。
++
++```text
++images
++masks
++classes
++unique_indices
++size_mismatches
++missing_masks
++extra_masks
++zip_members
++zip_sha256
++status
++```
++
++#### Phase 2 Synthetic check
++
++`check_stage4_cvat_segmentation_mask_export.py`で次を確認する。
++
++- 3画像の正常変換
++- input `0/255`とoutput `0/1`のpixel単位一致
++- class/object maskのshape、dtype、unique index
++- labelmapとdefault.txtの内容・改行
++- ZIP root構造とmember集合
++- ZIPに元画像や余分なparent directoryが含まれない
++- 入力順やfile作成順に依存しない決定的出力
++- 同一入力から生成した2 ZIPがbyte-identical
++- all-background maskを保持できる
++- missing/extra/duplicate stemを拒否する
++- unsupported extension、nested file、symlinkを拒否する
++- shape mismatchを拒否し、自動resizeしない
++- RGB/non-uint8/未知pixel値maskを拒否する
++- invalid label名を拒否する
++- 既存outputを`--overwrite`なしで置換しない
++- validation失敗時に不完全な最終ZIPを残さない
++- validatorが危険path、duplicate member、未知member、未知indexを拒否する
++
++Synthetic checkは一時directoryだけを使用し、実画像をrepositoryへ追加しない。
++
++#### Phase 2 local CVAT golden round trip
++
++Synthetic check通過後、外部へ送信できない2〜3枚のlocal sampleを使って次を行う。
++
++1. globally uniqueなstemへ事前に固定した画像と0/255 maskを準備する
++2. converterで`Segmentation Mask 1.1` ZIPを生成する
++3. local CVATに`femur` labelを持つtest Taskを作成する
++4. Taskへ同じbasename/stemの画像を登録する
++5. 既存annotationがあれば先にexportしてbackupする
++6. `Segmentation Mask 1.1`、`Convert masks to polygons=OFF`でimportする
++7. 画像対応、向き、位置、label、mask境界を目視確認する
++8. 編集前に同形式でexportし、validatorでstem、shape、index、pixel領域を比較する
++9. Brush/Eraserで局所編集し、保存後に再exportできることを確認する
++10. 編集後ZIPもvalidatorで形式が維持されていることを確認する
++
++golden round tripでは次を記録する。
++
++- converter input/output SHA-256
++- CVAT version
++- Task label設定
++- import formatとpolygon変換OFF
++- import前backup path
++- no-edit exportのvalidation summary
++- edit後exportのvalidation summary
++- 目視確認結果
++
++CVAT Taskへのuploadとexportはユーザーがlocalhost上で手動実行する。converterやtestから
++CVAT API、外部network、cloud storageへ接続しない。
++
++#### Phase 2完了条件
++
++- converter Synthetic checkがexit code 0で通る
++- 2〜3画像のZIPが仕様どおり決定的に生成される
++- local CVATへmaskとしてimportできる
++- image/stem/shape/label/pixel位置が正しい
++- no-edit exportがvalidatorを通り、class maskが入力と一致する
++- Brush/Eraserで編集して再exportできる
++- edit後exportも`Segmentation Mask 1.1` validationを通る
++- patient画像またはmaskが外部serviceへ送信されていない
++- Phase 4で再利用するZIP contractとvalidator APIが固定される
++
++#### Phase 2実装状況（2026-08-19）
++
++次の2ファイルを実装した。
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++checks/stage4/check_stage4_cvat_segmentation_mask_export.py
++```
++
++converterには次を実装済みである。
++
++- `convert`と`validate`の2 subcommand
++- flat image/mask directoryのstrict pairingと入力検査
++- binary `0/255` maskからindexed `0/1` class/object maskへの変換
++- 固定labelmap、default set、member順、timestamp、permission、PNG圧縮による決定的ZIP生成
++- temporary file上でのself validationとatomicな最終ZIP配置
++- SHA-256、stem、index、比較件数を含むJSON summary
++- ZIP path traversal、symlink、duplicate/unknown member、未知index、過大memberの拒否
++- 元画像とのshape照合、および任意のreference maskとのpixel単位照合
++- CVATからexportしたno-edit/edit済みZIPを検査するread-only validator
++
++Synthetic checkには正常系、byte identity、入力不変性、all-background mask、filesystem/pairing、
++shape/dtype/value、label、overwrite、異常ZIPを含めた。実行コマンドは次のとおりである。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_segmentation_mask_export.py
++
++echo "phase2_synthetic_exit_code=$?"
++```
++
++#### Phase 2 Synthetic check結果（2026-08-19）
++
++`dualtrack311`環境で次の全項目が成功した。
++
++- binary `0/255`からindexed `0/1`への変換とZIP contract
++- file作成順に依存しない決定的出力とbyte identity
++- missing、extra、duplicate stemの拒否
++- unsupported extension、nested directory、symlinkの拒否
++- shape mismatch、RGB、`uint16`、未知pixel値maskの拒否
++- 失敗時に不完全な最終ZIPを残さないこと
++- unknown member、危険path、duplicate member、未知indexを持つZIPの拒否
++- label validationと明示的なoverwrite
++
++結果は次のとおりである。
++
++```text
++[OK] deterministic 0/255 -> 0/1 conversion and exact ZIP contract
++[OK] missing/extra/duplicate/unsupported/nested/symlink rejection
++[OK] shape/RGB/uint16/unknown-value rejection without partial ZIP
++[OK] unknown/unsafe/duplicate/unknown-index ZIP rejection
++[OK] label validation and explicit overwrite behavior
++Stage 4 CVAT Segmentation Mask 1.1 synthetic checks passed.
++phase2_synthetic_exit_code=0
++```
++
++これによりPhase 2のconverter、validator、決定的artifact生成、およびstrict validationの
++実装基盤は確認済みとする。
++
++次に、local CVAT golden sampleを次のように生成する。`GOLDEN_ROOT/images`と
++`GOLDEN_ROOT/masks`には、同じstemを持つ2〜3件の画像と0/255 maskを配置する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++GOLDEN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_contour_teacher_cvat_golden
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py convert \
++  --images_dir "${GOLDEN_ROOT}/images" \
++  --masks_dir "${GOLDEN_ROOT}/masks" \
++  --output_zip "${GOLDEN_ROOT}/cvat/annotations_segmentation_mask_1_1.zip" \
++  --label_name femur \
++  --summary_json "${GOLDEN_ROOT}/cvat/conversion_summary.json" \
++  --keep_unpacked_dir "${GOLDEN_ROOT}/cvat/unpacked_reference"
++```
++
++CVATでは同じ画像と`femur` labelを持つlocal Taskを作り、`Segmentation Mask 1.1`、
++`Convert masks to polygons=OFF`でimportする。編集せずに同形式でexportしたZIPは、入力maskと
++pixel単位で照合する。
++
++```bash
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py validate \
++  --input_zip "${GOLDEN_ROOT}/cvat/cvat_no_edit_export.zip" \
++  --images_dir "${GOLDEN_ROOT}/images" \
++  --reference_masks_dir "${GOLDEN_ROOT}/masks" \
++  --label_name femur \
++  --summary_json "${GOLDEN_ROOT}/cvat/no_edit_validation.json"
++```
++
++Brush/Eraserで変更したexportは入力maskと異なるため、`--reference_masks_dir`を指定せず形式と
++画像shapeを検査する。
++
++```bash
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py validate \
++  --input_zip "${GOLDEN_ROOT}/cvat/cvat_edited_export.zip" \
++  --images_dir "${GOLDEN_ROOT}/images" \
++  --label_name femur \
++  --summary_json "${GOLDEN_ROOT}/cvat/edited_validation.json"
++```
++
++実装、静的検査、`dualtrack311`でのSynthetic checkは完了している。Phase 2全体の完了には、
++localhost上のCVATを用いたgolden import/no-edit export/edit exportの確認が必要である。
++
+ ### Phase 3: auto-refine prototype
+ 
+ 監査対象の代表例でBBox内追加閾値を実装し、候補metricsとrankingを可視化する。
+ 既知の良好例を壊さないことを確認してから判定閾値を固定する。
++
++#### Phase 3の目的
++
++Phase 1の監査結果から、`overfilled`、`border_contact`、`ambiguous`、`off_center`、
++`invalid`と判定された代表BBoxを対象に、BBox内の追加threshold候補を生成する。
++現行teacher v2のglobal/local候補をbaselineとして同じ候補集合へ残し、追加候補が品質と
++安定性の両方で明確に改善した場合だけ`auto_refine`を提案する。
++
++Phase 3は候補生成、metric、判定規則を調査するread-only prototypeとし、annotated H5、
++point label、元pseudo3D H5、XMLを変更しない。Phase 3の`teacher_decision`は評価用の
++`proposed_decision`であり、学習用H5へ反映するのはPhase 5とする。
++
++#### Phase 3の実装範囲
++
++Phase 3に含める。
++
++- Phase 1監査結果からの代表BBoxの決定的選択
++- 現行v2 global/local候補の完全な再現
++- BBox crop内のboundedな追加threshold候補生成
++- 候補maskの重複排除、metric計算、eligibility、ranking
++- 近接threshold間のmask stability計測
++- `auto_accept`、`auto_refine`、`manual_review`の提案
++- v2選択maskと提案maskの比較CSV、binary mask、overlay
++- 入力file不変性と出力決定性の検査
++
++Phase 3には含めない。
++
++- annotated H5またはpoint labelの更新
++- 182件すべてのteacher v3生成
++- CVAT review packageの生成またはCVAT修正結果のimport
++- watershedなど候補数と挙動が大きく変わる分離処理
++- Stage 5学習
++- foreground samplingの再計算
++
++watershedまたはdistance transformは、boundedなthreshold/morphology候補で改善しない代表例が
++複数確認された場合に限り、Phase 3後半または別configとして追加する。
++
++#### Phase 3実装ファイル
++
++```text
++pseudo3d/annotation/contour_teacher_refinement.py
++pseudo3d/analysis/prototype_stage4_contour_auto_refine.py
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml
++checks/stage4/check_stage4_contour_auto_refine.py
++```
++
++必要な既存編集対象は次のとおりである。
++
++```text
++pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
++pseudo3d/analysis/audit_stage4_contour_teacher.py
++```
++
++候補生成、metric、decisionは`contour_teacher_refinement.py`のpure APIへ置く。runnerや
++Synthetic checkへ処理を複製しない。現行v2候補の生成とsort keyは
++`annotate_pseudo3d_point_cloud.py`の共有APIをそのまま使用する。Phase 1監査のinput解決処理を
++共通化する必要が生じた場合も、Phase 1の出力schemaと選択結果を変えない回帰検査を行う。
++
++#### Phase 3入力契約
++
++prototypeは次を入力とする。
++
++- Phase 1で使用したtrain manifest
++- Phase 1の`bbox_audit.csv`、`category_summary.csv`、`run_config.yaml`
++- `bboxrank_v2_nobbox_bg` annotated H5 root
++- `stage4_bbox_ranked_teacher_v2.yaml`
++- Phase 3 refine config
++
++実行前に次をstrict validationする。
++
++- Phase 1 auditが成功し、`failure_rows=0`である
++- manifest、teacher config、annotated rootのpathとfingerprintがPhase 1記録と一致する
++- BBox key `(video_name, frame_order, frame_index, bbox_index)`が一意である
++- selection rowが`bbox_audit.csv`に存在し、保存metricと一致する
++- pseudo3D H5、annotated H5、strict XMLが存在する
++- frame数、frame index、画像shape、BBox座標が整合する
++- annotated H5がteacher v2 schemaと固定foreground条件を持つ
++- refine configの全threshold、kernel、weight、quality gateが有限で有効範囲内にある
++
++代表BBoxは`category_summary.csv`からカテゴリ別上位をunionして重複排除し、
++`candidate_good_control`を必ず含める。自動選択結果は`selection_resolved.csv`へ保存する。
++必要な場合は同schemaの`--selection_csv`で目視選択例を追加できるようにするが、manifest外の
++video/BBoxは受け付けない。
++
++#### Phase 3 refine config
++
++設定はYAMLへ固定し、少なくとも次を持たせる。
++
++```text
++schema_version
++config_name
++base_teacher_config_name
++base_teacher_fingerprint
++trigger.*
++candidate_generation.percentile_values
++candidate_generation.otsu_enabled
++candidate_generation.adaptive_methods
++candidate_generation.adaptive_block_sizes
++candidate_generation.adaptive_c_values
++candidate_generation.cleanup_variants
++eligibility.*
++ranking.weights.*
++decision.minimum_refine_score_gain
++decision.minimum_score_margin
++decision.minimum_stability_iou
++decision.minimum_support_count
++```
++
++`trigger`、`eligibility`、`decision`のproduction数値はPhase 1の実データ分布から固定し、
++計画時点で推測しない。config templateで未確定値を`null`にする場合、通常実行では拒否し、
++候補分布だけを出す明示的な`--candidate_generation_only`でのみ許可する。Synthetic checkでは
++既知形状用の独立した固定configを使用する。
++
++`base_teacher_config_name`は必須とし、`base_teacher_fingerprint`は特定のcanonical YAMLを
++追加で固定するときだけ指定する。通常はPhase 1 auditに保存されたteacher fingerprintと
++現在のteacher fingerprintをCLIが完全照合するため、refine config側のfingerprintは`null`を
++許可する。config fileのSHA-256とcanonical fingerprintを全出力へ保存し、CLIから個別閾値を暗黙に
++上書きしない。調査条件を変更する場合は別config名と別output rootを使用する。
++
++#### 代表BBoxとrefine発動条件
++
++初期prototypeでは次のいずれかを満たすBBoxをrefine評価対象とする。
++
++- selected contour/BBox area ratioが設定上限以上
++- foreground/BBox area ratioが設定上限以上
++- BBox border contact ratioが設定上限以上
++- center distance normが設定上限以上
++- 1位・2位候補のscore marginが設定下限以下でmaskが異なる
++- v2候補がinvalid
++- Phase 1で`overfilled`、`border_contact`、`ambiguous`、`off_center`、`invalid`に選ばれた
++
++`candidate_good_control`は発動条件に該当しなくても評価へ含め、baselineがそのまま
++`auto_accept`されることを確認する。カテゴリ名だけで置換を決めず、必ず元metricから
++発動条件を再計算する。
++
++#### 追加候補の生成
++
++各BBoxを画像範囲へclipし、現行teacherと同じfull-resolution local imageからBBox cropを
++取得する。resize、補間、BBox外pixelの参照を行わない。threshold maskはBBox外を常に0とする。
++
++boundedな初期候補集合を次に限定する。
++
++1. BBox crop内のhigh-intensity percentile threshold
++2. BBox crop内のOtsu threshold
++3. 設定したblock size/Cだけのadaptive meanまたはGaussian threshold
++4. 上記へ設定済みmorphology open/closeと小成分除去を適用したvariant
++5. 現行v2のglobal/local候補
++
++percentile、adaptive block size、morphology kernel、minimum component areaはconfigに列挙した
++有限個だけを使用する。入力imageのdtype/rangeを明示的に正規化し、同じframe/BBox/configから
++常に同じbinary maskを得る。
++
++各binary maskではexternal connected componentを独立候補として抽出し、filled contourを
++作る。複数BBoxは独立に処理し、別BBoxの中心やmaskをrankingへ利用しない。候補maskはBBoxへ
++clipし、mask byte列のSHA-256で重複排除する。同一maskが複数method/thresholdから得られた場合は
++候補を複製せず、全provenanceと`support_count`を保持する。
++
++#### 候補metricとstability
++
++候補ごとに少なくとも次を保存する。
++
++- source、threshold method/value、cleanup variant、component index
++- mask SHA-256、supporting parameter一覧、support count
++- contour pixel数、filled area、area/BBox ratio
++- contour centroid、center distance norm
++- border contact ratioと上下左右の接触flag
++- contour BBox extent、solidity、perimeter、compactness、aspect ratio
++- BBox内point数、候補内point数、positive point ratio
++- v2 selected maskとのIoU、area差、centroid移動量
++- 近接threshold候補との最大/中央値IoU
++- eligibility、rejection reason codes、各score項、total score
++
++stabilityは同じmethod familyの隣接parameterで得た候補をmask IoUにより対応付けて評価する。
++単独parameterだけで現れる候補を高信頼にしない。異なるmethodで同一maskが得られた場合も
++supportとして記録するが、support数だけで品質gateを迂回させない。
++
++#### eligibilityとranking
++
++eligibilityをrankingより先に適用する。少なくとも次をhard rejectionとする。
++
++- 空mask、非有限metric、無効contour
++- absolute areaまたはarea ratioが下限未満
++- area ratioが上限を超える
++- center distance normが上限を超える
++- border contactが許容上限を超える
++- BBox内の保存pointを1点も含まない
++
++ranking scoreは次の独立項をconfig weightで合成する。
++
++- BBox中心との近さ
++- 設定した許容area band内でのarea score
++- border non-contact score
++- solidity/compactness/extentによるshape score
++- threshold stability score
++- 複数parameter/methodによるsupport score
++
++面積を単純に最大化せず、中心に近い微小成分も選ばない。global/local/refine sourceに固定の
++優先順位を設けない。決定性のため、score各項とmetricのsort keyを固定する。ただし、許容差内で
++同点かつmaskが異なる候補はhash順で自動採用せず、ambiguousとして`manual_review`へ送る。
++
++#### proposed decision
++
++BBox単位の判定を次に固定する。
++
++`auto_accept`:
++
++- v2選択maskがquality gateを満たす
++- refine triggerが発動しない、または追加候補が必要改善幅を満たさない
++- v2 maskをpixel単位でそのまま維持する
++
++`auto_refine`:
++
++- 追加候補がすべてのeligibility/quality gateを満たす
++- v2候補より`minimum_refine_score_gain`以上改善する
++- 2位候補との差が`minimum_score_margin`以上ある
++- stability IoUとsupport countが設定下限以上である
++- mask変更理由をreason codeとscore差で説明できる
++
++`manual_review`:
++
++- eligible候補がない
++- 全候補がoverfilled、off-center、border-contact、too-smallのいずれかで棄却される
++- 1位・2位が拮抗してmaskが異なる
++- threshold間のmask/centroid変動が大きい
++- 複数BBoxまたは複数成分の対応が曖昧である
++- v2候補は不適切だが、追加候補の改善幅が採用条件に届かない
++
++refine triggerが発動してもbaselineが最良で品質gateを満たす場合は`auto_accept`へ戻せる。
++追加候補の存在だけを理由に`auto_refine`しない。Phase 3では判定とproposal maskを出力するだけで、
++`manual_review` BBoxのpoint label変更やignore化は行わない。
++
++#### Phase 3出力契約
++
++出力は既存runと分離した次の構造とする。
++
++```text
++contour_auto_refine_phase3/
++├── selection_resolved.csv
++├── bbox_decisions.csv
++├── candidate_metrics.csv
++├── video_summary.csv
++├── category_summary.csv
++├── failures.csv
++├── refine_summary.json
++├── run_config.yaml
++├── proposal_masks/
++│   └── {video}__fo.....__bbox....png
++└── overlays/
++    ├── auto_accept/
++    ├── auto_refine/
++    ├── manual_review/
++    └── regressions/
++```
++
++`bbox_decisions.csv`はv2とproposalのsource、mask SHA-256、全主要metric、score差、decision、
++reason codesを1 BBox 1行で保持する。`candidate_metrics.csv`は1候補1行とする。
++proposal maskは評価用binary `0/255` PNGで、学習用teacherまたはCVAT確定maskとして扱わない。
++
++overlayは最低限、元画像、BBox、v2 mask、proposal mask、追加/削除pixel、候補centroid、
++主要metric、decision/reasonを表示する。`auto_refine`と`manual_review`は全件、
++`auto_accept`はカテゴリ別control上位を出力する。
++
++summaryにはmanifest、Phase 1 audit、teacher/refine configのpath・SHA-256・fingerprint、
++入力件数、decision/reason別件数、failure数、入力不変性を保存する。作成日時を除くCSV、mask、
++overlayの内容は同一入力で決定的にし、比較用checksum manifestも保存する。
++
++#### Phase 3 CLI案
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/analysis/prototype_stage4_contour_auto_refine.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml \
++  --output_root "${RUN_ROOT}/contour_auto_refine_phase3" \
++  --top_per_category 20
++```
++
++既存output rootを暗黙に追記・置換しない。同じ条件を再実行する場合だけ明示的な
++`--overwrite`を必要とする。`--continue_on_error`を指定した場合も最後にfailure件数が1件以上なら
++non-zero exitとし、不完全な結果を成功扱いしない。
++
++#### Phase 3 Synthetic check
++
++`check_stage4_contour_auto_refine.py`で次を確認する。
++
++- 適正なv2輪郭がpixel単位で維持され`auto_accept`になる
++- BBoxを覆う結合成分が厳格thresholdで分離され`auto_refine`になる
++- BBox中心に近いだけの微小成分をrejectする
++- 大面積だがBBox境界へ広く接触する成分をrejectする
++- 同じmaskを作る複数parameterが重複排除されsupportへ集約される
++- 隣接thresholdのIoUとcentroid stabilityが正しい
++- 同点の異なるmaskをhash順で採用せず`manual_review`にする
++- eligible候補なし、unstable、改善幅不足がそれぞれ期待decision/reasonになる
++- 複数BBoxを独立処理し、maskとmetricを混同しない
++- BBoxなしframe、非連続frame index、empty frameを安全に扱う
++- v2 candidate APIの選択結果がPhase 3追加前後で変わらない
++- point labelと入力H5/XMLのsize、mtime、checksumが変化しない
++- 同一入力のCSV、mask、overlay、decisionが決定的である
++- invalid config、fingerprint mismatch、未知BBox keyを拒否する
++
++実装後の確認コマンドは次とする。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_contour_auto_refine.py
++
++echo "phase3_synthetic_exit_code=$?"
++```
++
++#### Phase 3実データ確認
++
++最初から182件のteacherを再生成せず、Phase 1カテゴリ上位とgood controlを合わせた代表集合で
++実行する。確認順序は次とする。
++
++1. `--candidate_generation_only`で候補metric分布を得る
++2. area、center、border、stability、score marginの分布からconfig閾値を固定する
++3. 同じselectionでdecision modeを実行する
++4. `auto_refine`、`manual_review`、`regressions` overlayを全件目視する
++5. v2 good controlが不必要に変更されていないことを確認する
++6. overfilled/border-contact例でareaと境界接触が改善し、対象断面を欠落していないことを確認する
++7. 閾値をわずかに変えた感度確認を1回行い、decisionが大きく反転しないことを確認する
++
++目視で誤った`auto_refine`が見つかった場合は、個別video名による例外規則を追加せず、
++quality gate、stability、manual-review条件のいずれで一般化して防ぐかを検討する。
++
++#### Phase 3完了条件
++
++- Synthetic checkがexit code 0で通る
++- representative selectionと全候補が入力/configから決定的に再現できる
++- baseline good controlのmaskが不必要に変更されない
++- 明確な過抽出例でproposalが縮小または分離され、目視でも改善している
++- 不安定または拮抗した例が`manual_review`へ送られる
++- 全decisionに機械可読なreason codeと比較metricがある
++- 入力H5/XMLと既存annotated H5が変更されていない
++- Phase 4/5で再利用できるcandidate/decision APIとconfig schemaが固定される
++
++#### Phase 3実装順序
++
++1. refine config loaderとstrict validation
++2. pureな追加candidate生成、重複排除、metric/stability API
++3. eligibility、ranking、proposed decision API
++4. Phase 1 audit入力を使うread-only prototype CLI
++5. CSV、mask、overlay、summaryの決定的出力
++6. Synthetic check
++7. representative実データのcandidate-only調査
++8. threshold固定後のdecision/目視確認
++
++#### Phase 3実装状況（2026-08-19）
++
++次の4ファイルを実装した。
++
++```text
++pseudo3d/annotation/contour_teacher_refinement.py
++pseudo3d/analysis/prototype_stage4_contour_auto_refine.py
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml
++checks/stage4/check_stage4_contour_auto_refine.py
++```
++
++実装済み内容は次のとおりである。
++
++- v2 global/local候補を変更せずbaselineとして再利用するpure refine engine
++- BBox内percentile、Otsu、adaptive thresholdとbounded cleanup variant
++- connected component単位のfilled mask生成とmask SHA-256による重複排除
++- 同一maskを支持する複数parameterのprovenance/support集約
++- area、center、border、shape、point、baseline差、stability metric
++- eligibilityを先に適用するconfig-driven ranking
++- `auto_accept`、`auto_refine`、`manual_review`のreason付き提案
++- Phase 1 manifest/audit/config fingerprintをstrictに照合するread-only CLI
++- selection、BBox decision、全候補、video/category summary、mask、overlay、checksum出力
++- 入力H5/XML/Phase 1 artifactのsize・mtime不変性検査
++- good control、overfilled、tiny、ambiguous、deduplication、end-to-end決定性のSynthetic check
++
++初期configのtrigger、eligibility、ranking、decision値はscreening用の暫定値である。
++`decision.production_thresholds_fixed: false`に固定しているため、通常decision modeは失敗し、
++実データでは次のcandidate-only調査だけを許可する。これにより、暫定値がteacher v3へ誤って
++採用されることを防ぐ。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/analysis/prototype_stage4_contour_auto_refine.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml \
++  --output_root "${RUN_ROOT}/contour_auto_refine_phase3_screening" \
++  --top_per_category 20 \
++  --candidate_generation_only
++```
++
++#### Phase 3 Synthetic check結果（2026-08-19）
++
++`dualtrack311`環境で次の全項目が成功した。
++
++- good controlの`auto_accept`とmask維持
++- overfilled baselineから安定した追加候補への`auto_refine`
++- tiny componentのreject
++- score同点・異mask候補の`manual_review`
++- mask単位の候補重複排除、support/stability集約、決定的ranking
++- Phase 1 manifest/audit/teacher contractとのend-to-end連携
++- 入力H5/XMLの不変性
++- 独立した2回の実行におけるCSV、mask、overlay、checksumの決定性
++- invalid configの拒否
++- project teacher config名、任意fingerprint、candidate-only safety gate
++
++結果は次のとおりである。
++
++```text
++[OK] good-control auto-accept and stable overfilled auto-refine
++[OK] tiny-component rejection and equal-score ambiguity isolation
++[OK] mask-level candidate deduplication and deterministic ranking
++[OK] end-to-end Phase 1 contract, read-only inputs, and deterministic outputs
++[OK] strict Phase 3 config validation
++[OK] project teacher fingerprint and candidate-only safety gate
++Stage 4 contour-teacher Phase 3 synthetic checks passed.
++phase3_synthetic_exit_code=0
++```
++
++Synthetic checkでは2 BBoxから各run 10候補を生成し、2回ともfailureなし、入力不変で完了した。
++これによりPhase 3の実装基盤は確認済みとする。次はPhase 1全監査出力を用いた
++candidate-only実データ調査を行い、その分布とoverlayからproduction decision閾値を固定する。
++
++#### Phase 1/3実データscreening結果（2026-08-23）
++
++Phase 1本監査は182/182 videos、3,072 BBox、failure 0、入力不変で完了した。
++
++```text
++videos_checked         : 182/182
++bbox_rows              : 3072
++valid_contours         : 3046
++invalid_contours       : 26
++failure_rows           : 0
++input_files_unchanged  : true
++phase1_realdata_audit_exit_code=0
++```
++
++Phase 1カテゴリ上位から重複を除いた60 videos、129 BBoxに対しcandidate-only screeningを実行し、
++9,698候補をfailureなしで生成した。
++
++```text
++videos_checked         : 60/60
++selected_bboxes        : 129
++processed_bboxes       : 129
++candidate_rows         : 9698
++failure_rows           : 0
++input_files_unchanged  : true
++phase3_candidate_screening_exit_code=0
++```
++
++129 BBox中98件がtriggerされ、108件でeligible proposalが得られ、21件はeligible候補なしだった。
++triggered proposalの代表分布は次のとおりである。
++
++| metric | p05 | p50 | p95 |
++|---|---:|---:|---:|
++| area ratio | 0.0545 | 0.1493 | 0.2749 |
++| center distance norm | 0.0137 | 0.0552 | 0.2266 |
++| border contact ratio | 0.0000 | 0.0000 | 0.2372 |
++| stability IoU | 0.7160 | 0.8333 | 1.0000 |
++| score gain | 0.0309 | 0.2215 | 0.4150 |
++| score margin | 0.0001 | 0.0064 | 0.0419 |
++
++decision gateをCSV上で比較した結果は次のとおりである。
++
++| 条件 | auto accept | auto refine | manual review |
++|---|---:|---:|---:|
++| current conservative | 31 | 9 | 89 |
++| balanced | 31 | 44 | 54 |
++| retention | 31 | 59 | 39 |
++
++目視前にnear-tie候補を過剰採用しないこと、候補なし21件を確実にmanual reviewへ送ること、
++maskのparameter重複数よりstabilityを優先することから`balanced`をproduction候補として採用した。
++screening configは安全ゲートとして変更せず、次を追加した。
++
++```text
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml
++```
++
++固定したdecision値は次のとおりである。
++
++```yaml
++decision:
++  production_thresholds_fixed: true
++  minimum_refine_score_gain: 0.05
++  minimum_score_margin: 0.005
++  minimum_stability_iou: 0.70
++  minimum_support_count: 1
++  equal_score_tolerance: 1.0e-12
++```
++
++trigger、candidate generation、eligibility、rankingはscreening configと同一である。次のcommandで
++同じ代表129 BBoxをdecision mode実行し、想定件数とoverlayを確認する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/analysis/prototype_stage4_contour_auto_refine.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml \
++  --output_root "${RUN_ROOT}/contour_auto_refine_phase3_production_v1_decisions" \
++  --expected_videos 182 \
++  --top_per_category 20
++
++echo "phase3_production_decision_exit_code=$?"
++```
++
++production config追加後のSynthetic checkは`dualtrack311`環境で成功した。
++
++```text
++[OK] end-to-end Phase 1 contract, read-only inputs, and deterministic outputs
++[OK] strict Phase 3 config validation
++[OK] project screening safety gate and balanced production config
++Stage 4 contour-teacher Phase 3 synthetic checks passed.
++phase3_updated_synthetic_exit_code=0
++```
++
++同じ代表129 BBoxをproduction configでdecision mode実行した実測結果は次のとおりである。
++
++```text
++videos_checked         : 60/60
++selected_bboxes        : 129
++processed_bboxes       : 129
++candidate_rows         : 9698
++decision_counts        : {'auto_accept': 31, 'auto_refine': 35, 'manual_review': 63}
++failure_rows           : 0
++input_files_unchanged  : true
++phase3_production_decision_exit_code=0
++```
++
++CSV上の事前simulationは`31 / 44 / 54`だったが、production実runは`31 / 35 / 63`となった。
++これは`minimum_support_count`が最終decision gateだけでなくcandidateのsupport scoreにも使われ、
++`2`から`1`への変更によってranking、selected proposal、score marginが再計算されたためである。
++したがって、Phase 4へ渡す正式なproduction decisionはend-to-end実runの`31 / 35 / 63`とする。
++この差をCLI不整合とは扱わず、以後の集計と代表例選択には実run artifactを使用する。
+ 
+ ### Phase 4: review exportとmanual import
+ 
+@@ -699,25 +1656,967 @@
+ CVATからexportした修正済みmaskを別runのH5 annotationへ反映し、point label、valid mask、
+ metadataの整合性を検査する。自動maskとmanual maskの上書き規則を明文化する。
+ 
++#### Phase 4の目的
++
++Phase 3で自動判定できなかったBBoxを、localhost上のCVATへ安全かつ再現可能な形式で渡し、
++人力修正済みsemantic maskをStage 4のpoint labelへ戻す最小round tripを確立する。
++
++Phase 4は次の3工程を明示的に分離する。
++
++1. `review export`: Stage 4からlocal artifactを生成する
++2. `local CVAT review`: 利用者がlocalhost CVATへ手動importし、Brush/Eraserで修正してexportする
++3. `manual import`: CVAT export ZIPをstrict validationし、新しいannotated H5へ反映する
++
++Stage 4 codeからCVAT API、外部network、cloud storageへ接続しない。CVAT Taskの作成、annotation
++upload、backup、修正、exportは利用者が明示的に行う。
++
++#### Phase 4開始条件
++
++実装・実データround tripの前に次を満たす。
++
++- Phase 2 Synthetic checkが成功している
++- Phase 2 local CVAT golden import/no-edit export/edit exportが成功している
++- golden結果に基づき`SegmentationClass`と`SegmentationObject`のcontractが固定されている
++- Phase 3 Synthetic checkが成功している
++- Phase 3 production configの`production_thresholds_fixed`が`true`である
++- Phase 3 representative decision runがfailureなしで完了している
++- `manual_review`対象とreason codeがBBox単位で確定している
++
++Phase 2 goldenでCVAT exportのobject maskがPhase 2のsingle-object仮定と異なる場合は、Phase 4を
++実装する前にconverter/validator contractを更新する。CVATの実挙動をimport側で推測して
++暗黙に許容しない。
++
++#### Phase 4の実装範囲
++
++Phase 4に含める。
++
++- representative Phase 3 runからの`manual_review` frame選択
++- CVAT登録用の無描画画像、参照overlay、初期binary maskの生成
++- Phase 2 converterを利用した`Segmentation Mask 1.1` ZIP生成
++- frame/BBox/sourceへ逆引きできるreview manifest
++- CVAT export ZIPのread-only validation
++- semantic correction maskとBBox/manifestのstrict matching
++- source annotated H5を複製した別runへのpoint label反映
++- point配列、frame alignment、sampling schema、measurementの保存検査
++- manual provenance、review/export/import checksumの保存
++- batch export/import summaryと決定性検査
++
++Phase 4には含めない。
++
++- CVAT APIによるTask作成、upload、download
++- hosted CVAT、外部SaaS、外部AI/ML backendの利用
++- source H5/XML/Phase 3 artifactの上書き
++- BBox union外maskの暗黙clip
++- missing/extra frame、未知label、shape mismatchの自動補正
++- 全182件のteacher v3生成
++- instance-aware Stage 5学習
++- Stage 5学習または評価
++
++Phase 4はrepresentative manual round tripのcontract確定までとし、全件生成はPhase 5で行う。
++
++#### Phase 4実装予定ファイル
++
++```text
++pseudo3d/annotation/stage4_manual_review.py
++pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
++pseudo3d/annotation/import_cvat_segmentation_mask_corrections.py
++pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py
++pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml
++checks/stage4/check_stage4_cvat_manual_roundtrip.py
++```
++
++再利用・必要最小限の編集対象は次のとおりである。
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++pseudo3d/annotation/annotate_pseudo3d_point_cloud.py
++pseudo3d/batch/export/batch_export_annotation_mask_visualization.py
++```
++
++frame/BBox manifest、mask合成、mask-to-point label変換、provenance検証は
++`stage4_manual_review.py`のpure APIへ置き、single/batch CLIとSynthetic checkで共有する。
++Phase 2 ZIP validatorとPhase 3 decision schemaを再実装しない。
++
++#### Phase 4A: review export入力契約
++
++review exporterは次を入力とする。
++
++- Phase 3で使用したtrain manifest
++- source pseudo3D H5
++- source `bboxrank_v2_nobbox_bg` annotated H5
++- Phase 1 audit root
++- production閾値を固定したPhase 3 config
++- Phase 3 decision runの`bbox_decisions.csv`、`candidate_metrics.csv`、proposal masks
++- Phase 3 `run_config.yaml`、`refine_summary.json`、`checksums.csv`
++- Stage 4 manual-review config
++
++実行前に次をstrict validationする。
++
++- Phase 3がcandidate-onlyではなくdecision modeで完了している
++- Phase 3 `failure_rows=0`かつ全selected BBoxが処理済みである
++- manifest、teacher、refine config、Phase 1 auditのpath/checksum/fingerprintが一致する
++- Phase 3 checksum manifestと全proposal maskが一致する
++- `manual_review` rowにreason code、proposal mask、元BBoxが存在する
++- BBox keyとframe stemが一意である
++- source annotated H5がteacher v2 schemaおよび固定foreground samplingを持つ
++- source point labelが`-1/0/1`、`valid_mask == (point_label != -1)`を満たす
++
++Phase 3 representative runが一部BBoxだけを評価した場合、review frame内でPhase 3 rowを持たない
++他BBoxは現行v2 baselineを再計算して初期maskへ含める。これにより、annotation uploadがTask内
++annotationを置換しても、同じframeの非review femur領域が消えない。
++
++#### review frameの選択
++
++1個以上のBBoxが`manual_review`となったframeを1 review imageとする。同一frameに複数の
++`manual_review` BBoxがあっても画像とCVAT class maskは1枚だけ生成する。
++
++frame stemを次に固定する。
++
++```text
++{video_name}__fo{frame_order:05d}__fi{frame_index:08d}
++```
++
++- stemは全review package内で一意である
++- image、mask、overlay、CVAT ZIP、manifestで同じstemを使う
++- 拡張子はimage/maskとも`.png`に固定する
++- source imageをリサイズ、crop、補間しない
++- local encoder imageを既存の正規化関数で`uint8` grayscaleへ変換する
++- source imageは変更せず、CVAT Task用の複製画像だけへstrict BBox境界を描く
++- `manual_review` BBoxは黄、同一frameの他BBoxはシアンの1 pixel線とし、文字やmaskは描かない
++
++#### 初期frame maskの合成規則
++
++review frame内の全strict XML BBoxを処理し、初期semantic maskをunionする。
++
++| BBox状態 | 初期maskへ含める領域 |
++|---|---|
++| `auto_accept` | v2 baseline mask |
++| `auto_refine` | Phase 3 selected proposal mask |
++| `manual_review` | Phase 3 best-effort proposal mask |
++| Phase 3対象外 | 再計算したv2 baseline mask |
++
++`manual_review` proposalは修正開始点であり確定positiveではない。review前の学習用H5へは反映
++しない。全BBox maskをannotation BBoxへclipし、frame maskのBBox union外を0にする。
++
++同一frameに複数BBoxがある場合も、初期versionはStage 5が使用するsemantic `femur` unionを
++正解とする。`SegmentationClass`と`SegmentationObject`の具体的なindex表現はPhase 2 goldenで
++固定したcontractに従う。instance IDを推測して新たに割り当てない。
++
++#### review artifact出力契約
++
++runごとに独立した次の構造を生成する。
++
++```text
++manual_review_cvat/
++├── images/
++│   └── {frame_stem}.png              # strict BBox描画済みCVAT review画像
++├── masks/
++│   └── {frame_stem}.png              # binary uint8 0/255
++├── overlays/
++│   └── {frame_stem}.png
++├── cvat/
++│   ├── annotations_segmentation_mask_1_1.zip
++│   ├── conversion_summary.json
++│   └── unpacked_reference/
++├── review_frames.csv                 # 1 frame 1 row
++├── review_bboxes.csv                 # 1 BBox 1 row
++├── review_session_template.yaml
++├── checksums.csv
++├── export_summary.json
++└── run_config.yaml
++```
++
++`review_frames.csv`は少なくとも次を持つ。
++
++- frame stem、video、frame order/index、image shape
++- image/mask/overlay relative pathとSHA-256
++- source pseudo3D/annotated H5 pathとchecksum
++- XML root、frame内BBox数、manual-review BBox数
++- initial frame mask pixel数
++- teacher/refine/manual-review config fingerprint
++
++`review_bboxes.csv`は少なくとも次を持つ。
++
++- frame stem、BBox key、object name/index、XML path/checksum
++- XML/raw/local BBox座標
++- Phase 3 decisionとreason codes
++- baseline/proposal source、score、mask SHA-256
++- `manual_review_required`
++- 初期frame mask内のBBox positive pixel数
++
++overlayには元画像、全BBox、各decision色、baseline/proposal contour、manual-review reason、score、
++area/center/border/stabilityを表示する。overlayは判断支援用でCVAT Task/annotation ZIPへ含めない。
++
++#### 0件時の動作
++
++`manual_review`が0件の場合は正常終了し、summaryへ0件を記録する。ただし、空のimages/masks、
++空のCVAT annotation ZIP、空の`default.txt`は生成しない。`status=no_manual_review`として
++Phase 5へ進めることを明示する。
++
++#### review exportの決定性と安全性
++
++- image/mask/frame/BBoxを決定的にsortする
++- PNG encoding、ZIP timestamp/permission/member順をPhase 2 contractへ従わせる
++- 同一入力からbyte-identical mask、CVAT ZIP、CSV、checksumを生成する
++- output rootはsource H5、Phase 1/3 artifact、CVAT backupと分離する
++- 既存outputは`--overwrite`なしで変更しない
++- converter失敗時に不完全な最終ZIPを残さない
++- source H5/XML/Phase 3 artifactのsize、mtime、checksumを前後比較する
++
++#### review export CLI案
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py \
++  --manifest /mnt/data/3d_projects/pseudo3d_dataset/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv \
++  --annotated_root "${RUN_ROOT}/annotated" \
++  --phase1_audit_root "${RUN_ROOT}/contour_teacher_audit_phase1" \
++  --phase3_root "${RUN_ROOT}/contour_auto_refine_phase3_production_v1_decisions" \
++  --teacher_config pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml \
++  --refine_config pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml \
++  --manual_review_config pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml \
++  --output_root "${RUN_ROOT}/manual_review_cvat_phase4"
++```
++
++#### Phase 4B: localhost CVATでの操作
++
++review export完了後、利用者が次を行う。
++
++1. local CVAT version、Task ID/name、利用者識別子を記録する
++2. Task labelを`femur`として作成する
++3. `images/*.png`だけをTask画像として登録する
++4. 既存annotationがあれば、import前に同形式でローカルbackupする
++5. `Segmentation Mask 1.1`、`Convert masks to polygons=OFF`でZIPをimportする
++6. stem、frame対応、向き、mask位置、labelを確認する
++7. overlayを参照し、全`manual_review` BBoxをBrush/Eraserで修正する
++8. 同一frameの非review BBox領域を誤って消していないことを確認する
++9. 保存後、`Segmentation Mask 1.1`でローカルexportする
++10. export ZIPを元artifactと別directoryへ保存する
++11. `review_session_template.yaml`をコピーし、Task/reviewer/CVAT version/backup/export情報を記入する
++
++`review_session.yaml`には少なくとも次を記録する。
++
++```text
++review_schema_version
++review_package_sha256
++cvat_version
++cvat_task_identifier
++reviewer_identifier
++imported_zip_sha256
++pre_import_backup_sha256
++exported_zip_sha256
++review_started_utc
++review_completed_utc
++all_manual_bboxes_reviewed
++notes
++```
++
++実名を不要とする運用では、ローカル管理されたpseudonymous reviewer IDを使用する。外部service
++のuser ID、URL、token、credentialをmanifestやH5へ保存しない。
++
++#### Phase 4C: manual import入力契約
++
++manual importerは次を入力とする。
++
++- review export root
++- CVATからexportした`Segmentation Mask 1.1` ZIP
++- 記入済み`review_session.yaml`
++- source annotated H5 root
++- 新規output root
++
++import前にPhase 2 validatorを使い、次をstrict validationする。
++
++- ZIP pathが安全でduplicate/unknown memberがない
++- labelmapが`background=0`、`femur=1` contractと一致する
++- default stem、class/object mask、review frame stem集合が完全一致する
++- maskが2-D `uint8`でindexが`{0,1}`の部分集合である
++- mask shapeがreview imageおよびmanifestと一致する
++- review package、CVAT import ZIP、CVAT export ZIPのchecksum chainが一致する
++- `review_session.yaml`が完了状態で全manual BBox確認済みである
++- source H5/XML/config checksumがreview export時から変化していない
++- unknown/missing/extra frameがない
++
++edited exportは初期maskと異なるため、Phase 2 validatorのreference pixel equalityは使用しない。
++代わりに初期maskとのadded/removed pixel数とIoUを保存する。
++
++#### correction maskのBBox制約
++
++各frame maskのnonzero pixelはstrict XML BBox union内だけを許可する。union外pixelが1点でも
++存在した場合はimportを失敗させ、暗黙にclipしない。
++
++さらに各`manual_review` BBoxについて、corrected maskとのintersectionが1 pixel以上あることを
++初期contractとする。修正の結果「対象なし」と確定する運用が必要になった場合は、empty maskを
++暗黙に意味付けせず、review sessionへBBox単位の明示的な`confirmed_absent`状態を追加してから
++contract versionを更新する。
++
++同一frameの複数BBoxが重なる場合、Stage 5用semantic labelはcorrected frame maskのunionを使用
++する。BBox別metadataは`corrected mask AND BBox`で計測する。重複pixelをinstance IDへ推測分割
++しない。
++
++#### point labelへの反映規則
++
++review済みframeではpoint labelを次の順序で再構成する。
++
++1. frame内pointを初期値background `0`とする
++2. strict XML BBox union内pointをignore `-1`とする
++3. corrected semantic mask内pointをpositive `1`とする
++
++したがって固定policyは次のまま維持される。
++
++- BBoxなしframe: background
++- BBox外: background
++- BBox内かつcorrected mask外: ignore
++- corrected mask内: positive
++- `valid_mask == (point_label != -1)`
++
++review対象外frameはsource H5のlabelをpixel単位で保持する。Phase 4 representative prototypeでは
++未選択BBoxをteacher v3へ暗黙更新しない。
++
++#### 新規H5の保存規則
++
++source H5を直接変更せず、別run名へ保存する。
++
++```text
++{video_name}_pointcloud_annotated_bboxrank_v2_phase4_manual_v1.h5
++```
++
++次をbyte-levelまたはarray-levelでsourceと一致させる。
++
++- `point_cloud`以下の全dataset、dtype、shape、順序、compression
++- points、intensity、alpha、confidence
++- frame order/index、pixel coordinates
++- source type/flags、sampling confidence
++- frame-level sampling statistics
++- measurement group
++- foreground/sampling metadata
++
++変更可能なのは次だけとする。
++
++- `annotation/point_label`
++- `annotation/valid_mask`
++- review frameに対応する`frame_annotation` annotation metric
++- manual review provenance metadata
++
++追加metadata案:
++
++```text
++manual_annotation_provenance: manual_cvat_segmentation_mask_1_1_v1
++manual_review_schema_version
++manual_review_package_sha256
++manual_review_session_sha256
++cvat_export_sha256
++cvat_task_identifier
++reviewer_identifier
++manual_reviewed_frame_count
++manual_reviewed_bbox_count
++manual_added_positive_pixels
++manual_removed_positive_pixels
++source_annotated_h5_sha256
++teacher_fingerprint
++refine_fingerprint
++```
++
++reviewed BBox rowにはdecisionを`manual_review_completed`、selected sourceを
++`manual_cvat_segmentation_mask_1_1_v1`として保存し、初期proposal source/reasonは別fieldへ保持
++する。自動teacher由来とmanual mask由来を同じsource名で上書きしない。
++
++#### idempotenceと再適用
++
++同じsource H5、review package、CVAT export ZIP、review sessionからはbyte-equivalentなannotation
++arrayとmetadataを生成する。同一outputへの暗黙再適用は拒否し、`--overwrite`付き再生成でも
++point labelが変化しないことを検査する。
++
++すでにmanual provenanceを持つH5を入力にする場合は、source package/export SHAが完全一致する
++idempotence check以外を拒否する。異なる修正版を適用する場合は元source H5から新しいrunを
++作り、revision IDを更新する。
++
++#### manual import CLI案
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++RUN_ROOT=/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py \
++  --review_root "${RUN_ROOT}/manual_review_cvat_phase4" \
++  --cvat_export_zip "${RUN_ROOT}/manual_review_cvat_phase4/cvat_exports/reviewed_segmentation_mask_1_1.zip" \
++  --review_session "${RUN_ROOT}/manual_review_cvat_phase4/cvat_exports/review_session.yaml" \
++  --source_annotated_root "${RUN_ROOT}/annotated" \
++  --manual_review_config pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml \
++  --output_root "${RUN_ROOT}/annotated_phase4_manual_v1" \
++  --summary_csv "${RUN_ROOT}/annotated_phase4_manual_v1/summary.csv"
++```
++
++#### Phase 4 Synthetic check
++
++`check_stage4_cvat_manual_roundtrip.py`で次を確認する。
++
++- manual-review BBoxを含むframeだけが1回ずつexportされる
++- unique frame stemとimage/mask/BBox alignmentが正しい
++- frame内のauto-accept/refine/未選択v2 BBoxが初期maskへ保持される
++- initial maskがBBox union外へ出ない
++- Phase 2 converter/validatorを通る決定的CVAT ZIPが生成される
++- 0件時に空ZIPを生成しない
++- missing/extra/duplicate stem、shape/index/labelmap不一致を拒否する
++- unsafe ZIP path、stale manifest、checksum mismatchを拒否する
++- BBox union外manual pixelを拒否し、clipしない
++- manual-review BBoxのempty correctionを拒否する
++- corrected mask内pointだけがpositiveになる
++- BBox内mask外がignore、BBox外/BBoxなしがbackgroundになる
++- `valid_mask == (point_label != -1)`を維持する
++- review対象外frameのlabelを完全保持する
++- point-level/frame-level sampling配列とmeasurementを完全保持する
++- manual provenanceとframe/BBox metadataが一致する
++- 同一入力のexport/import結果が決定的かつidempotentである
++- source H5/XML/Phase 1/3 artifactが変更されない
++- failure時に不完全な最終H5を残さない
++
++実装後の確認コマンドは次とする。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_manual_roundtrip.py
++
++echo "phase4_synthetic_exit_code=$?"
++```
++
++#### Phase 4 local CVAT round trip確認
++
++最初は2〜3 frame、少なくとも次を含むrepresentative packageで確認する。
++
++- overfilledから`manual_review`になった例
++- ambiguousまたはunstable例
++- 同一frameにmanual/non-manual BBoxが共存する例
++- 可能なら複数BBox frame
++
++確認順序:
++
++1. review packageの画像、mask、overlay、manifestを目視する
++2. local CVATへimportし、no-edit exportをvalidatorで確認する
++3. Brush/Eraserで追加・削除を各1例以上行う
++4. edited exportをvalidatorとmanual importerへ通す
++5. corrected mask、point label visualization、annotated PLYを目視する
++6. source/manual H5のschema propagationとStage 5 loader互換性を確認する
++7. BBox外/background、BBox内ignore、positiveの3値を確認する
++
++目視不一致がある場合はCVAT側で無理に運用回避せず、stem、座標、mask index、frame合成、import
++規則のどこに原因があるかをartifactとchecksumから特定する。
++
++#### Phase 4完了条件
++
++- Phase 2 local CVAT golden contractが確定している
++- Phase 4 Synthetic checkがexit code 0で通る
++- manual-review frameだけの決定的review packageを生成できる
++- localhost CVATでmaskのままimport、編集、exportできる
++- 修正済みZIPをstrict validationして別run H5へ適用できる
++- source point/sampling/measurement schemaを保持できる
++- fixed label policyとStage 5 loader contractを満たす
++- manual provenanceとchecksum chainから全修正を追跡できる
++- source H5/XMLおよび既存runを変更しない
++- 画像、mask、manifestが外部serviceへ送信されていない
++- Phase 5で全件運用するexport/import APIとschemaが固定される
++
++#### Phase 4実装順序
++
++1. Phase 2 local CVAT golden round trip完了とZIP contract固定
++2. manual-review configとframe/BBox manifest schema
++3. pureなframe mask合成・stem・checksum API
++4. batch review exporterとPhase 2 converter接続
++5. review session schemaとmanual ZIP preflight
++6. mask-to-point label変換と新規H5 writer
++7. batch importer、summary、idempotence
++8. Synthetic check
++9. 2〜3 frameのlocalhost CVAT round trip
++10. visualization、schema propagation、Stage 5 loader確認
++
++#### Phase 4実装状況（2026-08-19）
++
++次のファイルを実装した。
++
++```text
++pseudo3d/annotation/stage4_manual_review.py
++pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
++pseudo3d/annotation/import_cvat_segmentation_mask_corrections.py
++pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py
++pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml
++checks/stage4/check_stage4_cvat_manual_roundtrip.py
++```
++
++また、Phase 2のstrict ZIP contractをmanual importでも唯一の解釈系として再利用するため、次の
++public read APIを追加した。
++
++```text
++pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
++  read_cvat_segmentation_class_masks(...)
++```
++
++実装済み内容は次のとおりである。
++
++- Phase 3 production decision artifact、checksum、manifest、Phase 1 fingerprintのstrict照合
++- `manual_review` BBoxを含むframeだけのunique stemによるreview export
++- 同一frameのauto-accept、auto-refine、manual-review、Phase 3対象外BBoxの初期mask合成
++- BBox単位clip後のsemantic union mask、strict BBox描画済みCVAT review画像、参照overlayの生成
++- Phase 2 converterによる決定的`Segmentation Mask 1.1` ZIP生成
++- frame/BBox manifest、session template、run config、checksum chainの生成
++- `manual_review=0`を正常終了し、空CVAT ZIPを生成しない動作
++- 記入済みreview sessionとCVAT export ZIPのstrict validation
++- missing/extra stem、unsafe ZIP、未知index、shape、labelmap、checksum不一致の拒否
++- strict BBox union外pixelとmanual BBox内empty correctionの拒否
++- review frameの`background/ignore/positive` label再構成
++- review対象外frameとpoint/sampling/measurement schemaの保持
++- source H5を変更しない一時ファイル経由のatomicな別run H5生成
++- manual provenance、review/package/session/export checksum、reviewer/task情報の保存
++- 同じsourceへの異なるmanual revisionの暗黙再適用防止
++- repeat importのannotation array・metadata決定性検査
++
++実データreview exportはPhase 3の`production_thresholds_fixed: true`かつdecision mode完了を必須と
++する。candidate-only調査には従来のscreening configを使い続け、review exportにはbalanced値を
++固定した`stage4_contour_auto_refine_phase3_production_v1.yaml`と、そのconfigで生成したdecision
++artifactだけを使用する。これによりscreening artifactを確定annotationとして誤用しない。
++
++Synthetic checkは次で実行する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_manual_roundtrip.py
++
++echo "phase4_synthetic_exit_code=$?"
++```
++
++#### Phase 4 Synthetic check結果（2026-08-21）
++
++`dualtrack311`環境でSynthetic round tripを実行し、`exit_code=0`で完了した。
++
++確認済み項目は次のとおりである。
++
++- mask-to-point labelの`background/ignore/positive`規則
++- strict BBox union外pixelの拒否
++- manual-review BBoxのempty correction拒否
++- Phase 1 auditとPhase 3 production decision fixtureのend-to-end連携
++- manual-review frame、初期mask、overlay、CVAT ZIPの決定性
++- `manual_review=0`時に空CVAT ZIPを生成しない動作
++- edited CVAT ZIPから別run annotated H5への反映
++- source H5のpoint cloud、sampling、measurement schema保持
++- point label、valid mask、manual provenanceの整合性
++- 同一入力を独立したoutputへimportした場合のannotation arrayとmetadataの決定性
++- project Phase 4 configと固定label contract
++
++結果は次のとおりである。
++
++```text
++[OK] strict mask-to-point labels, BBox union, and empty correction
++[OK] deterministic review frame export and exact CVAT ZIP
++[OK] zero manual-review result does not create an empty CVAT ZIP
++[OK] edited CVAT ZIP import, H5 schema preservation, labels, and provenance
++[OK] deterministic repeated import annotation arrays and metadata
++[OK] project Phase 4 config and fixed label contract
++Stage 4 CVAT manual round-trip synthetic checks passed.
++phase4_synthetic_exit_code=0
++```
++
++これによりPhase 4のコード実装とSynthetic contractは確認済みとする。詳細なreason集計とoverlay
++全件監査は省略するが、CVAT export/importの実データ契約を確定するため、2〜3 frameの代表round trip
++だけは自動refine版teacher v3の生成前に行う。
++
++#### 擬似教師データ生成を優先する短縮方針（2026-08-23）
++
++`stage4_contour_auto_refine_phase3_production_v1.yaml`を現設定で固定し、代表CVAT round trip後に
++次の規則で全182件の自動refine版teacher v3を生成する。
++
++- `auto_accept`: 現行v2 maskを使用する
++- `auto_refine`: Phase 3 proposalへ置換する
++- `manual_review`: 現行v2 maskを維持する
++- baseline invalidかつ候補なし: 現行のinvalid/ignoreを維持する
++
++#### 残りのステップ
++
++1. 既存のCVAT修正済み代表ZIPを再編集せず、context-only許可付きvalidatorとmanual importerへ通す。
++2. 修正mask、3値label、schema保持を最低限確認し、代表CVAT確認を完了する。
++3. 全182件について自動refine版teacher v3を別runへ生成する。`manual_review`は現行v2 mask、
++   baseline invalidかつ候補なしは現行invalid/ignoreを維持する。
++4. 全件成功、H5 schema、label件数、Stage 5 loader、数例のannotation textureだけを確認して学習へ進む。
++
++全件のCVAT修正は必須とせず、学習結果から改善が必要と判断した難例に限定して後から実施する。
++
++#### CVAT context-only画像契約（2026-08-24）
++
++- CVAT taskには代表選定した全画像を入れ、前後関係や同一task内の文脈を保持する。
++- 描画可能なstrict BBoxを持つ画像だけをannotation-requiredとし、黄色BBoxを画像へ焼き込む。
++- 描画可能なmanual BBoxがない画像は`context_only_stems.txt`へ記録し、H5更新対象外とする。
++- CVAT exportでcontext-only画像のClass/Object PNGが両方省略された場合だけ、空maskとして補完する。
++- annotation-required画像のmask欠落、Class/Object片側だけの欠落、未知stemは従来どおり拒否する。
++- context-only maskがZIPに含まれる場合は初期maskと同一であることを要求し、編集を反映しない。
++- `context_only` CSV列より前に生成した代表packageでは、明示した`context_only_stems.txt`を
++  human decisionとして優先する。未知stem、ZIP mask契約、初期mask不変条件は同様に検査する。
++- 今回の代表確認は既存修正済みZIPを使用し、追加のCVAT編集は行わない。
++
++代表実データZIPのcontext-only validationは成功した。3画像のうち2画像にmaskがあり、描画可能な
++manual BBoxを持たない1画像は`context_only_stems.txt`に基づくmask省略として受理された。
++
++```text
++images        : 3
++masks         : 2
++missing_masks : 1
++unique_indices: [0, 1]
++zip_sha256    : 2cabad381171eb3da93ecec38ae6992105f677571302696812f9fd42d02411bc
++exit_code     : 0
++```
++
++これによりCVAT側での追加編集・再exportは行わず、このZIPを代表manual importへ使用する。
++
++代表manual importも同じZIPから成功し、Phase 4を完了とする。
++
++```text
++videos                   : 2
++reviewed_frames          : 2
++reviewed_bboxes          : 2
++context_only_frames      : 1
++cvat_missing_context_masks: 1
++added_positive_pixels    : 0
++removed_positive_pixels  : 763
++failure_rows             : 0
++manual_import_exit_code  : 0
++```
++
++修正対象は`1-3_14`と`1-3_15_03`の各1 frame/1 BBoxである。context-onlyの
++`20250625_161030_0550__fo00051__fi00000051`はH5更新対象から除外し、元annotationを保持した。
++source H5を上書きせず、代表manual出力を別runへ生成できることを確認した。
++
+ ### Phase 5: 全182件のteacher v3再生成
+ 
+-既存foreground H5を再利用し、annotation、collected、可視化を新しいrun名で生成する。
+-
+-候補run名:
+-
+-```text
+-global_local_l75_w31_c12_area15_bboxrank_v3_refined
++Phase 5はCVATによる全manual-review対象の確認・修正までを範囲とする。
++既存foreground H5を再利用し、自動事前annotation、ケース別CVAT package、
++manual反映済みteacherをそれぞれ別runで生成する。
++
++最初に生成するrun名:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1
++```
++
++CVAT修正を後から反映する場合のrun名:
++
++```text
+ global_local_l75_w31_c12_area15_bboxrank_v3_refined_manual_v1
+ ```
+ 
+ 既存の`bboxrank_v2_nobbox_bg`は上書きしない。
+ 
++#### Phase 5実装（2026-08-24）
++
++Phase 3 production runの代表129 BBoxは`auto_accept=31`、`auto_refine=35`、
++`manual_review=63`で固定されている。Phase 5では35件の`auto_refine`だけをproposal maskへ
++置換し、他のdecisionとPhase 3未選択BBoxはv2をpixel単位で維持する。全182 H5は新runへ
++出力し、source H5を上書きしない。
++
++追加ファイル:
++
++```text
++pseudo3d/batch/annotation/batch_apply_stage4_contour_refinement.py
++pseudo3d/pipelines/build_stage4_bbox_ranked_v3_refined_auto.sh
++checks/stage4/check_stage4_contour_teacher_phase5_apply.py
++```
++
++安全条件:
++
++- Phase 1/3のmanifest、config fingerprint、decision checksumを照合する
++- production閾値固定済み・candidate-onlyではないPhase 3 artifactだけを許可する
++- 変更frameの全BBoxについてv2 maskを再構築し、source point labelとの完全一致を要求する
++- proposal maskのshape、値、semantic SHA、BBox、主要metricを再検証する
++- frame内の全BBox maskをunionして`background/ignore/positive`を再構築する
++- point cloud、sampling、measurementと変更対象外frame/BBoxを保持する
++- H5へdecision、mask SHA、score、source/config fingerprintを保存する
++- atomicな別H5出力と`--skip_existing`時のprovenance照合を行う
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_contour_teacher_phase5_apply.py
++
++echo "phase5_synthetic_exit_code=$?"
++```
++
++Synthetic checkは`dualtrack311`環境で成功した。
++
++```text
++videos_written_or_verified: 1
++refined_bboxes           : 1
++refined_frames           : 1
++added_positive_points    : 0
++removed_positive_points  : 13
++failure_rows             : 0
++Phase 5 apply passed.
++Phase 5 synthetic checks passed.
++phase5_synthetic_exit_code=0
++```
++
++これによりproposal適用、v2保持、point/measurement schema、provenance、repeat runの決定性を
++確認済みとし、全182件buildへ進む。
++
++全件生成、collect、label policy監査、annotation texture生成:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++SKIP_EXISTING=1 \
++EXPORT_VISUALIZATIONS=1 \
++bash pseudo3d/pipelines/build_stage4_bbox_ranked_v3_refined_auto.sh
++
++echo "phase5_full_build_exit_code=$?"
++```
++
++主要出力:
++
++```text
++stage4_training_ablation/260711/
++└── global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1/
++    ├── annotated/
++    ├── collected/
++    ├── annotation_textures/
++    └── logs/
++```
++
++Phase 5-Aの自動事前アノテーションbuildは`dualtrack311`環境で全182件完了した。
++
++```text
++annotated                    : 182
++collected                    : 182
++phase5_full_build_exit_code  : 0
++```
++
++`annotated`、一時`collected`、目視確認用の`annotation_textures`を、source runを
++上書きせず`bboxrank_v3_refined_auto_v1`下に生成済みである。ただしこの
++`collected`はmanual review前の中間生成物であり、Phase 5完了品としてStage 5へ渡さない。
++
++#### Phase 5-B: Phase 3全ケースのCVAT確認
++
++Phase 3 production decisionの対象となった129 BBoxを全件対象とする。
++`auto_accept=31`、`auto_refine=35`、`manual_review=63`のすべてをCVATで確認可能にし、
++自動判定ケースも必要なら修正する。Phase 3監査で未選択の残り2,943 BBoxは
++現時点のCVAT対象に含めない。
++
++- 1ケースは1 review frameとし、同一frameの複数BBoxは分割しない
++- 出力はvideoごとの独立ディレクトリとCVAT taskに分ける
++- 各video配下にケース別のimage、初期mask、overlay、BBox/判定情報を保存する
++- 黄BBoxをCVAT入力画像に直接描画し、必要なコンテキストframeも同梱する
++- `auto_accept`、`auto_refine`、`manual_review`の元判定を各ケースに明記する
++- video単位で確認済み・修正済みを記録し、中断・再開可能にする
++- CVAT export ZIP、task backup、review session、SHA-256をvideo単位で保存する
++
++##### Phase 5-B export実装（2026-08-24）
++
++代表試験用の既存export contractを維持しつつ、次を追加した。
++
++- `review_scope=all_phase3`でPhase 3の129 BBoxすべてをreview対象にする
++- correction/importの基点H5を`bboxrank_v3_refined_auto_v1`として記録する
++- 全体packageに加え、`videos/<video_name>`に独立import可能なCVAT packageを生成する
++- `cases/<frame_stem>`にBBox描画済み画像、初期mask、overlay、metadataを保存する
++- review対象BBoxは元のPhase 3 decisionにかかわらずCVAT画像上で黄色にする
++- `review_index.csv`と`progress.csv`でBBox/video単位の進捗を管理する
++- 描画不能なinvalid BBoxも129件のindexに残し、`context_only/not_applicable`として確認対象にする
++- expected countを`129/31/35/63`に固定し、古いPhase 3 artifactの混入を拒否する
++
++編集ファイル:
++
++```text
++pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
++pseudo3d/pipelines/export_stage4_phase5_cvat_review_cases.sh
++checks/stage4/check_stage4_cvat_manual_roundtrip.py
++```
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_manual_roundtrip.py
++
++echo "phase5b_export_synthetic_exit_code=$?"
++```
++
++全件export:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++OVERWRITE=0 \
++bash pseudo3d/pipelines/export_stage4_phase5_cvat_review_cases.sh
++
++echo "phase5b_export_exit_code=$?"
++```
++
++出力先:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1/
++└── manual_review_cvat_phase5_all_phase3_v1/
++    ├── review_index.csv
++    ├── progress.csv
++    ├── partition_summary.json
++    └── videos/
++        └── <video_name>/
++            ├── cases/<frame_stem>/
++            ├── images/
++            ├── masks/
++            ├── overlays/
++            └── cvat/annotations_segmentation_mask_1_1.zip
++```
++
++##### Phase 5-B CVAT master Task確認（2026-08-25）
++
++CVAT `2.73.1`のTask `5`は`1-3_14`だけの代表Taskではなく、Phase 3全129ケースを
++格納したmaster Taskである。したがって、60個のvideo packageはローカルでの整理・
++修正結果の再分割に使い、CVAT上に60 Taskを重複作成しない。
++
++- master Task 5をroot `images/`の129画像、root annotation ZIPと照合する
++- root画像集合と60 video packageの画像集合が完全一致することを確認する
++- `progress.csv`、画像枚数、ZIP SHA-256、Project、`femur` labelを検査する
++- master確認modeではread-onlyとし、`--apply`を拒否する
++- per-video Task作成機能は将来必要になった場合の任意機能として残す
++- 接続先は`localhost`、`127.0.0.1`、`::1`だけを許可する
++- MacのFinderが生成する`.DS_Store`/AppleDoubleは画像集合から除外する
++
++master preflight結果:
++
++```text
++CVAT version       : 2.73.1
++task_id            : 5
++task_name          : stage4_phase5__1-3_14
++task scope         : all_phase3_master
++workspace          : standalone
++master frames      : 129
++selected BBoxes    : 129
++video packages     : 60
++preflight          : passed
++```
++
++Task名は代表video名を含むが、実体は全129ケースのmaster Taskである。Taskを追加作成せず、
++Task 5を全件確認・修正に使用する。
++
++編集前Task backupもMac側で作成・検証済みである。
++
++```text
++filename : task_5_all_phase3_pre_review_backup.zip
++contents : data/images, data/manifest.jsonl, task.json, annotations.json
++zip test : passed
++sha256   : cbce5290afa34f968553b85a78646aeb3c082e463199755bea978f82c08720ce
++```
++
++追加ファイル:
++
++```text
++pseudo3d/batch/export/batch_create_stage4_phase5_cvat_tasks.py
++pseudo3d/pipelines/create_stage4_phase5_cvat_tasks.sh
++```
++
++#### Phase 5-C: full-video CVAT review
++
++selected-frameだけを格納したTask 5では、crop境界に達するまでの大腿骨断面の移動を
++判断しにくいことが分かった。Task 5はbaselineとして保存し、以後はPhase 3対象を含む
++60動画について、1動画1 Taskで全local-crop frameを時系列に格納する。
++
++人力確認では、修正対象を`annotate`、十分な良好frameがあるcrop端例を
++`exclude_crop_boundary`、crop再生成が必要な例を`needs_recrop`に分類する。
++見切れたBBoxを一律にpositive化せず、判断結果をmaskとは別のCSVに保存する。
++
++実装手順、data contract、出力構成、crop metric、CVAT運用、再importの詳細は次へ分離する。
++
++- `docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
++
++2026-08-28時点でStep 1、Step 2を実装し、合成検査のexit code 0を確認済み。実データを
++変更しないpreflight（Step 3）も60動画・3,048 frame・129 targetで成功済み。full-video
++package生成・CVAT ZIP検査・source再照合・Mac転送manifest生成（Step 4）も実データで
++exit code 0を確認して完了した。Mac上でTask 5と分離した60 standalone Taskを作成し、
++1動画smokeから残りへ再開可能に展開するStep 5も実装済みである。次はMacへpackageと
++更新コードを転送し、dry-run、1動画smoke、残り59動画の順に実行する。
++
++#### Phase 5-D: manual反映済み全件runの構築
++
++2026-09-03、59 Taskの返却snapshotを取り込む実装を追加した。crop不良として登録済みの
++`20250626_090758_8000`を除外し、reviewed 59動画と非review 122動画から181動画を構築する。
++CVAT修正は除外後に描画可能な112 target BBoxだけへ限定し、context・target外・crop外BBoxはv3を
++保持する。空maskは削除修正として許可する。単一targetへ一意に帰属するmanual maskは弱い
++BBoxより優先する。BBox外positiveはCVAT再exportごとに再集計し、provenance付きで保持する。
++最終runは
++`bboxrank_v4_manual_fullvideo_v1`とし、preflight、annotated、collected、3値label監査、可視化を
++`pseudo3d/pipelines/build_stage4_bbox_ranked_v4_manual_fullvideo.sh`から実行する。実データでの
++build成功と目視確認をもってPhase 5完了とする。
++
++##### Phase 5-D実データ結果（2026-09-05）
++
++CVATで再修正した59 Taskのsnapshot v2をLinux環境へ返却し、crop不良として登録した
++`20250626_090758_8000`を除外した最終buildが成功した。元の182動画のうち181動画を、
++手動修正反映済みteacher v4として別runへ生成した。
++
++```text
++run name       : global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1
++annotated H5   : 181
++collected H5   : 181
++excluded video : 20250626_090758_8000
++build exit code: 0
++```
++
++主要出力:
++
++```text
++stage4_training_ablation/260711/
++└── global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1/
++    ├── annotated/
++    ├── collected/
++    ├── annotation_textures/
++    └── logs/
++```
++
++`annotated`と`collected`の生成、3値label policy監査、既存可視化のexportまでは完了した。
++ただし、現行`annotation_textures/<video>/frames`の赤maskと輪郭線は、保存済みv4
++`annotation/point_label`やCVAT manual maskを直接描くものではなく、画像・strict XML BBox・
++保存configから`bbox_ranked_global_local`を再実行した自動輪郭である。したがって、この画像は
++sampling source、XML BBox、自動輪郭の確認には使えるが、v4手動修正ラベルの最終確認には
++使わない。
++
++Phase 5の状態は「teacher v4 build完了、v4ラベル専用の目視検証は未完了」とする。
++目視中に見つかった追加相談事項は、内容と対応方針を合意するまで未修正として扱い、現時点の
++H5、XML、可視化処理へ変更を加えない。
++
++自動輪郭の目視では、適切に見えるlocal候補を、BBox辺まで膨張したglobal候補が内包して
++globalが採用される例が確認された。原因調査、境界接触による最小変更案、既存CVAT maskの
++再利用契約は次の独立文書へ分離する。現時点では未実装である。
++
++- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
++
++H5再作成の要否を判断する前に、保存済みteacher v4の3値point labelとprovenanceを直接表示する。
++既存automatic contour可視化とは分離し、次の計画に従う。
++
++- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
++
++その比較により、full-video CVAT Taskのcontext frameでCVAT mask外の旧automatic positiveが
++残ることを確認した。旧Phase 5-Dの「112 target BBoxだけへ部分適用する」契約は廃止し、
++snapshot対象動画の全Task frameでCVAT maskをpositiveの唯一の根拠にする。修正仕様と実装手順は
++次を正本とする。
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++
+ ### Phase 6: Stage 5比較
+ 
++v4ラベルを直接表示する可視化での目視確認と、保留中の相談事項の扱いを確定するまで開始しない。
++
+ 同じStage 5設定で少なくとも次を比較する。
+ 
+ 1. `bboxrank_v2_nobbox_bg`
+-2. `bboxrank_v3_refined`
++2. `bboxrank_v3_refined_auto_v1`
+ 3. manual修正が十分ある場合は`bboxrank_v3_refined_manual_v1`
+ 
+ foreground点、split、seed、モデル、loss設定を固定し、教師変更だけを比較する。
+@@ -728,12 +2627,19 @@
+ 
+ ```text
+ pseudo3d/analysis/audit_stage4_contour_teacher.py
++pseudo3d/analysis/prototype_stage4_contour_auto_refine.py
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3.yaml
++pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml
++pseudo3d/annotation/contour_teacher_refinement.py
++pseudo3d/annotation/stage4_manual_review.py
+ pseudo3d/export/convert_masks_to_cvat_segmentation_mask_1_1.py
+ pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py
+ pseudo3d/annotation/import_cvat_segmentation_mask_corrections.py
+ pseudo3d/batch/annotation/batch_import_cvat_segmentation_mask_corrections.py
++pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml
+ pseudo3d/pipelines/build_stage4_bbox_ranked_v3_annotations.sh
+ checks/stage4/check_stage4_contour_teacher_audit.py
++checks/stage4/check_stage4_contour_auto_refine.py
+ checks/stage4/check_stage4_cvat_segmentation_mask_export.py
+ checks/stage4/check_stage4_cvat_manual_roundtrip.py
+ ```
+@@ -747,7 +2653,7 @@
+ pseudo3d/batch/export/batch_export_annotation_mask_visualization.sh
+ pseudo3d/pipelines/build_stage4_bbox_ranked_annotations.sh
+ docs/stage4/stage4_sampling_investigation_progress.md
+-../Stage5/train_stage5.sh
++../../../Stage5/train_stage5.sh
+ ```
+ 
+ ## 12. 検証項目
+diff --git a/docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md b/docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..fbdb6ad0b5992a7e092c100105e480ffc46b09f9
+--- /dev/null
++++ b/docs/stage2to4/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md
+@@ -0,0 +1,449 @@
++# Stage 4 CVAT snapshot authoritative label 改修計画
++
++作成日: 2026-09-05  
++最終更新日: 2026-09-07  
++編集対象ディレクトリ: `/workspace/Stage2to4`  
++状態: Step 1〜6完了、v5検証済み・後続teacher v6を最終学習データとして受入済み
++
++## 1. 決定事項
++
++full-video CVAT snapshotを持つ動画では、Taskに含まれる全frameについて、CVATから返却された
++semantic segmentation maskを最終positiveの唯一の根拠とする。
++
++```text
++final positive = sampled pointのpixel座標がCVAT femur mask内にある
++```
++
++次は禁止する。
++
++- CVAT maskと既存automatic positiveのunion
++- CVAT mask外にあるglobal/local/Phase 3 positiveの維持
++- `review_target`だけをCVAT適用対象とし、`context_only`の編集を無視すること
++- BBoxでCVAT maskをclipしてからpositiveを決めること
++- 空のCVAT maskを理由にautomatic positiveへfallbackすること
++
++automatic maskはCVAT編集開始時のseed、比較用provenance、非snapshot動画のteacherとしては利用できる。
++ただし、snapshot対象frameの最終positive計算には利用しない。
++
++## 2. 方針変更の根拠
++
++teacher v4の保存済みpoint labelと返却CVAT maskを比較したところ、次の不整合を確認した。
++
++```text
++video                     : 1-3_14
++frame_order               : 10
++frame role                : context
++CVAT mask pixels          : 198
++final positive points     : 343
++positive inside CVAT      : 158
++positive outside CVAT     : 185
++saved contour source      : global
++manual applied frame      : false
++```
++
++現行importerはPhase 3のactionable BBoxを持つframeだけを更新し、full-video Task上で人が追加修正した
++context frameをv3から継承していた。これは描画残りではなく、H5に旧automatic positiveが保存された
++適用範囲の問題である。
++
++## 3. 適用範囲
++
++### 3.1 snapshot対象動画
++
++返却snapshotに含まれる59動画では、各CVAT Taskの画像inventoryに含まれる全frameを適用対象とする。
++`review_target`、`context_only`、Phase 3 decision、BBoxの有無でpositive authorityを切り替えない。
++
++- maskが非空なら、そのmask内のsampled pointだけをpositiveにする
++- maskが空なら、そのframeのfinal positiveを0にする
++- CVAT exportでall-background mask PNGが省略された場合も、Task image stemとの照合に成功した
++  正規のmissing maskだけをempty maskとして扱う
++- unknown stem、extra mask、shape不一致、Task image欠落は失敗とし、emptyへ暗黙補完しない
++
++### 3.2 snapshot非対象動画
++
++現在の返却snapshotは59動画だけを覆い、crop不良の1動画は除外されている。残り122動画には
++CVAT snapshotがないため、本契約だけからCVAT-authoritative labelを生成することはできない。
++
++181動画をまとめる場合は、次をmetadataとmanifestで明確に区別する。
++
++```text
++snapshot-covered 59 videos : CVAT mask authoritative
++non-snapshot 122 videos     : automatic teacher
++excluded 1 video            : dataset対象外
++```
++
++「全181動画のpositiveがCVAT由来」と表現してはならない。dataset全体をCVAT-onlyにする場合は、
++残る122動画にもfull-video CVAT snapshotを作成する必要がある。本改修では新しいannotationを
++捏造せず、59動画の適用不整合だけを修正する。
++
++## 4. point label契約
++
++frameのCVAT femur maskを`M`、保存済みstrict XML BBoxのframe unionを`B`、sampled pointを`p`とする。
++`pixel_xy`は既存処理と同じくround-to-nearestで整数pixelへ対応させる。
++
++```text
++M[p] == 1                    -> point_label =  1 (positive)
++M[p] == 0 and B[p] == 1      -> point_label = -1 (ignore)
++M[p] == 0 and B[p] == 0      -> point_label =  0 (background)
++valid_mask                   -> point_label != -1
++```
++
++重要な帰結:
++
++- `point_label == 1`なら必ず`M[p] == 1`である
++- 旧automatic positiveはframeごと一度破棄し、上式からlabelを再構築する
++- CVAT maskがBBox外へ延びても、その部分は人が確定したpositiveとして保持する
++- BBoxはCVAT positiveのclip条件ではなく、mask外pointのignore/background区分にだけ使う
++- BBoxなしframeでもCVAT mask内のpointはpositiveにできる
++- semantic maskはframe unionであり、複数BBoxをinstance別には分解しない
++- empty maskではBBox内をignore、BBox外をbackgroundとし、positiveを残さない
++
++## 5. 入力・provenance契約
++
++既存artifactは上書きせず、次を読み取り専用入力とする。
++
++- text-free full-video review package
++- 59 Taskの返却snapshot v2
++- snapshot `export_manifest.csv`
++- annotation ZIPとpost-review Task backup
++- source v3 annotated H5
++- strict XML BBoxとpseudo3D local image geometry
++- crop除外manifest
++
++H5作成前に次を照合する。
++
++- snapshot manifest SHA-256
++- video name、Task ID、Task image数、frame stem、frame order/index
++- annotation ZIP SHA-256とTask backup SHA-256
++- image/mask shapeとCVAT label/index contract
++- source H5のpoint arrays、`pixel_xy`、frame alignment、BBox geometry
++- exclusion manifestと対象video集合
++
++新H5にはBBox単位の既存provenanceだけでなく、全Task frameを表せるframe単位provenanceを保存する。
++少なくとも次を記録する。
++
++```text
++frame_stem
++frame_order
++frame_index
++frame_role
++cvat_mask_status          # positive / empty / omitted_as_empty
++cvat_mask_positive_pixels
++cvat_annotation_zip_sha256
++cvat_task_id
++label_authority           # cvat_snapshot
++positive_points
++ignore_points
++background_points
++```
++
++no-BBox context frameも記録できるよう、BBox行だけに依存したschemaにはしない。
++
++## 6. 実装手順
++
++### Step 1: 現行不整合をSynthetic contractへ固定
++
++- actionableではないcontext frameに非空CVAT maskを置く
++- source H5にはCVAT mask外のautomatic positiveを置く
++- 現行v4相当の不整合を再現し、修正後はmask外positiveが0になることを期待値にする
++- context empty、mask省略、BBoxなし、複数BBoxもfixtureへ含める
++
++2026-09-05実装済み。pureな期待値oracleでsource labelに依存しない3値再構築を固定し、現行
++end-to-end importerでは非空context maskが無視される不整合を意図的に再現する。Step 1時点では
++importer本体を変更しないため、検査成功は「現行動作が正しい」という意味ではない。Step 3で
++不整合再現assertionをauthoritative適用成功のassertionへ置き換える。
++
++同日、ユーザー環境でStep 1 Synthetic checkのexit code 0を確認した。
++
++```text
++[OK] pre-fix context-mask omission reproduced with exclusion, provenance, and verified resume
++Stage 4 CVAT snapshot-authoritative Step 1 synthetic contracts passed
++cvat_authoritative_step1_synthetic_exit_code=0
++```
++
++主な検査対象:
++
++```text
++checks/stage4/check_stage4_phase5_fullvideo_final_import.py
++checks/stage4/check_stage4_point_label_visualization.py
++```
++
++### Step 2: snapshot readerを全Task frame契約へ変更
++
++- package `review_frames.csv`をTask frame inventoryの正本とする
++- annotation ZIPを全stemについて検証・読込する
++- target/contextを問わずframeごとのmask状態を返す
++- 正規のall-background省略だけを`omitted_as_empty`として明示記録する
++- BBox/actionable行がないframeも失わない
++
++2026-09-05実装済み。`read_authoritative_task_frame_masks()`を追加し、`review_frames.csv`の
++stem/order/index/role/shapeとCVAT ZIPを照合して、全frameを`positive`、`empty`、
++`omitted_as_empty`へ分類する。reader結果はpackage preflightへ接続したが、Step 2ではH5 label
++更新loopへはまだ接続しない。Synthetic fixtureには非空context、明示empty target、省略empty、
++重複frame、role不整合を追加した。
++
++### Step 3: final importerをframe-authoritativeに変更
++
++- actionable BBoxだけを回す現行loopを、snapshot対象Taskの全frame loopへ変更する
++- 各frameの旧labelを使用せず、CVAT maskと保存BBox unionから3値labelを再構築する
++- mask外の旧global/local/Phase 3 positiveをすべて除去する
++- nonempty context mask、empty context mask、BBox外manual maskを同じ規則で処理する
++- snapshot非対象動画のH5は変更しない
++- frame単位provenanceと集計値を保存する
++
++主な実装対象:
++
++```text
++pseudo3d/batch/annotation/batch_import_stage4_phase5_fullvideo_cvat.py
++pseudo3d/pipelines/build_stage4_bbox_ranked_v5_cvat_authoritative.sh
++```
++
++既存teacher v4は上書きせず、新しいrun token/rootへ出力する。
++
++2026-09-05実装済み。importerに
++`bboxrank_v5_cvat_authoritative_v1`モードを追加し、snapshot-covered動画では
++`review_frames.csv`の全Task frameを順番に処理する。各frameはsource labelを参照せず、CVAT
++maskをpositive、保存済み全BBoxのunion内かつmask外をignore、それ以外をbackgroundとして
++全面再構築する。したがって、target/context、明示empty、省略empty、no-BBox、BBox外human
++positiveを同じ規則で処理し、CVAT mask外の旧global/local/Phase 3 positiveは残らない。
++
++H5にはBBox単位の従来provenanceに加えて`manual_review_fullvideo_frames`を保存する。ここには
++frame role、mask状態、CVAT positive pixel数、各3値point数、
++`positive_outside_cvat_mask_points`を記録する。snapshot非対象動画はsource labelを保持し、空の
++frame provenanceと`inherited` authorityを記録する。
++
++既存v4成果物と再現経路を保護するため、importerの既定値は従来v4互換のままとし、v5専用
++pipelineから次を明示する。
++
++```text
++--output_teacher_token bboxrank_v5_cvat_authoritative_v1
++```
++
++新規構築入口:
++
++```text
++pseudo3d/pipelines/build_stage4_bbox_ranked_v5_cvat_authoritative.sh
++```
++
++保存済み3値label監査には、CVAT provenanceを持つframeだけno-BBox positiveを許可する
++`--allow_cvat_authoritative_no_bbox_positive`を追加した。Step 3 Synthetic checkでは、Step 2まで
++意図的に再現していたcontext omissionをauthoritative適用成功へ置き換える。
++
++### Step 4: 可視化を全snapshot frameへ対応
++
++- H5 frame provenanceと同じsnapshot ZIPをSHA照合して読む
++- target/contextを問わず、適用したCVAT maskを水色で表示する
++- 赤positiveを水色maskより後に描画する
++- 集計ではmarker半径ではなくpoint中心を使い、`positive_outside_cvat_mask=0`を必須にする
++- frame 10を回帰確認対象として固定する
++
++主な実装対象:
++
++```text
++pseudo3d/export/export_stage4_point_label_visualization.py
++pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py
++pseudo3d/pipelines/export_stage4_v5_cvat_authoritative_point_label_visualizations.sh
++```
++
++2026-09-05実装済み。`bboxrank_v5_cvat_authoritative_v1`ではBBox単位provenanceではなく
++`manual_review_fullvideo_frames`を正本として、review Taskの全frameに対応するCVAT maskを読む。
++H5に保存したframe stem/order/index、mask status、mask pixel数、各3値point数とsnapshot ZIP SHAを
++照合し、point中心で次を必須検査する。
++
++```text
++saved positive == sampled CVAT mask
++positive_outside_cvat_mask_points == 0
++cvat_point_mask_mismatch_points == 0
++```
++
++描画順はbackground/ignore point、水色CVAT mask、赤positive、保存済みBBoxとする。marker半径は
++表示だけに使用し、上記検査には使用しない。v5専用pipelineでは赤markerの見かけ上のmask外膨張を
++避けるため半径0とする。frame CSVにはmask状態とframe単位の不整合数、summaryにはauthority、
++全Task frame数、mask状態別件数を保存する。
++
++既存v4経路を維持し、新規v5一括入口を追加した。
++
++```text
++pseudo3d/pipelines/export_stage4_v5_cvat_authoritative_point_label_visualizations.sh
++```
++
++この入口は`--require_cvat_authoritative`を指定し、v4 H5の混入と古い可視化summaryのverified
++resumeを拒否する。`VIDEO_NAMES=1-3_14`で回帰対象だけを先行出力できる。
++
++Step 4 Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_point_label_visualization.py
++```
++
++### Step 5: Synthetic checkとread-only実データpreflight
++
++Syntheticでは少なくとも次を確認する。
++
++- nonempty target/context maskの完全適用
++- empty target/context maskでfinal positiveが0になる
++- mask外automatic positiveが残らない
++- BBox外CVAT positiveをclipしない
++- BBoxなしframeのmanual positive
++- 複数BBox frameのsemantic union
++- 正規missing-as-emptyと不正missingの分離
++- `valid_mask == (point_label != -1)`
++- point cloud、sampling、measurement schemaの保存
++- input不変性、atomic output、決定性、verified resume
++
++実データpreflightではH5を書かず、59 Task全frameについて次を集計する。
++
++```text
++CVAT positive/empty/omitted frame数
++CVAT mask positive pixels
++旧automatic positive points
++旧positiveのCVAT内/外件数
++新規positive/削除positiveの見込み
++BBoxなしCVAT-positive frame数
++```
++
++2026-09-06実装済み。source v3 H5、full-video review package、snapshot manifest、annotation
++ZIP、Task backup、task map、除外manifestを既存final importerと同じ契約で検証する。その後、59
++動画の全Task frameをpoint中心で比較し、次を`frame_metrics.csv`、`video_summary.csv`、
++`preflight_summary.json`へ保存する。
++
++対象frame数は、元package 60動画・3048 frameからcrop除外動画
++`20250626_090758_8000`の34 frameを除いた、59動画・3014 frameに固定する。
++
++```text
++source positiveのCVAT mask内/外point数
++CVAT-authoritative化後のprojected positive point数
++retained / added / removed positive point数
++positive / empty / omitted_as_empty frame数
++review_target / context_only frame数
++BBoxなしCVAT-positive frame数とprojected positive point数
++```
++
++入力H5は常にread-onlyで開き、source H5、返却ZIP、Task backup、各package contract file等の
++SHA-256を実行前後で照合する。生成物は監査reportだけで、`h5_files_written=0`を記録する。
++
++実データでは`review_target=True, context_only=True`となるframeが存在する。これは矛盾ではなく、
++Phase 3 targetだがcrop内に描画可能なmanual BBoxがない`unreviewable target`を意味する。Step 5
++ではactionable target、通常context、unreviewable targetを分離して集計し、後者も正規の
++omitted-as-empty候補として扱う。
++
++実装入口:
++
++```text
++pseudo3d/analysis/preflight_stage4_cvat_authoritative_labels.py
++pseudo3d/pipelines/preflight_stage4_v5_cvat_authoritative_labels.sh
++checks/stage4/check_stage4_cvat_authoritative_preflight.py
++```
++
++Step 5 Synthetic check:
++
++適用・schema・決定性は検査済みのStep 3/4 checkで担保し、Step 5固有checkではpoint比較の
++partition集計、empty/context見込み、geometry拒否、read-only H5 openを確認する。
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_cvat_authoritative_preflight.py
++```
++
++2026-09-06、実データpreflightのexit code 0を確認した。出力先はv5 run root内の
++`cvat_authoritative_preflight_step5`であり、`preflight_summary.json`、`frame_metrics.csv`、
++`video_summary.csv`を生成した。このpreflight成果物をStep 6の構築前提および受入期待値として
++再利用する。
++
++### Step 6: versioned rebuildと受入検査
++
++- snapshot v2を再利用し、CVATで再編集しない
++- 新しいversioned rootへannotated、collected、label visualizationを生成する
++- 59 snapshot動画の全Task frameで`positive_outside_cvat_mask=0`を確認する
++- `1-3_14/frame_order=10`で赤pointがCVAT mask外にないことを確認する
++- snapshot非対象122動画と除外1動画の扱いをsummaryへ明記する
++- source v3、teacher v4、CVAT ZIP、Task backupを変更しない
++
++2026-09-06実装済み。Step 5の`preflight_summary.json`と入力checksum inventoryを構築前提とし、
++次の5段階を単一pipelineへ接続した。
++
++```text
++1. v5 annotated H5を181動画へ構築
++2. collectedへ181 H5を収集
++3. 保存済み3値label policyを監査
++4. 保存labelとCVAT maskを全動画で可視化
++5. Step 5予測値、H5、収集物、可視化を横断して受入検査
++```
++
++受入検査では、snapshot対象59動画・全3014 Task frame、snapshot非対象122動画、除外1動画を
++明示的に分離する。59動画ではCVAT mask状態別件数とpositive総数がStep 5予測に一致し、
++`positive_outside_cvat_mask_points=0`かつ`cvat_point_mask_mismatch_points=0`であることを必須とする。
++122動画ではsource v3の`point_label`/`valid_mask`が完全一致すること、collected H5はannotated H5と
++バイト一致すること、全181動画の可視化summaryとPNG件数がH5に対応することを確認する。
++`1-3_14/frame_order=10`は固定回帰対象とする。
++
++実装入口:
++
++```text
++pseudo3d/pipelines/build_stage4_bbox_ranked_v5_cvat_authoritative.sh
++checks/stage4/check_stage4_v5_cvat_authoritative_acceptance.py
++```
++
++実データ構築コマンド:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++SKIP_EXISTING=1 \
++bash pseudo3d/pipelines/build_stage4_bbox_ranked_v5_cvat_authoritative.sh
++
++echo "cvat_authoritative_step6_build_exit_code=$?"
++```
++
++既定の`SKIP_EXISTING=1`では、既存H5と可視化をchecksum/provenance付きで検証して再開する。
++入力や設定の変更後に同じv5出力rootを作り直す用途では、既存成果物を退避したうえで新しい
++versioned rootを指定する。既存v3/v4成果物は上書きしない。
++
++2026-09-06、実データ181動画についてStep 6のexit code 0を確認した。annotated/collectedは
++各181 H5、snapshot対象は59動画・3014 Task frame、snapshot非対象は122動画、crop除外は1動画
++である。`annotation_textures_v5_cvat_authoritative_labels`の目視確認でも、CVAT mask外に旧automatic
++positiveが残る問題は解消した。
++
++この確認後、過去に誤BBoxとしてXML自体を削除したframeでは、v5が保存済みBBoxと返却済みCVAT
++maskを再現したため、削除意図が反映されずBBox/positiveが残る別問題を確認した。これは
++CVAT-authoritative適用の失敗ではなく、v5の入力artifactがXML削除前に固定されていることによる。
++対処は次の独立文書へ分離する。
++
++- `docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
++
++2026-09-07、上記の後続計画はStep 1〜Step 6まで完了した。削除済みXML 7件を明示的に無効化した
++teacher v6を181動画で構築し、保存ラベル可視化の目視確認にも問題がないことを確認した。これにより、
++CVAT snapshotをpositiveの唯一の根拠とする修正と、後発のXML削除意図が両立した。今回のStage 5学習では
++v5ではなく、次のv6 `collected`を使用する。
++
++```text
++/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
++  global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1/
++    collected/
++```
++
++## 7. 受入条件
++
++- snapshot対象frameのpositive point中心がCVAT maskの部分集合である
++- 非空context maskがH5へ反映される
++- empty context maskにautomatic positiveが残らない
++- snapshot対象frameのlabel計算がautomatic contour maskを参照しない
++- BBox外の人力maskを暗黙clipしない
++- frame単位でmask authorityとchecksumを追跡できる
++- 59 Task全件でstem、shape、SHA、label contractが通る
++- 既存artifactを上書きせず、同一入力から決定的に再構築できる
++
++## 8. 今回行わないこと
++
++- CVAT Taskまたはsnapshotの再編集
++- global/local輪郭選択ロジックの変更
++- foreground sampling、crop、`pixel_xy`、XML BBoxの変更
++- CVAT mask外automatic positiveの救済
++- snapshotのない122動画へCVAT labelを推測すること
++
++自動輪郭のBBox境界接触見直しは別課題として維持するが、snapshot対象frameの最終positiveには
++影響させない。
+diff --git a/docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md b/docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..79c38ba1de5b0b125f3c5fe140c4d8f5f14ade3f
+--- /dev/null
++++ b/docs/stage2to4/stage4/stage4_deleted_xml_annotation_invalidation_plan.md
+@@ -0,0 +1,513 @@
++# Stage 4 削除済みXMLアノテーション無効化計画
++
++作成日: 2026-09-06  
++最終更新日: 2026-09-07  
++編集対象ディレクトリ: `/workspace/Stage2to4`  
++状態: Step 1〜Step 6完了、teacher v6最終受入済み・学習利用可
++
++関連文書:
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++- `docs/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md`
++- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
++
++## 1. 背景
++
++teacher v5のCVAT-authoritative構築と受入検査は成功し、返却CVAT mask外に旧automatic positiveが
++残る問題は解消した。一方、CVAT review packageとsource H5を作成した後に、誤BBoxとしてVOC XMLを
++削除したframeでは、v5可視化にBBoxとpositiveが残っている。
++
++これは次のartifactがXML削除前の状態を保持しているためである。
++
++- source v3 H5の`frame_annotation`に保存されたBBoxと`xml_path`
++- text-free full-video review packageのBBox inventory
++- CVAT Taskへ投入・修正後に返却されたsemantic mask
++- v5 H5のCVAT-authoritative frame labelとprovenance
++
++v5は再現性確保のため構築時に現在のXMLディレクトリを再走査しない。したがって、XMLファイルの
++削除だけでは既存artifactのBBoxやCVAT maskは消えない。この挙動自体はv5契約どおりである。
++
++## 2. 決定する優先順位
++
++明示的に「誤アノテーションとして削除したXML」は、返却済みCVAT maskより上位の無効化指示とする。
++
++```text
++明示的annotation invalidation manifest
++    > reviewed CVAT snapshot
++    > automatic teacher
++```
++
++ただし、単に保存済み絶対パス上でXMLが見つからないことだけを自動削除条件にはしない。mount変更、
++データ移動、ファイル名変更を誤削除と判定する危険があるため、欠落XML監査は候補抽出にだけ使い、
++実際の適用対象はversion管理されたmanifestへ明記する。
++
++## 3. 無効化単位とラベル規則
++
++今回の操作はXMLファイル自体の削除であり、そのXMLが表していたframe全体を無効化単位とする。
++該当frameでは有効な大腿骨BBoxが存在しないものとして扱う。
++
++```text
++point_label = 0 (background)  # 該当frameの全point
++valid_mask = True
++保存BBox row = 0
++最終positive = 0
++最終ignore = 0
++```
++
++元CVAT maskは監査用checksum/provenanceとして保持できるが、最終point labelの生成および通常の
++mask overlayには使用しない。これにより、削除済みBBox、赤positive、水色の旧CVAT maskが通常の
++最終ラベル可視化へ残らない。
++
++1つのXMLに複数の正しいBBoxと誤BBoxが混在し、誤objectだけを除外したい場合はframe全体を無効化
++してはならない。その場合はXMLを削除せずobject-level correctionを別途定義する。今回の
++frame-level tombstoneとは分離する。
++
++## 4. 無効化manifest
++
++新規CSVをリポジトリ内のconfigとして管理する。予定する最低限の列は次のとおり。
++
++```text
++video_name
++frame_order
++frame_index
++frame_stem
++expected_xml_name
++expected_saved_bbox_rows
++action                 # invalidate_entire_frame
++reason_code            # deleted_incorrect_bbox_xml
++notes
++```
++
++適用前に次を厳密に照合する。
++
++- video/frameがcrop-clean train manifestの有効動画に属する
++- frame order/index/stemがpseudo3D H5およびCVAT Task inventoryと一致する
++- source v5の`frame_annotation/xml_path` basenameが`expected_xml_name`と一致する
++- 対象frameの保存BBox row数が`expected_saved_bbox_rows`と一致する
++- 現在の正規VOC XML rootに対象XMLが存在しない
++- manifest内に重複frameがない
++- manifestにない欠落XMLは勝手に無効化しない
++
++該当video/frameの具体値は実装開始時に監査結果とユーザー確認から固定する。
++
++## 5. versioned出力
++
++成功済みv5を上書きしない。v5 annotated H5を読み取り専用sourceとし、無効化だけを適用した新しい
++versioned teacher rootを作る。仮称は次とする。
++
++```text
++teacher token: bboxrank_v6_cvat_authoritative_xml_invalidation_v1
++run root    : global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1
++```
++
++CVAT Task、返却snapshot v2、source v3、teacher v4/v5、元XML directoryは変更しない。
++
++## 6. H5補正契約
++
++対象frameだけに次を適用する。
++
++1. `annotation/point_label`を全backgroundへ変更する
++2. `annotation/valid_mask`を全trueへ変更する
++3. `frame_annotation`の対象frame行を全datasetで同じselectorにより除去する
++4. BBox単位`manual_review_fullvideo`の対応行を除去する
++5. `manual_review_fullvideo_frames`のframe行は監査証跡として保持する
++6. frame authorityを`xml_deletion_manifest`へ変更し、override reasonとmanifest SHAを保存する
++7. point cloud、sampling、geometry、他frameのlabelを変更しない
++8. root/annotation統計を再計算する
++
++別groupに、除去前BBox、元XML path、元CVAT mask status/SHA、変更前後のlabel数、manifest SHAを
++保存し、削除理由を追跡可能にする。
++
++## 7. 実装手順
++
++### Step 1: read-only欠落XML監査
++
++181本のv5 H5について、保存済み`frame_annotation/xml_path`と現在の正規VOC XML rootを照合する。
++候補CSVにはvideo、frame、BBox数、v5 positive/ignore数、CVAT mask状態を出す。H5は変更しない。
++
++2026-09-07実装済み。H5保存パスとtrain manifestから再構成したcanonical pathを別々に確認し、
++次の状態を区別する。
++
++```text
++canonical
++canonical_only
++saved_only
++canonical_saved_identical
++canonical_saved_conflict
++missing
++```
++
++`missing`だけを候補CSVへ出すが、この段階では無効化を適用しない。同一frameにmissing XMLと
++現存XMLが混在する場合は`frame_has_mixed_xml_presence=True`として、frame全体削除候補から分離する。
++v5 frame provenanceからCVAT mask状態とpositive pixel数を読み、保存済みpoint labelから候補frameの
++positive/ignore/background数も記録する。v5 H5、manifest、除外manifest、現存XMLはSHA-256を実行後に
++再照合し、H5はread-onlyで開く。
++
++実装入口:
++
++```text
++pseudo3d/analysis/audit_stage4_deleted_xml_annotations.py
++pseudo3d/pipelines/audit_stage4_v5_deleted_xml_annotations.sh
++checks/stage4/check_stage4_deleted_xml_annotation_audit.py
++```
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_deleted_xml_annotation_audit.py
++
++echo "deleted_xml_step1_synthetic_exit_code=$?"
++```
++
++実データ監査:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++OVERWRITE=0 \
++bash pseudo3d/pipelines/audit_stage4_v5_deleted_xml_annotations.sh
++
++echo "deleted_xml_step1_realdata_exit_code=$?"
++```
++
++出力はv5 run root内の`deleted_xml_annotation_audit_step1`へ保存する。
++
++```text
++audit_summary.json
++xml_inventory.csv
++missing_xml_candidates.csv
++video_summary.csv
++input_checksums.csv
++```
++
++2026-09-07、実データ181動画の監査がexit code 0で完了した。
++
++```text
++videos                           : 181
++bbox_rows                        : 3059
++xml_entries                      : 2743
++missing_xml_entries              : 7
++missing_frames                   : 7
++all_xml_missing_frames           : 7
++mixed_xml_presence_frames        : 0
++all_missing_frame_positive_points: 2124
++```
++
++欠落7 XMLはユーザーが意図的に削除した件数（同一ケース6件と別ケース1件）と一致した。7件はすべて
++別frameで、そのframe内のXMLがすべて欠落しており、現存XMLとの混在はない。したがって、今回の
++7 frameはobject単位の曖昧性なしに`invalidate_entire_frame`へ登録できる。v5では合計2124 positive
++pointが残っているため、後続補正で0へ変更する対象となる。
++
++### Step 2: invalidation manifestの固定
++
++監査候補から、ユーザーが意図的に削除したXMLだけをCSVへ登録する。件数、frame stem、XML basename、
++保存BBox数をpreflightし、未登録の欠落は警告または失敗として分離する。
++
++2026-09-07実装済み。Step 1の5成果物を証拠として再利用し、次を固定する。
++
++- `missing_xml_candidates.csv`の7行をframe単位manifestへ決定的な順序で変換する
++- 7行が`missing`、全XML欠落、混在なし、保存/正規XMLとも不存在であることを確認する
++- crop-clean train manifest上で対象動画が有効かつ除外対象外であることを確認する
++- Step 1の全入力checksumを再照合し、監査後のH5/XML/manifest変更を拒否する
++- 該当動画の現在のv5 H5をread-onlyで開き、frame identity、XML basename、BBox数、label数を再照合する
++- 7 frameの重複、復元済みXML、複数XMLが混在するframe、候補CSV改変を拒否する
++- 合計2124 positive pointを後続で除去する対象として固定する
++- 同一内容の既存manifestは`verified_existing`として受理し、異なる内容は明示的`OVERWRITE=1`なしで拒否する
++
++versioned config:
++
++```text
++pseudo3d/analysis/configs/stage4_deleted_xml_invalidations_v1.csv
++```
++
++実装入口:
++
++```text
++pseudo3d/analysis/build_stage4_deleted_xml_invalidation_manifest.py
++pseudo3d/pipelines/build_stage4_deleted_xml_invalidation_manifest.sh
++checks/stage4/check_stage4_deleted_xml_invalidation_manifest.py
++```
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_deleted_xml_invalidation_manifest.py
++
++echo "deleted_xml_step2_synthetic_exit_code=$?"
++```
++
++実データmanifest固定:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++OVERWRITE=0 \
++bash pseudo3d/pipelines/build_stage4_deleted_xml_invalidation_manifest.sh
++
++echo "deleted_xml_step2_realdata_exit_code=$?"
++```
++
++出力はversioned configとv5 run root内のStep 2 summaryに分離する。
++
++```text
++pseudo3d/analysis/configs/stage4_deleted_xml_invalidations_v1.csv
++deleted_xml_annotation_invalidation_step2/manifest_summary.json
++```
++
++Step 2ではH5を書き換えない。manifestには`invalidate_entire_frame`と
++`deleted_incorrect_bbox_xml`を固定し、summaryにはmanifest SHA-256、semantic fingerprint、Step 1証拠
++SHA-256、該当v5 H5 SHA-256を保存する。
++
++2026-09-07、実データmanifest固定がexit code 0で完了した。
++
++```text
++invalidations      : 7
++affected videos    : 2
++positive to remove : 2124
++manifest status    : written
++summary status     : written
++fingerprint        : 723e1818c60baa7d05ea590ed1825131f100bcdac6038f07e968bd80aa4e16c4
++```
++
++対象は`20250626_090828_2100`の1 frameと`20250626_094835_7950`の連続6 frameであり、ユーザーが
++意図的に削除した内訳と一致する。これにより、後続処理が参照する無効化対象、期待XML basename、
++保存BBox数、action、reason codeがversioned configとして固定された。Step 2ではH5を書き換えていない。
++
++### Step 3: Synthetic contract
++
++少なくとも次を固定する。
++
++- CVAT positiveを持つ削除XML frameが全backgroundになる
++- BBox/ignoreが残らない
++- 非対象frameはv5と完全一致する
++- 複数BBox XMLのframe-level削除
++- manifest重複、frame不一致、XMLが現存する誤指定を拒否する
++- verified resumeと入力checksum不変性
++
++2026-09-07実装済み。Step 4のbatch処理から利用する単一H5補正関数と、合成H5による契約検査を
++追加した。この段階では実データ181本のv6構築は行わない。
++
++実装入口:
++
++```text
++pseudo3d/annotation/apply_deleted_xml_invalidations.py
++checks/stage4/check_stage4_deleted_xml_invalidation_apply.py
++```
++
++補正処理は対象frameについて次を行う。
++
++- 全pointをbackgroundへ変更し、`valid_mask=True`とする
++- `frame_annotation`の全BBox行を同一selectorで除去する
++- BBox単位`manual_review_fullvideo`の対応行も除去する
++- 除去した両groupの全datasetを`xml_annotation_invalidation`配下へ退避する
++- frame単位`manual_review_fullvideo_frames`は保持し、対象行のauthorityとlabel数を更新する
++- 元CVAT mask status/pixel数は監査情報として保持する
++- source v5 H5、非対象point label、point cloud、その他groupを変更しない
++- 対象外動画もlabel/BBoxを変えずv6 schemaへ伝播し、全manifest fingerprintを各H5へ保存する
++- v6 token、source/manifest SHA-256、semantic fingerprint、変更前後のpoint数を保存する
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_deleted_xml_invalidation_apply.py
++
++echo "deleted_xml_step3_synthetic_exit_code=$?"
++```
++
++検査では、複数BBoxを持つ1 XMLのframe-level削除、退避データ、非対象データ不変、決定的な再生成、
++verified resumeに加え、BBox数不一致、重複frame、復元済みXML、既存出力provenance破損を拒否する。
++
++### Step 4: versioned H5補正と収集
++
++v5をsourceとしてv6 annotated/collectedを生成する。CVAT snapshotの再importや再編集は行わない。
++
++2026-09-07実装済み。crop-clean train manifest、動画除外manifest、Step 2で固定した無効化manifestと
++summaryを入力とし、181動画を1回のversioned buildで処理する。
++
++- 7対象frameにはStep 3のframe tombstoneを適用する
++- 残りframeおよび対象外174動画はpoint label/BBoxを変更せずv6へ伝播する
++- `20250626_090758_8000`はcrop-clean manifestどおり除外し、出力しない
++- Step 2に保存した該当v5 H5 checksum、manifest SHA-256、semantic fingerprintを再照合する
++- annotatedは動画別directory、collectedはflat directoryへ保存する
++- collected H5は対応するannotated H5とのバイト同一性をSHA-256で検証する
++- verified resumeでは既存v6 provenanceとannotated/collected checksumを再検証し、不一致を拒否する
++- summaryには181動画、2対象動画、7 frame、除去BBox 7行、除去positive 2124点を記録する
++
++実装入口:
++
++```text
++pseudo3d/batch/annotation/batch_apply_stage4_deleted_xml_invalidations.py
++pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
++checks/stage4/check_stage4_deleted_xml_invalidation_batch.py
++```
++
++Step 3完了実績:
++
++```text
++[OK] all-background tombstone, BBox removal/archive, provenance, non-target preservation, and deterministic resume
++[OK] unaffected-video v5-to-v6 propagation without label/BBox changes
++[OK] BBox mismatch, duplicate frame, and restored XML rejection
++[OK] corrupt verified-resume provenance rejection
++deleted_xml_step3_synthetic_exit_code=0
++```
++
++Step 4 synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_deleted_xml_invalidation_batch.py
++
++echo "deleted_xml_step4_synthetic_exit_code=$?"
++```
++
++実データv6構築:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++SKIP_EXISTING=1 \
++bash pseudo3d/pipelines/build_stage4_bbox_ranked_v6_xml_invalidation.sh
++
++echo "deleted_xml_step4_realdata_exit_code=$?"
++```
++
++出力先:
++
++```text
++/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
++  global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1/
++    annotated/
++    collected/
++    invalidation_summary.csv
++    invalidation_summary.json
++    logs/01_deleted_xml_invalidation_apply.log
++```
++
++Step 4ではv5、CVAT snapshot、XMLを変更せず、可視化もまだ生成しない。実データ構築後のsaved-label
++可視化はStep 5でversioned出力として行う。
++
++2026-09-07、実データv6構築がexit code 0で完了した。
++
++```text
++videos             : 181
++invalidated frames : 7
++removed BBoxes     : 7
++removed positive   : 2124
++annotated files    : 181
++collected files    : 181
++```
++
++Step 2で固定した期待値とすべて一致し、v5とは別のversioned rootへ保存された。
++
++### Step 5: saved-label可視化
++
++v6 H5の保存済みlabelを描画する。無効化frameでは旧CVAT maskを通常overlayせず、BBox、positive、
++ignoreが0であることをframe CSV/summaryへ記録する。その他のreviewed frameは従来どおりCVAT maskを
++表示する。
++
++2026-09-07実装済み。既存saved-label rendererをv5/v6両対応にし、v6では
++`xml_annotation_invalidation`を先に検証してから描画する。
++
++- 無効化frameは`label_authority=xml_deletion_manifest`であることを要求する
++- 保存pointが全background、BBox rowとmanual BBox rowが0であることを描画前に検証する
++- 返却CVAT ZIPと保存済みstatus/pixel数は証拠として照合する
++- 無効化frameの旧CVAT maskは描画対象から除外し、`suppressed_by_xml_invalidation`と記録する
++- 他frameでは従来どおり水色CVAT mask、赤positive、黄ignore、青background、緑BBoxを描画する
++- `frame_labels.csv`へauthority、無効化action/reason、mask suppressionを追加する
++- 全181動画でmanifest SHA/fingerprintが1種類、無効化7 frame/2動画、suppression 7 frameであることを
++  batch側でも検証する
++- 自動輪郭やXMLは再計算せず、H5、pseudo3D H5、CVAT ZIPを変更しない
++
++実装入口:
++
++```text
++pseudo3d/export/export_stage4_point_label_visualization.py
++pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py
++pseudo3d/pipelines/export_stage4_v6_xml_invalidation_point_label_visualizations.sh
++checks/stage4/check_stage4_deleted_xml_invalidation_visualization.py
++```
++
++Synthetic check:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_deleted_xml_invalidation_visualization.py
++
++echo "deleted_xml_step5_synthetic_exit_code=$?"
++```
++
++実データ一括可視化:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++SKIP_EXISTING=1 \
++bash pseudo3d/pipelines/export_stage4_v6_xml_invalidation_point_label_visualizations.sh
++
++echo "deleted_xml_step5_realdata_exit_code=$?"
++```
++
++出力先:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1/
++  annotation_textures_v6_xml_invalidation_labels/
++    summary.csv
++    <video_name>/summary.json
++    <video_name>/frame_labels.csv
++    <video_name>/frames/annotation_frame_*.png
++```
++
++### Step 6: 受入検査（完了）
++
++2026-09-07、Step 4で構築したteacher v6について、Step 5の保存済みpoint-label可視化を
++全動画へ出力し、フレーム画像の目視確認を完了した。描画内容に問題は認められなかった。
++
++最終受入では次を確認した。
++
++- XML削除対象7 frameでは、削除済みBBox、赤positive、黄ignore、水色の旧CVAT maskが残っていない
++- 対象frameのpointは全てbackgroundで、BBox rowも除去されている
++- 対象外frameでは、CVAT snapshotを唯一のpositive authorityとするv5の修正結果が維持されている
++- CVAT修正済みmask外へautomatic positiveが残る問題は再発していない
++- XML削除7件は固定invalidation manifestと一致し、別のframeへ波及していない
++- crop不良の`20250626_090758_8000`は引き続き除外され、成果物は181動画である
++- `annotated`と`collected`は各181 H5で、v5や返却CVAT snapshotを上書きしていない
++
++以上により、XML削除とCVAT修正は両方とも最終教師ラベルへ反映済みと判断する。teacher v6を
++今回のStage 5学習に使用する正本として受け入れる。
++
++学習入力:
++
++```text
++/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
++  global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1/
++    collected/
++```
++
++用途の区分:
++
++- `collected/`: Stage 5の学習入力
++- `annotated/`: 動画別H5の監査・追跡用正本
++- `annotation_textures_v6_xml_invalidation_labels/`: 最終目視確認の証拠
++- v4/v5成果物: 変更履歴と回帰比較用であり、今回の学習入力には使用しない
++
++## 8. 今回行わないこと
++
++- XMLファイルの復元・編集
++- CVAT Taskの再編集またはsnapshotの再export
++- foreground sampling、crop、global/local輪郭選択の変更
++- 欠落XML候補を確認なしで一括削除扱いにすること
++- 成功済みv5成果物の上書き
+diff --git a/docs/stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md b/docs/stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d70d0fd0ebd612f545ae5f4bff79b6d5b440ea8f
+--- /dev/null
++++ b/docs/stage2to4/stage4/stage4_phase5_fullvideo_cvat_review_implementation.md
+@@ -0,0 +1,822 @@
++# Stage 4 Phase 5 full-video CVAT review 実装手順
++
++作成日: 2026-08-26  
++最終更新日: 2026-09-07  
++編集対象ディレクトリ: `/workspace/Stage2to4`  
++CVAT実行環境: ローカルMac（`http://localhost:8080`）
++
++## 0. 最新のlabel authority方針（2026-09-05）
++
++teacher v4の目視検証により、full-video Taskのcontext frameで修正されたCVAT maskがH5へ
++適用されず、旧automatic positiveが残る問題を確認した。今後はsnapshot対象動画の全Task frameで、
++CVAT snapshot maskを最終positiveの唯一の根拠とする。
++
++- target/contextを問わず全Task frameへ適用する
++- CVAT mask外のautomatic positiveは維持しない
++- empty maskでもautomatic positiveへfallbackしない
++- BBoxはmask外pointのignore/background区分に使い、CVAT positiveをclipしない
++
++本書のうち「129 targetだけを反映する」「contextをH5へ反映しない」「target外はv3を保持する」
++という記述は、当時のv4実装履歴としてのみ残し、今後の実装仕様としては無効とする。新契約と
++修正手順は次を正本とする。
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++
++CVAT snapshot作成後に誤BBoxのXMLを削除したframeを、保存済みH5/CVATより上位の明示的な
++annotation tombstoneとして反映する後続方針は次を参照する。
++
++- `docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
++
++## 1. 目的
++
++Phase 3で選ばれた129 BBoxだけを並べたCVAT Taskでは、動画内での大腿骨断面の移動を
++確認できず、crop境界で見切れたBBoxを次のいずれかに判定しにくい。
++
++- 現在のcrop内でmaskを修正すべき例
++- 動画内に十分な良好frameがあり、crop端のframeを教師から除外してよい例
++- crop位置そのものを再生成すべき例
++
++この問題を解決するため、対象となった60動画を1動画1 CVAT Taskに分け、各動画の
++全local-crop frameを時系列で確認できるreview packageを作る。
++
++本書は実装前の固定仕様である。既存Task 5、編集前backup、selected-frame package、
++teacher v3 H5は上書きしない。
++
++## 2. 固定入力と既存artifact
++
++教師入力:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1/
++├── annotated/       # 182 H5
++├── collected/       # manual review前の中間出力
++└── manual_review_cvat_phase5_all_phase3_v1/
++```
++
++Phase 3固定件数:
++
++```text
++selected BBoxes : 129
++auto_accept     : 31
++auto_refine     : 35
++manual_review   : 63
++selected videos : 60
++```
++
++既存CVAT Task 5は129候補だけを格納したselected-frame baselineとして保持する。
++
++```text
++task_id       : 5
++frames        : 129
++backup sha256 : cbce5290afa34f968553b85a78646aeb3c082e463199755bea978f82c08720ce
++```
++
++Task 5で既に修正を始めている場合は、作業を止める前に途中結果を次の名前でexportする。
++
++```text
++reviewed_segmentation_mask_1_1_all_phase3_master_partial_v1.zip
++```
++
++このpartial ZIPは新packageの初期maskへ任意にmergeできる入力として保存し、暗黙には
++適用しない。
++
++## 3. 新しい出力root
++
++既存`manual_review_cvat_phase5_all_phase3_v1`を置換せず、次へ出力する。
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1/
++└── manual_review_cvat_phase5_fullvideo_v2/
++```
++
++構成:
++
++```text
++manual_review_cvat_phase5_fullvideo_v2/
++├── review_index.csv
++├── video_progress.csv
++├── crop_review_decisions.csv
++├── export_summary.json
++├── checksums.csv
++└── videos/
++    └── <video_name>/
++        ├── images/                  # 全local-crop frame、BBox境界線だけを描画
++        ├── masks/                   # target初期mask、contextはall-background
++        ├── overlays/                # 目視補助
++        ├── cases/                   # 129 targetだけの詳細
++        ├── review_frames.csv
++        ├── review_bboxes.csv
++        ├── crop_review_decisions.csv
++        ├── context_only_stems.txt
++        ├── export_summary.json
++        ├── checksums.csv
++        ├── review_session_template.yaml
++        └── cvat/
++            ├── annotations_segmentation_mask_1_1.zip
++            └── conversion_summary.json
++```
++
++全frame数は実データpreflightで集計し、summaryへ固定する。
++
++## 4. frame選択と順序
++
++対象video集合は既存`review_index.csv`に含まれる60動画と完全一致させる。182動画すべてを
++CVATへ送らない。
++
++各対象videoではpseudo3D H5の`local_encoder_images`と`frame_indices`を読み、全frameを
++exportする。画像名は次に固定し、lexicographical sortと時間順を一致させる。
++
++```text
++<video_name>__fo<frame_order:05d>__fi<frame_index:08d>.png
++```
++
++各frameに次を記録する。
++
++- `frame_order`
++- `frame_index`
++- `review_target`の有無
++- strict XML BBox数
++- Phase 3 selected BBox index
++- source pseudo3D/annotated H5とSHA-256
++- image、initial mask、overlayのSHA-256
++
++CVATへimportする画像はlocal crop座標系だけとする。raw/full-width画像はmask座標が異なるため
++同じSegmentation Taskへ混在させない。
++
++## 5. BBoxの描画規則
++
++CVATでmanual segmentationに用いる画像は、元のlocal cropと同じshape・座標を維持し、
++BBoxの細い境界線だけを次の色で描く。
++
++| 表示 | RGB | 意味 |
++|---|---|---|
++| yellow | `255,255,0` | fully drawableなreview target |
++| magenta | `255,0,255` | crop境界でpartially clippedされたreview target |
++| cyan | `0,255,255` | 同frameの非target XML BBox |
++| red edge tick | `255,0,0` | target BBoxがcrop外で描画不能 |
++
++### 5.1 ラベル文字重複の解消（描画契約実装済み）
++
++full-video Taskの目視確認で、画像上端のframe情報とBBox別ラベルがBBoxや解剖構造へ重なり、
++manual segmentationを妨げる例が確認された。このためCVAT入力画像から次の文字をすべて除去する。
++
++```text
++TARGET / CONTEXT
++frame_order / frame_index
++bbox_index
++crop_status
++visible_fraction
++```
++
++表示契約は次に固定する。
++
++- CVAT入力画像のheight、width、frame stem、frame順を既存packageから変更しない
++- 元画像をresize、crop、pad、平行移動しない
++- 画像上にはBBox境界線とcrop外方向markerだけを描き、文字を一切描かない
++- fully outside BBoxを示す全幅・全高red lineは画像端の短いtickまたはarrowへ変更し、
++  解剖構造やmask境界と誤認しない表示にする
++- frame/BBoxの詳細は`review_frames.csv`、`review_bboxes.csv`、
++  `crop_review_decisions.csv`、`overlays/`、`cases/`で確認する
++- initial maskのshape、pixel座標、内容を変更しない
++- 元のH5、XML、point cloud座標を変更しない
++
++この変更ではCVAT画像だけが変わり、Segmentation Mask 1.1のstem、shape、座標は変わらない。
++したがって、既にCVATで修正済みのmask ZIPは座標変換やpaddingなしで新Taskへimportできる。
++
++CVATへupload済みのTask mediaはローカルPNGの置換だけでは更新されないため、既存Taskは
++編集済みZIPとbackupを保存してから、新しい画像を使うTaskへ置き換える。旧Task/packageを
++上書きせず、例えば次へ版を分離する。
++
++```text
++manual_review_cvat_phase5_fullvideo_v3_textfree/
++stage4_phase5_fullvideo_v3_textfree__<video_name>
++```
++
++実装時には画像上端・下端・左右端、小さいBBox、複数BBox、partially clipped、fully outsideを
++synthetic checkへ追加する。CVAT画像とmaskのshape・stem・順序が旧packageと一致すること、
++既存修正ZIPを無変換でimportできること、H5座標が不変であることを確認してから実データpackageを
++再生成する。文字と重なっていたframeだけは新Task上で再確認する。
++
++2026-09-03に、既存60 Taskの修正済みSegmentation Mask ZIPとpost-review Task backupの
++一括exportを完了した。これをtext-free Taskへ移行する前の復元点とする。続いてfull-video用
++描画関数から全テキストを除去し、fully-outside表示を全辺の赤線から短い内向きtickへ変更した。
++frame番号・role・crop metricはCSVに残し、画像pixelへは書き込まない。次の確認対象は
++`check_stage4_cvat_manual_roundtrip.py`でのtext-free描画contractと、旧/new package間の
++stem・shape・mask不変性である。
++
++同日、text-free描画contractのsynthetic checkがexit code 0で完了した。さらに、既存v2
++packageを読み取り専用入力とし、保存済み`review_frames.csv`のsource pseudo3D H5とBBox
++geometryから画像だけを再構築するmigration処理を追加した。この処理はXML・Phase 3判定・
++initial maskを再計算せず、per-video mask PNGとSegmentation Mask ZIPのバイト一致、frame
++stem・shape・順序、source H5 SHA-256を検証する。旧task state・修正済みsnapshotは新packageへ
++混入させず、新しいMac転送manifestを生成する。
++
++```text
++pseudo3d/batch/export/rebuild_stage4_phase5_textfree_review_package.py
++pseudo3d/pipelines/rebuild_stage4_phase5_fullvideo_textfree_review.sh
++```
++
++text-free packageの実データ生成は60動画・129 BBoxを保持してexit code 0で完了した。Mac側の
++新Task作成では、旧60 Taskから一括exportした修正済みsnapshot manifestを必須入力にできる。
++各snapshot ZIPを新しい同一stem/shapeの画像群に対して検証し、package初期ZIPの代わりにimport
++する。また`stage4_video_exclusions_v1.csv`を適用し、`20250626_090758_8000`は新Taskを作らず
++progress上で`excluded`とする。新Task名は次に分離する。
++
++```text
++stage4_phase5_fullvideo_v3_textfree__<video_name>
++```
++
++実行入口:
++
++```text
++pseudo3d/pipelines/create_stage4_phase5_fullvideo_textfree_cvat_tasks.sh
++```
++
++## 6. crop metric
++
++XML BBoxをlocal crop座標へ変換した後、clip前とclip後を分けて保存する。
++
++```text
++projected_bbox_xyxy
++clipped_bbox_xyxy
++projected_area
++visible_intersection_area
++visible_fraction = visible_intersection_area / projected_area
++```
++
++追加flag:
++
++```text
++touches_left
++touches_right
++touches_top
++touches_bottom
++fully_outside_crop
++partially_clipped
++fully_visible
++```
++
++`x_max == image_width`など境界に一致するBBoxは自動エラーにしない。`touches_right`と
++`visible_fraction`を記録し、人力判断へ渡す。非有限値、負の面積、座標変換不能だけを
++validation failureとする。
++
++## 7. frame roleと人力判定
++
++全frameをCVATへ入れるが、全frameを教師修正対象にはしない。
++
++### 7.1 frame role
++
++```text
++review_target : Phase 3の129 BBoxを含むframe
++context_only  : 同じ60動画内のその他のframe
++```
++
++context-only frameにはCVAT import用のall-background maskを用意する。CVAT exportでそのmaskが
++省略されても、Task image inventoryとの厳格な照合に成功したstemだけはempty maskとして扱う。
++返却snapshotではcontext-onlyも最終label適用対象であり、非空maskはpositive、空maskは
++zero-positiveの人力確定結果とする。
++
++### 7.2 review disposition
++
++129 BBoxごとに`crop_review_decisions.csv`の`review_disposition`を完成させる。
++
++| 値 | 意味 | H5反映 |
++|---|---|---|
++| `pending` | 未確認 | 最終import不可 |
++| `annotate` | 現crop内でmaskを修正 | BBox内にnonempty positiveを要求 |
++| `exclude_crop_boundary` | 良好frameが別にあり、端の見切れ例は不要 | 対象BBox内をignore、positiveを残さない |
++| `needs_recrop` | 動画内でも十分な表示がなくcrop再生成が必要 | 対象BBox内をignore、recrop queueへ追加 |
++
++必須列:
++
++```text
++video_name
++frame_order
++frame_index
++bbox_index
++phase3_decision
++crop_status
++visible_fraction
++review_disposition
++reviewer_notes
++```
++
++empty maskだけから除外を推論しない。`exclude_crop_boundary`または`needs_recrop`の明示がない
++actionable BBoxは、従来どおりnonempty maskを必須とする。
++
++## 8. CVAT初期annotation
++
++label contractは維持する。
++
++```text
++format     : Segmentation Mask 1.1
++background : 0
++femur      : 1
++polygon化  : false
++```
++
++- `review_target`にはteacher v3の初期maskを入れる
++- `context_only`にはall-background maskを入れる
++- mask shapeはlocal crop imageと完全一致させる
++- 返却snapshotでは、129 target以外を含む全Task frameのmaskをH5へ反映する
++- 複数BBox frameではBBoxごとのintersectionと重なりをpreflightする
++
++Task 5のpartial修正をseedに使う場合は、ZIP SHA-256を記録し、該当129 stemだけを明示的に
++置換する。自動mergeと手動修正済みmaskの上書きは禁止する。
++
++## 9. Mac上のCVAT Task
++
++CVATはMac、teacher H5と実装repositoryは管理端末にあるため、工程を分離する。
++
++1. 管理端末でfull-video packageを生成・検査する
++2. `manual_review_cvat_phase5_fullvideo_v2`をMacへ転送する
++3. Macの`localhost:8080`へ60 standalone Taskを作る
++4. videoごとに編集前Task backupを保存する
++5. 修正済みZIP、review session、decision CSVを管理端末へ戻す
++
++Task名:
++
++```text
++stage4_phase5_fullvideo__<video_name>
++```
++
++各Taskは`femur` labelだけを持つstandalone Taskとする。Task作成処理は次を満たす。
++
++- `localhost`/loopback以外を拒否する
++- `video_progress.csv`へTask ID、URL、statusを保存する
++- 同名Taskを暗黙に再利用しない
++- Task作成、annotation import、backupの各段階で状態を保存する
++- 中断後に再開できる
++- 画像数とframe basename/orderをCVAT APIから再確認する
++- backup SHA-256をvideo単位で保存する
++
++## 10. CVATでの確認手順
++
++video Task内を時間順に移動し、target前後の断面移動を確認する。
++
++1. yellow targetは通常のmask修正候補とする
++2. magenta targetは前後frameと比較して`annotate`またはcrop判定を選ぶ
++3. red/outside targetは無理にmaskを描かず、動画内の良好frame有無で除外かrecropを選ぶ
++4. cyan BBoxは参照用だが、CVAT semantic maskはBBox種別にかかわらず最終positiveの正本とする
++5. context-only frameも最終mask確認対象とし、空のまま確定した場合はzero-positiveとして扱う
++6. 全targetのdispositionを完成させてからTaskを完了する
++
++修正export名:
++
++```text
++reviewed_segmentation_mask_1_1_<video_name>_fullvideo_v2.zip
++```
++
++## 11. manual import contract
++
++importerはroot packageとvideo packageのSHA-256、Task backup、CVAT export、review session、
++decision CSVを検証してからH5を作る。
++
++### `annotate`
++
++- corrected maskはBBox union外にpositiveを持たない
++- 対象BBox内に少なくとも1 positive pixelを要求する
++- point labelはmask内を`1`、BBox内mask外を`-1`とする
++
++### `exclude_crop_boundary`
++
++- 対象BBoxについてempty correctionを許可する
++- 対象BBox内の既存positiveを除去し`-1`へ戻す
++- `annotation_reason=manual_exclude_crop_boundary`を保存する
++
++### `needs_recrop`
++
++- 現cropの対象BBox内を`-1`にする
++- `recrop_queue.csv`へsource H5、frame、XML BBox、crop metric、notesを保存する
++- 自動的な別crop生成はこのPhaseでは行わない
++
++この節の旧v4 importerはcontext-only frameおよび129 target外をteacher v3から保持していた。
++この部分適用契約は廃止し、snapshot対象動画では全Task frameをCVAT maskから再構築する。
++詳細は`stage4_cvat_snapshot_authoritative_label_revision_plan.md`を参照する。source H5は上書きせず、
++修正版は新しいversioned rootへ生成する。
++
++## 12. 実装段階
++
++### Step 1: data contractとexporter
++
++- full-video optionをreview exporterへ追加する
++- 60動画と129 targetの固定集合を検証する
++- crop metric、描画、frame role、decision templateを生成する
++- 既存selected-frame modeを壊さない
++
++### Step 2: synthetic check
++
++- fully visible、partial clip、fully outside BBox
++- `x_max == width`境界
++- target/context mask分離
++- frame順、複数BBox、非連続frame index
++- 既存selected-frame modeの互換性
++
++### Step 3: real-data export preflight
++
++- 60動画の全frame数を集計する
++- 129 targetの欠落・重複がないことを確認する
++- crop status別件数とvideo別frame数を出す
++- package生成前後でsource H5/XMLが不変であることを確認する
++
++### Step 4: full package生成
++
++- 新rootへvideo packageを生成する
++- ZIP、CSV、checksum、summaryを検査する
++- Mac転送前manifestを保存する
++
++### Step 5: Mac Task作成
++
++- Task creatorをmaster-reference前提からstandalone 60 Taskへ拡張する
++- 最初の1動画でsmoke確認する
++- 残りを一括作成し、全Task backupを取得する
++
++### Step 6: CVAT review
++
++- videoごとのmaskとcrop dispositionを完成させる
++- 修正ZIP、review session、decision CSVを保存する
++- pendingが0であることを確認する
++
++### Step 7: final import/build
++
++- 2026-09-03実装済み。
++- Macから返却された59 Taskのannotation ZIP・post-review backup・task map・package checksumを
++  H5作成前に一括検証する。Mac上の絶対パスは参照せず、Linux上のsnapshot rootから
++  `video_name`と`task_id`で安全に再解決する。
++- 全frame画像、初期mask、BBox manifestを含む元review packageはLinux上の
++  `bboxrank_v3_refined_auto_v1/manual_review_cvat_phase5_fullvideo_v3_textfree`から読み、
++  Mac返却先は`task_management/task_map.csv`とreview後snapshotだけを読む。返却snapshotへ
++  `videos/`の複製を要求しない。
++- `20250626_090758_8000`は明示的な除外manifestで外し、最終対象を181動画とする。
++- CVAT maskは除外後に描画可能な112 target BBoxだけへ適用する。full-videoのcontext frame、
++  target外BBox、crop外のtarget BBoxはv3を保持する。
++- 空maskは意図的なpositive削除として許可し、そのBBox内をignoreへ戻す。単一target BBoxへ
++  一意に帰属できる人力maskは元の弱いBBoxより優先し、BBox外positiveも保持する。初回返却
++  snapshotでは7 frame・1,815 pxを確認したが、CVAT再修正後は新snapshotから再集計し、件数と
++  画素数をprovenanceへ記録する。複数target BBoxでBBox外部分の帰属が曖昧な場合はpreflightで
++  拒否する。
++- reviewed 59動画と継承122動画を別runの`annotated`へ生成し、`collected`、3値label監査、
++  `annotation_textures`まで一括生成する。
++
++実装入口は次の2ファイルである。
++
++```text
++pseudo3d/batch/annotation/batch_import_stage4_phase5_fullvideo_cvat.py
++pseudo3d/pipelines/build_stage4_bbox_ranked_v4_manual_fullvideo.sh
++```
++
++最終run名は
++`global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1`、H5 teacher tokenは
++`bboxrank_v4_manual_fullvideo_v1`とする。合成契約検査は
++`checks/stage4/check_stage4_phase5_fullvideo_final_import.py`に分離した。
++
++## 13. 検証項目
++
++- 60 Taskのframe総数がsource H5と一致する
++- 129 targetが各1回だけ現れる
++- context-onlyの非空・空CVAT maskがH5へ伝播する
++- snapshot対象frameでCVAT mask外positiveが0である
++- `annotate`だけnonempty maskを要求する
++- crop除外とrecrop指定にpositiveが残らない
++- no-BBox/background、BBox内非positive/ignoreを維持する
++- point cloud、sampling、measurement配列を保持する
++- source H5、XML、Task 5を変更しない
++- 全Taskのbackup、export、session、decision SHAを記録する
++- 同一入力からのpackageと最終H5が決定的である
++
++## 14. 直近の実装対象
++
++Step 1は2026-08-28に実装済み。
++
++- exporterへ`--include_all_video_frames`と`--expected_selected_videos`を追加
++- full-video modeを`all_phase3`かつvideo分割時だけ許可
++- 60動画、129 target、Phase 3 decision件数を実行前に検証
++- 全local-crop frame、crop metric、frame role、BBox状態描画を出力
++- root/video単位の`crop_review_decisions.csv`を`pending`で生成
++- target frameだけを`cases/`へ出し、context frameはall-background maskとする
++- `manual_review_cvat_phase5_fullvideo_v2`専用pipelineを追加
++- 従来のselected-frame modeは既定値として維持
++
++Step 2は2026-08-28に実装済み。
++
++- fully visible、partial clip、fully outsideを数値検証
++- `x_max == width`をfully visibleかつ`touches_right`として検証
++- 非有限座標と非正面積を拒否
++- target/contextの初期mask分離を検証
++- 複数BBox、全frame順、非連続frame indexを統合検証
++- full-videoでは全frameを出し、`cases/`をtarget frameだけに限定
++- root/video decision CSV、video progress、件数、source不変性を検証
++- 従来selected-frame modeが既定値であり、decision CSVを追加しないことを検証
++
++同日、ユーザー環境でsynthetic checkのexit code 0を確認済み。
++
++Step 3は2026-08-28に実装済み。
++
++- 60動画・129 target・decision件数をPhase 3 artifactと照合
++- selected videoの全frame数とvideo別frame数を集計
++- targetをstrict XMLへ一意に解決し、欠落・重複・frame不整合を拒否
++- target単位のcrop metricとcrop status件数を出力
++- v2/v3 annotation schemaとteacher metadataをread-only検査
++- selected videoのpseudo3D H5、v2/v3 H5、strict XMLをSHA-256 manifest化
++- 実行中のsource size/mtime不変性を検証
++- `--verify_source_checksums`でStep 4後にpreflight manifestとの完全一致を再確認可能
++
++同日、実データpreflightのexit code 0を確認済み。
++
++```text
++selected videos : 60
++total frames    : 3048
++target frames   : 129
++target BBoxes   : 129
++fully visible  : 102
++partial clip   : 11
++fully outside  : 16
++source files   : 1350
++```
++
++実行入口:
++
++```text
++pseudo3d/pipelines/preflight_stage4_phase5_fullvideo_cvat_review.sh
++```
++
++出力先:
++
++```text
++manual_review_cvat_phase5_fullvideo_v2_preflight/
++├── preflight_summary.json
++├── video_summary.csv
++├── target_bboxes.csv
++├── source_checksums.csv
++├── report_checksums.csv
++└── run_config.yaml
++```
++
++Step 4は2026-08-28に実装済み。
++
++- full-video exporterをStep 3 preflight必須のpipelineへ統合
++- 60 video package、3,048 frame、129 target/caseを相互照合
++- root/video CSV、summary、frame stem/order、crop metricをpreflightと照合
++- context-only frameの初期maskがall-backgroundであることを検証
++- 60個のCVAT ZIPを画像・reference maskとpixel単位で検証
++- video packageの`checksums.csv`についてmember、size、SHA-256を検証
++- Step 3の1,350 source H5/XMLを再ハッシュし、不変性を確認
++- Mac転送対象を`mac_transfer_manifest.csv`とsummaryへ固定
++
++追加validator:
++
++```text
++pseudo3d/analysis/validate_stage4_phase5_fullvideo_cvat_package.py
++```
++
++生成後の追加artifact:
++
++```text
++manual_review_cvat_phase5_fullvideo_v2/
++├── package_validation_summary.json
++├── mac_transfer_manifest.csv
++└── mac_transfer_summary.json
++```
++
++実行コマンド:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++OVERWRITE=0 \
++bash pseudo3d/pipelines/export_stage4_phase5_fullvideo_cvat_review.sh
++
++status=$?
++echo "phase5_fullvideo_step4_exit_code=${status}"
++```
++
++`mac_transfer_manifest.csv`は転送対象となるtop-level metadataと`videos/`以下を列挙する。
++root直下の重複staging directory（`images/`、`masks/`、`overlays/`、`cvat/`）は除外する。
++manifest自身、`mac_transfer_summary.json`、`package_validation_summary.json`は自己参照を避けるため
++manifest行には含めないが、転送時にはreview rootのcontrol fileとして併せてコピーする。
++
++同日、ユーザー環境でfull-video exportとpackage validatorが完了し、exit code 0を確認した。
++
++```text
++Stage 4 Phase 5 full-video package validation passed.
++Stage 4 Phase 5 full-video export complete.
++phase5_fullvideo_step4_exit_code=0
++```
++
++これによりStep 4を完了とする。次はMacへ検証済みpackageを転送し、standalone Taskを
++最初の1動画でsmoke確認してから残り59動画へ展開するStep 5へ進む。Task 5と既存
++selected-frame artifactは変更しない。
++
++Step 5は2026-08-28に実装済み。
++
++- Step 4の`mac_transfer_manifest.csv`をMac上で再検証する
++- `video_progress.csv`と各video packageの`full_video`契約を検証する
++- Task 5を参照・変更せず、`stage4_phase5_fullvideo__<video_name>`をstandaloneで作成する
++- labelを`femur`だけに固定し、画像数・basename・時系列順をCVAT APIから再照合する
++- `Segmentation Mask 1.1`をpolygon化せずimportする
++- videoごとの編集前Task backupをZIP検査し、bytes・member数・SHA-256を保存する
++- Task作成、annotation import、backup取得の各段階でstateをatomicに保存する
++- `video_progress.csv`へTask ID、URL、status、backup path/SHAを追記する
++- 同名の未追跡Taskを暗黙採用せず、中断後は追跡済みTaskだけを再開する
++- `--only_video`で1動画smoke、解除後に残り59動画を作成できる
++- `localhost`、`127.0.0.1`、`::1`以外への接続を拒否する
++- macOS標準Bash 3.2と`set -u`でも空optional配列を展開しない引数構築にする
++
++追加・更新ファイル:
++
++```text
++pseudo3d/batch/export/batch_create_stage4_phase5_cvat_tasks.py
++pseudo3d/pipelines/create_stage4_phase5_fullvideo_cvat_tasks.sh
++checks/stage4/check_stage4_phase5_fullvideo_cvat_tasks.py
++```
++
++Synthetic checkではfake CVAT clientだけを使用し、外部通信なしでdry-run、1動画smoke、
++残りへのresume、再実行時のskip、backup ZIP/SHA検証、転送後改変の拒否を確認した。
++
++```text
++[OK] standalone dry-run, one-video smoke, resume-all, and idempotent backup verification
++[OK] transferred package tampering rejection
++Stage 4 Phase 5 full-video CVAT task synthetic checks passed.
++```
++
++Mac上でのdry-runと1動画smoke:
++
++```bash
++cd /path/to/Stage2to4
++
++PHASE5_FULLVIDEO_REVIEW_ROOT=/Users/yutakodaira/Desktop/manual_review_cvat_phase5_fullvideo_v2 \
++CVAT_USERNAME=yutau \
++SMOKE_ONLY=1 \
++SMOKE_VIDEO=1-3_14 \
++APPLY=0 \
++bash pseudo3d/pipelines/create_stage4_phase5_fullvideo_cvat_tasks.sh
++
++PHASE5_FULLVIDEO_REVIEW_ROOT=/Users/yutakodaira/Desktop/manual_review_cvat_phase5_fullvideo_v2 \
++CVAT_USERNAME=yutau \
++SMOKE_ONLY=1 \
++SMOKE_VIDEO=1-3_14 \
++APPLY=1 \
++bash pseudo3d/pipelines/create_stage4_phase5_fullvideo_cvat_tasks.sh
++```
++
++1動画の画像順、初期mask、Task backupを確認後、残りをdry-runしてから作成する。
++
++```bash
++PHASE5_FULLVIDEO_REVIEW_ROOT=/Users/yutakodaira/Desktop/manual_review_cvat_phase5_fullvideo_v2 \
++CVAT_USERNAME=yutau \
++SMOKE_ONLY=0 \
++APPLY=0 \
++bash pseudo3d/pipelines/create_stage4_phase5_fullvideo_cvat_tasks.sh
++
++PHASE5_FULLVIDEO_REVIEW_ROOT=/Users/yutakodaira/Desktop/manual_review_cvat_phase5_fullvideo_v2 \
++CVAT_USERNAME=yutau \
++SMOKE_ONLY=0 \
++APPLY=1 \
++bash pseudo3d/pipelines/create_stage4_phase5_fullvideo_cvat_tasks.sh
++```
++
++Step 5の実データ完了条件は`task_creation_state.json`の`status=complete`、
++`completed_tasks=60`、および全行の`cvat_task_creation_status=backup_verified`である。
++
++同日、Mac上の`cvat-sdk 2.73.0`とlocal CVATを使用した1動画smoke dry-runが成功した。
++
++```text
++video_packages    : 60
++target_bboxes     : 129
++selected_now      : 1
++only_video        : 1-3_14
++transfer_files    : 16548
++smoke frames      : 22
++smoke targets     : 2
++new_tasks_planned : 1
++apply             : False
++phase5_step5_smoke_preflight_exit_code=0
++```
++
++このdry-runではTask、state、backupを作成していない。次は同じscopeを`APPLY=1`で実行し、
++1 Taskの画像順・初期mask・編集前backupを確認する。
++
++初回smoke applyではTask作成後、CVAT APIのformat名を`Segmentation Mask 1.1`と渡したため、
++serverから`Unknown input format`で拒否された。API識別子は大文字小文字を区別するため、
++`Segmentation mask 1.1`へ修正した。既存stateの旧表記はcase-insensitiveに移行し、
++`task_created`の既存Taskを削除・再作成せずannotation importからresumeする。
++
++修正後のresumeは成功し、Task #6へ22 frame・2 targetの初期annotationをimportして、
++編集前backupを検証・記録した。
++
++```text
++video             : 1-3_14
++task_id           : 6
++action            : resume from task_created
++new_tasks_planned : 0
++backup_verified   : 1
++completed         : 1/60
++```
++
++次はTask #6で画像順、target mask、context frameを目視確認する。問題がなければ
++`SMOKE_ONLY=0, APPLY=0`で残り59 Taskをdry-runし、その後`APPLY=1`で作成する。
++
++Task #6の22 frame、2 target、初期mask、contextは目視確認で問題なしと判定した。
++続く全件dry-runも成功した。
++
++```text
++video_packages    : 60
++target_bboxes     : 129
++selected_now      : 60
++tracked task      : Task #6 / 1-3_14 / backup_verified
++new_tasks_planned : 59
++apply             : False
++```
++
++同名の未追跡Task衝突はなく、残り59 Taskを`SMOKE_ONLY=0, APPLY=1`で作成可能である。
++途中失敗時は同じコマンドを再実行し、stateに保存済みの段階からresumeする。
++
++## 15. Phase 5最終実行結果（2026-09-05）
++
++text-free画像を用いた59 TaskのCVAT修正とsnapshot再export後、返却snapshot v2から
++full-video manual correctionを反映した。`20250626_090758_8000`はcrop不良の除外manifestに
++従って対象外とし、残り181動画をteacher v4へ構築した。
++
++```text
++output run : global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1
++annotated  : 181 files
++collected  : 181 files
++excluded   : 1 video (20250626_090758_8000)
++exit code  : 0
++```
++
++出力先:
++
++```text
++/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
++└── global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1/
++    ├── annotated/
++    ├── collected/
++    ├── annotation_textures/
++    └── logs/
++```
++
++### 15.1 現在の検証状態
++
++- final import、181件のH5生成、collect、3値label監査は完了した
++- source v3 H5、CVAT返却snapshot、除外manifestは上書きしていない
++- `annotation_textures`の生成自体は完了した
++- ただし現行textureのmask・輪郭はv4 point label/manual maskではなく、自動輪郭の再計算結果である
++- よってv4ラベルの目視検証は別途、保存済み`point_label`を直接描画する方式で行う
++- 目視中に見つかった相談事項は未修正であり、方針合意前にH5・XML・描画処理を変更しない
++
++現時点ではStep 7のbuild処理は成功済みだが、Phase 5の受入完了条件であるv4ラベルの目視確認は
++保留中である。次は相談事項を整理した後、最終H5の`annotation/point_label`と`valid_mask`を
++直接可視化して確認する。
++
++自動輪郭で確認されたBBox境界接触globalの過採用は、full-video CVAT運用とは分離して次へ記録する。
++既存CVAT修正済みmaskを再編集せず再利用することも同文書の必須契約とする。
++
++- `docs/stage4/stage4_bbox_ranked_border_contact_revision_plan.md`
++
++teacher v4の最終受入に使うpoint-label直接可視化は、automatic contour表示と分離して次へ記録する。
++
++- `docs/stage4/stage4_v4_point_label_visualization_plan.md`
++
++### 15.2 CVAT適用範囲の不整合と受入保留
++
++保存済みv4 labelと返却CVAT dense maskの比較により、`1-3_14/frame_order=10`でCVAT mask外に
++185 positive pointが残ることを確認した。frame 10はfull-video Taskのcontext frameで、旧v4
++importerがframe 12/15だけをmanual適用対象としていたことが原因である。過去のmask描画残りではない。
++
++```text
++CVAT mask pixels       : 198
++v4 positive points     : 343
++positive inside CVAT   : 158
++positive outside CVAT  : 185
++saved source           : global
++manual applied         : false
++```
++
++この結果により、v4 build成功はartifact生成記録として保持するが、最終教師としての受入は保留する。
++修正版ではsnapshot対象動画の全Task frameでCVAT maskを唯一のpositive authorityとし、既存automatic
++positiveを利用しない。CVAT Taskと返却snapshotは再編集せず、新しいversioned runへ再適用する。
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++
++## 16. 後続補正と最終学習データ（2026-09-07）
++
++Phase 5後に確認された2つのラベル不整合は、既存CVAT Taskを再編集せず、versioned成果物として
++順に解消した。
++
++1. teacher v5で、返却full-video CVAT snapshotを対象Task全frameのpositive authorityとして適用した
++2. teacher v6で、CVAT snapshot作成後に削除された誤BBox XML 7件を明示的に無効化した
++
++v6はcrop不良として除外した`20250626_090758_8000`を含まず、annotated/collected各181 H5で構成する。
++保存point labelの一括可視化と目視確認も完了し、CVAT mask外positive、削除済みBBox、旧maskの描画残りが
++ないことを確認した。したがって、今回の学習入力の正本は次である。
++
++```text
++/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711/
++  global_local_l75_w31_c12_area15_bboxrank_v6_cvat_authoritative_xml_invalidation_v1/
++    collected/
++```
++
++詳細な無効化契約、構築件数、可視化および最終受入結果は次を参照する。
++
++- `docs/stage4/stage4_deleted_xml_annotation_invalidation_plan.md`
+diff --git a/docs/stage2to4/stage4/stage4_phase7_report.md b/docs/stage2to4/stage4/stage4_phase7_report.md
+index 88a2d8de213a148442b1c820aa2cb4751406484d..e606455db9227048514dedb188279efae209e1e4
+--- a/docs/stage2to4/stage4/stage4_phase7_report.md
++++ b/docs/stage2to4/stage4/stage4_phase7_report.md
+@@ -226,7 +226,7 @@
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_annotation_schema_propagation.py
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_collect_schema_propagation.py
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python \
+-  ../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
++  ../../../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py
+ /home/kodaira/anaconda3/envs/dualtrack311/bin/python checks/stage4/check_stage4_combined_v2_annotated_ply.py
+ ```
+ 
+@@ -555,10 +555,10 @@
+ 
+ ### 14.3 Stage 5
+ 
+-* `../Stage5/stage5/utils/h5_io.py`
+-* `../Stage5/train_stage5.sh`
+-* `../Stage5/infer_stage5.sh`
+-* `../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py`
++* `../../../Stage5/stage5/utils/h5_io.py`
++* `../../../Stage5/train_stage5.sh`
++* `../../../Stage5/infer_stage5.sh`
++* `../../../Stage5/checks/real_h5/check_stage4_combined_v2_loader_compatibility.py`
+ 
+ ### 14.4 Phase 7 checker
+ 
+diff --git a/docs/stage2to4/stage4/stage4_v4_point_label_visualization_plan.md b/docs/stage2to4/stage4/stage4_v4_point_label_visualization_plan.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7b8bb4f7c66a71b64b7cde5b07d1594a4d3e1433
+--- /dev/null
++++ b/docs/stage2to4/stage4/stage4_v4_point_label_visualization_plan.md
+@@ -0,0 +1,291 @@
++# Stage 4 teacher v4 point-label可視化計画
++
++作成日: 2026-09-05  
++最終更新日: 2026-09-05  
++編集対象ディレクトリ: `/workspace/Stage2to4`  
++状態: v4適用範囲不整合を確認・authoritative snapshot対応計画へ移行
++
++## 1. 目的
++
++teacher v4 H5に保存された最終学習ラベルを直接可視化し、CVAT manual correctionと
++automatic contourのどちらが最終positiveを生成したかを判別できるようにする。
++
++既存`annotation_textures`の赤mask・輪郭線は、保存済みv4 labelではなく画像・BBox・configから
++再計算したautomatic contourである。このため、既存表示でglobal輪郭が不適切に見えても、
++v4 H5ではCVAT maskにより修正済みの可能性がある。本可視化をBBox境界接触ロジックの変更前に
++実施し、H5再作成の要否を判断する。
++
++## 2. 安全方針
++
++- 既存v4 H5、CVAT ZIP、Task backup、snapshot、XML、point cloudを読み取り専用とする
++- 既存`annotation_textures`を上書きしない
++- XMLからBBoxを再読込しない
++- global/local二値maskや輪郭を再計算しない
++- 表示用の点半径・alphaは変えてよいが、ラベル値と集計は変更しない
++- 出力は新しい専用rootへ生成する
++
++## 3. 固定入力
++
++対象run:
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1
++```
++
++対象ファイル:
++
++```text
++annotated/<video_name>/*bboxrank_v4_manual_fullvideo_v1.h5
++```
++
++H5から直接使用する値:
++
++| H5 field | 用途 |
++|---|---|
++| `point_cloud/pixel_xy` | 点のlocal画像座標 |
++| `point_cloud/frame_order` | 点とフレームの対応 |
++| `annotation/point_label` | 最終3値学習ラベル |
++| `annotation/valid_mask` | ignoreを除く有効点 |
++| `frame_annotation/bbox_local_xyxy` | 最終H5が参照するBBox |
++| `frame_annotation/frame_order` | BBoxとフレームの対応 |
++| `frame_annotation/bbox_index` | 複数BBoxの識別 |
++| `frame_annotation/selected_contour_source` | automatic/manual provenance |
++| `frame_annotation/annotation_reason` | 採用・削除理由 |
++
++背景画像はH5 metadataが指すsource pseudo3D H5の`local_encoder_images`を使用する。frame indexも
++source pseudo3D H5から取得するが、BBox geometryは最終annotated H5の保存値を使用する。
++
++CVATのdense maskはteacher v4 H5自体には保存されていないため、final buildに使用した
++`cvat_exports_after_textfree_review_v2`の修正済みSegmentation Mask 1.1 ZIPから読み込む。
++snapshot manifest SHA、Task ID、annotation ZIP SHAをv4 H5の`manual_review_fullvideo` provenanceと
++照合する。現行実装は同groupに記録された実適用frameだけを描画するため、context frameの
++CVAT maskを表示・適用できないことが判明した。修正版ではsnapshot対象動画の全Task frameを
++frame単位provenanceで照合し、target/contextを問わずCVAT maskを描画する。
++
++最終positiveも同じCVAT mask内だけから生成する。詳細は次を正本とする。
++
++- `docs/stage4/stage4_cvat_snapshot_authoritative_label_revision_plan.md`
++
++## 4. 描画契約
++
++主要なframe画像ではsource別の色を使わず、最終classだけを描画する。
++
++| 表示 | RGB | 意味 |
++|---|---:|---|
++| background point | `80,140,200` | `point_label=0` |
++| ignore point | `255,210,0` | `point_label=-1` |
++| corrected CVAT mask | `0,255,255` | manual適用frameのdense segmentation mask |
++| positive point | `255,32,32` | `point_label=1` |
++| saved BBox | `160,255,80` | `frame_annotation/bbox_local_xyxy` |
++
++点は視認性のため半径1程度で描画する。描画円のpixel数ではなく、入力point数をCSVの件数とする。
++画像上には文字を重ねず、frame/BBox/provenanceの詳細はsidecar CSVへ保存する。
++
++同一frameに複数BBoxがある場合、point labelは保存済みframe unionとして一度だけ描く。
++BBoxは保存行ごとに描き、source/reasonはBBox単位でCSVへ記録する。
++
++### 4.1 各表示色の読み方
++
++このPNGはpixel単位の塗りつぶしsegmentation maskではなく、point cloudに存在する点へ
++`annotation/point_label`を重ねた確認用overlayである。
++
++- 赤は最終`positive`（`point_label=1`）であり、Stage 5で大腿骨候補として学習対象になる。
++- 黄は`ignore`（`point_label=-1`）であり、`valid_mask=False`としてloss計算から除外される。
++  backgroundとして学習される点ではない。
++- 青は`background`（`point_label=0`）であり、`valid_mask=True`の負例として学習対象になる。
++  BBoxがないframeでは全点がこのclassでなければならない。
++- 水色はCVATから返却されたdense segmentation maskである。修正版ではsnapshot対象動画の
++  全Task frameでSHA/Task/frame対応を照合して表示する。これはpoint markerではなくpixel領域で、
++  empty maskでは表示領域がない。
++- 緑線は最終H5に保存されたBBoxであり、segmentation境界やpositive領域そのものではない。
++  manual correctionでは人が確定した赤positiveが元のweak BBox外へ延びることがあり、それだけで
++  異常とは判定しない。`selected_contour_source`と併せて判断する。
++- 色の付いていないgray部分は背景画像であり、そのpixel位置に保存点がないことを示す。
++  background labelを意味するとは限らない。
++
++点は標準設定で半径1の表示markerへ拡張し、alpha 0.85でgray画像へ合成する。この拡張範囲は
++見やすさのためだけのもので、周囲のpixelを追加pointや追加labelとして数えない。markerが重なる
++場合は青point、黄point、水色CVAT mask、赤pointの順に描く。したがってCVAT maskは黄の上、
++赤の下となり、最終positive pointは常に確認できる。緑BBoxは最後に描くためBBox線上では緑が
++点色またはmask色を覆う場合がある。
++
++global、local、Phase 3、CVATの由来はPNGの色では区別しない。各BBoxの由来は同じvideo配下の
++`frame_labels.csv`にある`selected_contour_source`と`annotation_reason`で確認する。複数BBox frameの
++point countはframe全体のunion値であり、BBox行ごとに同じ件数が記録されるため、CSV行を単純合計
++しない。video全体の重複なし集計には`summary.json`またはbatch `summary.csv`を使用する。
++
++## 5. 出力構成
++
++```text
++global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1/
++└── annotation_textures_v4_labels/
++    ├── summary.csv
++    └── <video_name>/
++        ├── frames/
++        │   └── annotation_frame_<frame_order:05d>.png
++        └── frame_labels.csv
++```
++
++`frame_labels.csv`は少なくとも次を持つ。
++
++```text
++video_name
++frame_order
++frame_index
++bbox_index
++bbox_local_xyxy
++selected_contour_source
++annotation_reason
++valid_contour
++positive_points
++ignore_points
++background_points
++cvat_mask_applied
++cvat_mask_pixels
++```
++
++複数BBoxのないframeもframe単位のlabel countを記録する。BBoxなしframeではBBox rowとは別に
++frame summaryを残し、全点backgroundであることを確認できるようにする。
++
++## 6. provenanceの解釈
++
++`selected_contour_source`は少なくとも次を区別する。
++
++| source | 判断 |
++|---|---|
++| `manual_cvat_fullvideo_v1` | CVAT maskを最終positiveへ適用済み |
++| `manual_cvat_fullvideo_empty_v1` | CVATで空mask・削除を確定 |
++| `phase3_*` | Phase 3 proposalを使用 |
++| `global` | v2 global automatic contourを維持 |
++| `local_percentile` | v2 local automatic contourを維持 |
++| `shared` | global/localが同一mask |
++| `none` | 有効輪郭なし |
++
++既存automatic visualizationで緑globalが表示されても、本可視化の赤positiveが正しく、sourceが
++`manual_cvat_fullvideo_v1`ならH5再作成は不要である。赤positiveもBBox辺まで膨張し、sourceが
++`global`なら境界接触ロジックの監査対象とする。
++
++## 7. 実装内容
++
++既存automatic contour可視化を変更せず、専用処理を追加する。
++
++```text
++pseudo3d/export/export_stage4_point_label_visualization.py
++pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py
++pseudo3d/pipelines/export_stage4_v4_point_label_visualizations.sh
++checks/stage4/check_stage4_point_label_visualization.py
++```
++
++single-frame描画、single-H5 export、batch/pipelineを追加し、全入口で同じpure rendering
++functionを共有した。入力H5とsource pseudo3D H5のSHA-256を実行前後で照合し、video単位の
++一時directoryからatomicに配置する。再開時は保存済みsummary、両入力checksum、PNG数を
++照合してから`skipped_verified`とする。
++
++`point_label`をframeごとに再探索せず、`frame_order`で一度だけ安定sortして索引化するため、
++全181動画でもpoint数×frame数の反復走査を避ける。BBoxなしframeにignore/positiveが存在する
++入力は、v4の3値label policy違反として描画前に拒否する。
++
++## 8. 検証手順
++
++### Step 1: 入力契約
++
++- `point_label`が`-1/0/1`だけである
++- `valid_mask == (point_label != -1)`である
++- point-level配列長が一致する
++- `pixel_xy`が画像範囲内である
++- frame/BBox indexとshapeが有効である
++- provenance sourceが既知値である
++
++### Step 2: Synthetic check
++
++- 3値labelが指定色へ対応する
++- 黄point、CVAT水色mask、赤pointの重なり順が固定される
++- 修正済みCVAT ZIPのSHA、Task、frame stemをv4 H5 provenanceと照合する
++- CVAT dense maskをsnapshot対象の全Task frameへ表示し、target/contextの適用漏れを許さない
++- 保存済みBBoxだけを描画する
++- automatic contour再計算関数を呼ばない
++- manual、manual-empty、automatic provenanceをCSVへ保持する
++- 複数BBox、BBoxなし、空point frameを処理する
++- H5 label countとCSV countが一致する
++- 同一入力からPNG/CSVが決定的に生成される
++- 入力H5のhashが変化しない
++
++2026-09-05、`dualtrack311`環境で全項目が成功した。
++
++```text
++[OK] direct ignore/background/positive color mapping
++[OK] saved labels, saved BBoxes, provenance CSV, and deterministic output
++[OK] label/provenance/no-BBox validation and no contour/XML recomputation
++[OK] batch CLI, summary, and verified resume
++v4_point_label_visualization_synthetic_exit_code=0
++```
++
++上記は3値point overlay実装時の結果である。その後、水色CVAT dense maskを黄pointと赤pointの
++間へ追加したため、同じSynthetic checkを再実行してCVAT ZIP checksum、manual frame alignment、
++overlay順を含む更新後contractを確認する。
++
++### Step 3: 181動画の一括出力
++
++先に全件を同一条件で出力し、`summary.csv`と各`frame_labels.csv`を代表例選定の母集団とする。
++
++```text
++videos                 : 181
++failed                 : 0
++input_files_modified   : 0
++label_count_mismatches : 0
++invalid_valid_masks    : 0
++unknown_sources        : 0
++```
++
++を完了条件とする。
++
++### Step 4: 代表データの目視確認
++
++一括出力後、CSVのprovenanceと既知の目視事例から次の少数例を選ぶ。
++
++- global過採用に見えた例
++- CVATで明確に修正した例
++- CVATでmaskを削除した例
++- localまたはsharedの良好例
++- BBoxなしframeを含む例
++
++色、点半径、BBox、CSV対応だけを確認する。描画の視認性調整によってH5やlabelを変更しない。
++
++## 9. 目視結果の分類
++
++目視結果は次の3分類で記録する。
++
++1. `visualization_only`: 旧automatic表示だけが不適切でv4 labelは正しい
++2. `automatic_global_overfill`: v4 sourceがglobalでpositiveもBBox辺まで過抽出
++3. `manual_label_issue`: CVAT由来の最終label自体に問題がある
++
++`automatic_global_overfill`が実際に残ることを確認してから、
++`stage4_bbox_ranked_border_contact_revision_plan.md`のborder guardへ進む。現在は方針記録までとし、
++自動輪郭選択コード、H5、CVAT artifactは変更しない。
++
++## 10. 実行順
++
++実装の合成検査:
++
++```bash
++cd /mnt/data/3d_projects/models/Stage2to4
++
++/home/kodaira/anaconda3/envs/dualtrack311/bin/python \
++  checks/stage4/check_stage4_point_label_visualization.py
++
++echo "v4_point_label_visualization_synthetic_exit_code=$?"
++```
++
++Step 2通過後、全181動画を専用rootへ生成する。
++
++```bash
++VIDEO_NAMES="" \
++EXPECTED_FILES=181 \
++SKIP_EXISTING=0 \
++bash pseudo3d/pipelines/export_stage4_v4_point_label_visualizations.sh
++```
++
++CVAT mask追加前の出力が存在する場合は一度だけ`SKIP_EXISTING=0`で専用可視化rootを更新する。
++更新後に中断・再開する場合は`SKIP_EXISTING=1`へ戻すと、入力checksum、CVAT ZIP checksum、PNG数を
++照合した正常videoが`skipped_verified`となる。全件出力後、`summary.csv`と`frame_labels.csv`から
++Step 4の代表例を選ぶ。
+diff --git a/docs/stage2to4/submission/README.md b/docs/stage2to4/submission/README.md
+index 7112e099c5004a10cd585b054e6b57245c54b102..be53c129139bc38c7349e639756fb57ce0b27bd7
+--- a/docs/stage2to4/submission/README.md
++++ b/docs/stage2to4/submission/README.md
+@@ -1,4 +1,4 @@
+ # Submission utilities
+ 
+-実装は`src/submission/`に配置されている。
++実装は`../../../Stage2to4/src/submission/`に配置されている。
+ # 

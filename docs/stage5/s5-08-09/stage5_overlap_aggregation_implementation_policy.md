@@ -1,7 +1,7 @@
 # 実装事項A: overlap probability / aggregation checker 実装方針記録
 
 > **位置づけ注記（2026-09-10）:** 本書は実装事項Aの設計根拠を保存する補助資料である。
-> Stage 5全体の現在状態と次の実施順は`stage5_revision_management_record.md`を参照する。
+> Stage 5全体の現在状態と次の実施順は`../stage5_revision_management_record.md`を参照する。
 
 ## 0. この文書の位置づけ
 

@@ -395,8 +395,8 @@ window間disagreementは動画ごとに0.2〜79.7%と大きく異なった。境
 **判断:** meanによるpositive抑制は支持されたが、production aggregationはmeanを維持する。
 境界距離を根拠とするcenter weightingは再設計しない。最終モデル確定後に方式比較をやり直す。
 
-**参照:** `stage5_overlap_aggregation_implementation_policy.md`、
-`stage5_overlap_aggregation_handoff_prompt.md`、`stage5_pointnext_s_training_evaluation_report.md` 9.5節
+**参照:** `s5-08-09/stage5_overlap_aggregation_implementation_policy.md`、
+`s5-08-09/stage5_overlap_aggregation_handoff_prompt.md`、`stage5_pointnext_s_training_evaluation_report.md` 9.5節
 
 ### S5-09 BatchNorm mode parity、実装事項B
 
@@ -425,7 +425,7 @@ finiteで、variance負値はなく、`num_batches_tracked=16859`で一致した
 「汎化問題ではない」とはまだ断定しない。train-mode推論をproduction採用せず、recalibrationで
 保存統計の不適合とper-window normalization効果を切り分ける。
 
-**参照:** `stage5_overlap_aggregation_handoff_prompt.md` 6章、
+**参照:** `s5-08-09/stage5_overlap_aggregation_handoff_prompt.md` 6章、
 `stage5_pointnext_s_training_evaluation_report.md` 9.5節の実装事項B
 
 ### S5-10 BatchNorm recalibration診断
@@ -488,7 +488,7 @@ Label policy ablation（9.6節）・class weight比較（9.7節）との順序�
 判断を待つ。
 
 **関連文書・出力先:** `stage5_pointnext_s_training_evaluation_report.md` 9.5節の実装事項C、
-`.tmp/batchnorm_recalibration_share/`（匿名化済み共有metrics）、ユーザー実機
+`research/stage5/s5-10/batchnorm_recalibration_share/`（匿名化済み共有metrics）、ユーザー実機
 `/mnt/data/3d_projects/stage5_debug/batchnorm_recalibration/`（share/private出力とdiagnostic
 checkpoint）。
 
@@ -508,7 +508,7 @@ checkpoint）。
 diagnostic artifactとしてのみ保存する（recalibrated checkpointはproduction採用しない）。S5-10の
 追加seed・追加動画によるsensitivity検証は行わない。Label policy ablationより先にS5-11を短く
 実施する。第一候補はGroupNorm、不採用時はLayerNormを次候補とする。詳細は
-`.tmp/stage5_s5_11_groupnorm_implementation_handoff_prompt.md`。
+`docs/stage5/s5-11/stage5_s5_11_groupnorm_implementation_handoff_prompt.md`。
 
 **目的:** 現行PointNeXt-SのBatchNormだけをGroupNormへ置き換え、physical batch size 1、可変点数
 window、train/eval modeの条件に依存しない正規化へ変更した場合の学習安定性と固定評価性能を測る。
@@ -609,7 +609,7 @@ S5-12以降の実験用normalizationとして暫定採用する（production既�
 FP増加（validation FP 85,785→446,335、FPR 1.32%→6.86%）はproduction上許容済みとは判断せず、
 S5-12/S5-13で原因と抑制可能性を調べる。threshold tuningはS5-12/S5-13後、S5-15まで行わない。
 200 epochへ直接進まず、S5-12→S5-13→必要な追加診断→5〜10 epoch最終pilot→50 epoch中間判定を経て
-100〜200 epochの可否を決める。詳細は`.tmp/stage5_s5_12_label_policy_implementation_handoff_prompt.md`。
+100〜200 epochの可否を決める。詳細は`docs/stage5/s5-12/stage5_s5_12_label_policy_implementation_handoff_prompt.md`。
 
 **目的:** GroupNorm、初期parameter、split、seed、window、loss、class weight、threshold、aggregationを
 固定し、Run A（`bbox_noncontour_ignore`、現状維持）とRun B（`bbox_noncontour_background`、対象点を
@@ -661,10 +661,10 @@ Step E5（1 epoch smoke）・E6（Run A/B 5 epoch）は既存`train_stage5.sh`�
 (3) を選択した。該当2動画のアノテーション可視化フレームを目視確認した結果、丸め誤差ではなく
 Stage 2のcrop窓固定と被写体移動によるずれ（`local_crop_tracking_drift`、既存除外事例
 `20250626_090758_8000`と同型）に起因することが判明したため、Stage 4管理チャットへ調査・修正を
-依頼した（`.tmp/stage5_s5_12_stage4_crop_quality_investigation_request.md`）。
+依頼した（`docs/stage2to4/stage4/stage5_s5_12_stage4_crop_quality_investigation_request.md`）。
 
 **Stage 4側修正結果（2026-09-14、Stage 4管理チャットより受領）:**
-`.tmp/stage5_s5_12_stage4_crop_quality_correction_report.md`に詳細。要点は次の通り。
+`docs/stage2to4/stage4/stage5_s5_12_stage4_crop_quality_correction_report.md`に詳細。要点は次の通り。
 
 - `train_068`（実video: `20250626_090652_6340`）は動画全体をcrop品質不良として除外した
   （既存除外`20250626_090758_8000`と合わせて計2動画除外）。
@@ -745,7 +745,7 @@ Run Bで悪化した（11.71%→12.17%）。canonical F1のvideo単位勝敗は1
 分岐2（悪化）のいずれにも明確に該当せず、分岐3（差が小さい）〜分岐4（判定不能）に近い。
 5 epoch・teacher v7移行後初回比較という条件も踏まえ、production採否は実装チャット側では
 決定しない。詳細は`stage5_pointnext_s_training_evaluation_report.md` 9.6節の実装事項E、
-方針管理チャットへの報告は`.tmp/stage5_s5_12_report_to_policy_chat.md`。
+方針管理チャットへの報告は`docs/stage5/s5-12/stage5_s5_12_report_to_policy_chat.md`。
 
 **完了判断（2026-09-14）:** Run BはBBox non-contour領域のpositive予測率をvalidationで
 40.63%から31.13%へ抑制したが、対象領域はvalid backgroundの約0.3%に限られ、全体FPRは
@@ -836,7 +836,7 @@ TP0動画数はW-Aの1/18から18/18へ増加、video別勝敗もW-B側の改善
 recallが崩壊する場合、W-Bは採用しない」という9章の不採用分岐に明確に該当し、判定不能ではなく
 **W-Bは不採用、W-A（強いauto由来weight）を維持**という明確な結論が得られた。production反映
 （`CLASS_WEIGHT`既定値の変更）は行わず、方針管理チャットの判断を待つ。方針管理チャットへの報告は
-`.tmp/stage5_s5_13_report_to_policy_chat.md`。
+`docs/stage5/s5-13/stage5_s5_13_report_to_policy_chat.md`。
 
 ### S5-13補足 Threshold-free診断と中間class weight限定確認
 
@@ -912,7 +912,7 @@ W-Bのthreshold 0.5全negativeは主にcalibration shiftが原因（threshold再
 shiftだけでは説明しきれない。D-023の判断（W-Bを現行threshold 0.5のS5-14 controlに採用しない）は
 維持し、この結果はS5-15のthreshold診断用履歴候補として保持する。詳細は
 `stage5_pointnext_s_training_evaluation_report.md` 9.7節、報告は
-`.tmp/stage5_s5_13_supplement_report_to_policy_chat.md`。
+`docs/stage5/s5-13/stage5_s5_13_supplement_report_to_policy_chat.md`。
 
 **補足検証2結果（W-C、weight比16、新規5 epoch pilot 1/2回、2026-09-14、ユーザー実機）:**
 config parityは合格（class weight以外の差分なし）。threshold 0.5固定評価（validation aggregate）は
@@ -1014,7 +1014,7 @@ raw pixel座標での解析（handoff文書6節が許容する代替）は影響
 
 **方針管理チャットの判断（2026-09-15）:** 諦めずに中間H5を遡って実寸法を回収できるか調査する
 Step H2.5（Stage 4 dataset inventoryとXY座標provenance監査）を実施する。詳細は
-`.tmp/stage5_s5_14_structural_diagnostics_implementation_handoff.md`の2026-09-15追記版。
+`docs/stage5/s5-14/stage5_s5_14_structural_diagnostics_implementation_handoff.md`の2026-09-15追記版。
 
 **Step H2.5実装（2026-09-15、実装・静的検証完了）。**
 `checks/real_h5/check_stage5_xy_coordinate_provenance.py/.sh`
@@ -1040,7 +1040,7 @@ H5を監査し、**全180動画が`source_pseudo3d_h5`属性だけで中間H5を
 生成CLI既定値256を推測採用したのではなく、全180動画それぞれの中間H5 provenanceから実測値として
 確認した結果である。これによりStep H3.1のcross-video XY正規化は`normalized_x = pixel_x / 255`、
 `normalized_y = pixel_y / 255`を**動画除外なしで**全180動画・固定21診断対象動画に適用できる。
-詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`。
+詳細は`docs/stage5/s5-14/stage5_s5_14_report_to_policy_chat.md`。
 
 **管理チャット二重検査での指摘・修正（2026-09-15）:** `decide_dimension_policy()`が選択肢3判定時に
 `pixel_xy_bounds_ok`を条件に含めておらず、将来bounds違反があっても選択肢3として通り得るという指摘を
@@ -1104,7 +1104,7 @@ grid16/8で6720 density行・2917 recurrence行を生成し、全動画でparity
   GT runと重ならない複数の時間分離predicted run（multiple_unmatched_runs）を持ち、32.0%は
   GT runと一度も重ならない。train sanity PLYで見えた反復現象を定量的に裏付けた。
 
-3仮説の最終判定はStep H4完了後に確定する。詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`。
+3仮説の最終判定はStep H4完了後に確定する。詳細は`docs/stage5/s5-14/stage5_s5_14_report_to_policy_chat.md`。
 
 **Step H4: per-window context診断（固定21動画のみ、必要な1回の再推論）。** 既存S5-08 overlap
 checkerのaccumulatorとsource point alignmentを再利用し、teacher v7・GroupNorm・W-Aでwindowごとの
@@ -1149,7 +1149,7 @@ GT label・両run のprobability・0.5境界からの距離・vote countを記�
 確認した。
 
 **Step H4.1: 原因訂正と集約規約統一（2026-09-15）。** 上記「CUDA非決定性」という当初診断は
-誤りだった。方針管理チャットの精査（`.tmp/stage5_s5_14_step_h4_parity_boundary_case_decision_request.md`
+誤りだった。方針管理チャットの精査（`docs/stage5/s5-14/stage5_s5_14_step_h4_parity_boundary_case_decision_request.md`
 8節）とコード確認により、原因はH4 checkerの集約・判定規約が正本`evaluate_stage5.py:predict_h5()`と
 異なっていたことと判明した：(1) `predict_h5()`は両クラスの確率を集約するが、S5-08
 `run_overlap_forward()`はpositiveクラスのみ保持、(2) `predict_h5()`はwindow単位でfloat32化してから
@@ -1172,7 +1172,7 @@ synthetic test 19件をこの開発コンテナ内ですべて合格を確認し
 完全に誤りであり、原因はcheckerの集約・判定規約の不一致のみだったことが実証された。
 recurrence/exposure cross-checkでは、multiple unmatched runsのあるbin（791件）はないbin
 （1,401件）よりtraining window occurrence約+10%・disagreement rate約+8%高いが、仮説A
-（座標事前分布、8.7倍）と比べると効果は小さい。詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`
+（座標事前分布、8.7倍）と比べると効果は小さい。詳細は`docs/stage5/s5-14/stage5_s5_14_report_to_policy_chat.md`
 のStep H4.1節。
 
 **Step H4層別分析と3仮説の最終判定（2026-09-15）。** `point_overlap_error_statistics.csv`の
@@ -1233,7 +1233,7 @@ pass/fail）をこの開発コンテナ内ですべて合格を確認した。`p
 （vote_count=2でFP disagreement rate 35.2% vs TN disagreement rate 6.7%）が見られ、仮説Cの
 限定的な支持はvalidationだけでなくtrain_sanityでも方向が一致した。**S5-14 core（Step H1〜H5）は
 これで完了とする。** 数値正本は`docs/stage5/stage5_pointnext_s_training_evaluation_report.md`
-9.8節、完了報告は`.tmp/stage5_s5_14_report_to_policy_chat.md`。次の改修（座標equivariance診断、
+9.8節、完了報告は`docs/stage5/s5-14/stage5_s5_14_report_to_policy_chat.md`。次の改修（座標equivariance診断、
 inverse-occurrence loss weighting等）は方針管理チャットの判断を待つ。
 
 - GT densityが低い共通XY領域へprediction/FPが動画横断で集中し、centroidがGTよりglobal priorへ近い場合、
@@ -1283,7 +1283,7 @@ disagreementはH4既存artifactの周辺集計からjoint層別を捏造でき�
 **実機再集計の結果（2026-09-15）:** ユーザー実機で21動画（train sanity 3 + validation 18）・
 train prior 162動画・grid 16/8で正常終了、`vote_count`の構造的再計算とのparity不一致0件、
 既存confusion countsとのbin合計parityも合格した。詳細な数値は
-`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`の「実施記録」に記載。要点:
+`docs/stage5/s5-14/stage5_s5_14_supplement_report_to_policy_chat.md`の「実施記録」に記載。要点:
 
 - **仮説A（座標事前分布）:** 分母補正・GT positive数0のbin限定・train sanity自己参照排除の
   全てを適用した後も、hot bin FPRはcold bin FPRより一貫して高い（差にして約17〜36ポイント）。
@@ -1355,10 +1355,10 @@ paired比較では一般に残らなかった（train sanity n=3のみ）ため�
 **productionへの影響:** なし。teacher・保存済みpredictionの変更、threshold tuning、loss変更、
 augmentation追加は対象外。
 
-**関連文書:** `.tmp/stage5_s5_14_supplement_implementation_handoff.md`（実装依頼）、
-`.tmp/stage5_s5_14_report_to_policy_chat.md`（core報告）、
+**関連文書:** `docs/stage5/s5-14/stage5_s5_14_supplement_implementation_handoff.md`（実装依頼）、
+`docs/stage5/s5-14/stage5_s5_14_report_to_policy_chat.md`（core報告）、
 `docs/stage5/stage5_pointnext_s_training_evaluation_report.md` 9.8節（数値正本）。
-補足報告先は`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`。
+補足報告先は`docs/stage5/s5-14/stage5_s5_14_supplement_report_to_policy_chat.md`。
 
 ### S5-14補足2 座標変換診断
 
@@ -1416,7 +1416,7 @@ hot bin FP減少を「回転による精度改善」と解釈しないよう留�
 して記述し、hot/cold間の変化も「FPの再配分」ではなく別々の観測として扱った。
 
 詳細な動画別数値・split別テーブル・解釈上の留保は
-`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`を参照。
+`docs/stage5/s5-14/stage5_s5_14_supplement2_report_to_policy_chat.md`を参照。
 
 **補足結果への正式判断:** 前補足の完了を受け入れる。全21動画・grid16/8でhot領域のFPRが
 cold領域より高く、background点数による分母の交絡だけでは説明できない。一方、局所的な点密度・
@@ -1444,9 +1444,9 @@ window/vote対応と距離保存を検算し、元点ごとの確率差・判定
 完了後、augmentationの単独5 epoch比較案またはW-AによるS5-15 pilotのどちらへ進むか再判断する。
 本委任に学習・production変更の承認は含めない。
 
-**関連文書:** `.tmp/stage5_s5_14_supplement_implementation_handoff.md` 10章が実装依頼の詳細。
-前補足報告は`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`。
-補足2報告先は`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`、
+**関連文書:** `docs/stage5/s5-14/stage5_s5_14_supplement_implementation_handoff.md` 10章が実装依頼の詳細。
+前補足報告は`docs/stage5/s5-14/stage5_s5_14_supplement_report_to_policy_chat.md`。
+補足2報告先は`docs/stage5/s5-14/stage5_s5_14_supplement2_report_to_policy_chat.md`、
 数値は評価レポート9.8節へ別項目として追記する。
 
 ### S5-14補足3 残存集計・記録の確認
@@ -1488,7 +1488,7 @@ train_sanity recall diffのmean/median取り違え（正しい中央値は`rotat
 video-condition相当×2＝336 video-condition相当。これは得られた数値を無効化する趣旨ではなく、
 運用上の記録確認である。
 
-詳細・全数値は`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`の
+詳細・全数値は`docs/stage5/s5-14/stage5_s5_14_supplement2_report_to_policy_chat.md`の
 「S5-14補足3 完了報告」を参照。
 
 ### S5-14全体の完了判断と留保（2026-09-15）
@@ -1653,7 +1653,7 @@ S5-14の転記上の留保は生成CSVとの文書照合として処理し、新
 
 P1（固定条件監査）・P2（実装・CPU検証・限定GPU preflight）・P3（R0/R1各5 epoch比較と
 固定21動画評価）を完了した。詳細な数値は評価レポート9.9節、経緯は
-`.tmp/stage5_s5_15_report_to_policy_chat.md`。
+`docs/stage5/s5-15/stage5_s5_15_report_to_policy_chat.md`。
 
 **判断: R0を維持し、R1を今回は採用しない。** validation pooledでFPRが12.53%→7.91%へ下がる一方
 recallが45.08%→32.41%へ下がり、pooled F1は6.77%→7.36%、TP0は1→0と改善するものの、
@@ -1756,9 +1756,9 @@ productionへの影響:
 
 - `docs/stage5/stage5_pointnext_s_training_evaluation_report.md`
   - 精度問題、batch/padding監査、teacher v6 pilot、事項A/Bの数値的正本
-- `docs/stage5/stage5_overlap_aggregation_handoff_prompt.md`
+- `docs/stage5/s5-08-09/stage5_overlap_aggregation_handoff_prompt.md`
   - 事項A/Bの実装・実行履歴、環境、privacy契約
-- `docs/stage5/stage5_overlap_aggregation_implementation_policy.md`
+- `docs/stage5/s5-08-09/stage5_overlap_aggregation_implementation_policy.md`
   - overlap accumulator、parity、出力設計の実装根拠
 - `docs/stage5/stage5_edit_prompt.md`
   - MLP baselineの名称整理とofficial PointNeXt-S移行方針

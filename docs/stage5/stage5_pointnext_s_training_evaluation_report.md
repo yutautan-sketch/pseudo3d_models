@@ -1317,9 +1317,9 @@ ignoreのまま残しRun Bの変換対象から明示的に除いて続行、(3)
 **原因判明とStage 4側修正（2026-09-13〜14）:** 該当2動画のannotation可視化frameを目視確認した
 結果、丸め誤差ではなく、Stage 2のcrop窓（動画単位で固定）と被写体（femur）の相対移動による
 ずれ——既存除外事例`20250626_090758_8000`（`local_crop_tracking_drift`）と同型のパターン——と
-判明した。詳細調査依頼を`.tmp/stage5_s5_12_stage4_crop_quality_investigation_request.md`として
+判明した。詳細調査依頼を`docs/stage2to4/stage4/stage5_s5_12_stage4_crop_quality_investigation_request.md`として
 Stage 4管理チャットへ提出し、次の修正を受領した
-（`.tmp/stage5_s5_12_stage4_crop_quality_correction_report.md`）。
+（`docs/stage2to4/stage4/stage5_s5_12_stage4_crop_quality_correction_report.md`）。
 
 - train_068（実video `20250626_090652_6340`）: 動画全体をcrop品質不良として除外
   （既存除外1動画と合わせ計2動画除外）。
@@ -1448,7 +1448,7 @@ valid background全体（約720万点）に対して0.3%程度と少なく、領
 「分岐3（差が小さい）」または「分岐4（判定不能）」に近い。5 epochという短い学習量、
 teacher v7移行後で初めての比較であること、split集約とvideo別勝敗数・medianが一致しない点も
 踏まえ、production採否を実装チャット側では決定しない。詳細な判断材料は
-`.tmp/stage5_s5_12_report_to_policy_chat.md`にまとめ、方針管理チャットへ返す。
+`docs/stage5/s5-12/stage5_s5_12_report_to_policy_chat.md`にまとめ、方針管理チャットへ返す。
 
 **結果解析と方針管理チャットの判断（2026-09-14）:** Run Bは意図した局所的なlabel mechanismを
 学習できた一方、それがStage 5全体のFP問題を解決するという仮説は支持されなかった。validationの
@@ -1576,7 +1576,7 @@ empty-valid sample 0件）で、機構上の不具合ではなく重み設定そ
 増加した、(6) video別勝敗・medianもW-B側の系統的改善を全く支持しない。「FP低下と引き換えに
 recallが崩壊する場合、W-Bは採用しない」という9章の不採用分岐に明確に該当し、判定不能ではなく
 **W-Bは不採用、W-A（強いauto由来weight）を維持**という明確な結論が得られた。production反映は
-方針管理チャットの判断を待つ。詳細な報告は`.tmp/stage5_s5_13_report_to_policy_chat.md`。
+方針管理チャットの判断を待つ。詳細な報告は`docs/stage5/s5-13/stage5_s5_13_report_to_policy_chat.md`。
 
 #### S5-13補足: Threshold-free診断と中間Class Weight（W-C）検証結果（2026-09-14）
 
@@ -1639,7 +1639,7 @@ AUROC 0.8018(A)→0.7588(C)といずれもW-Cが下回った。さらに**同一
 とは言えない。**W-Cは不採用、W-A（強いauto由来weight）を維持**と判断し、結果が明確なため2回目の
 新規5 epoch pilotは実施しなかった。S5-13本比較の結論（W-A維持）はこの補足でも変わらない。
 production反映は方針管理チャットの判断を待つ。詳細な報告は
-`.tmp/stage5_s5_13_supplement_report_to_policy_chat.md`。
+`docs/stage5/s5-13/stage5_s5_13_supplement_report_to_policy_chat.md`。
 
 ### 9.8 座標依存・Frame-level・Overlap Exposure診断（S5-14）
 
@@ -1747,7 +1747,7 @@ self-checkに合格した。
 （仮説B）がrecallに限定した明確な効果、overlap exposure（仮説C）は補助的・限定的な効果という
 整理となった。production設定（normalization/label policy/class weight/threshold/aggregation）は
 本診断でも変更していない。次の改修（座標equivariance診断、inverse-occurrence loss weighting等）
-は方針管理チャットの判断を待つ。詳細は`.tmp/stage5_s5_14_report_to_policy_chat.md`。
+は方針管理チャットの判断を待つ。詳細は`docs/stage5/s5-14/stage5_s5_14_report_to_policy_chat.md`。
 
 **上記「3仮説の最終判定」表とD-030以前の記述は履歴として読むこと。** 方針管理チャットの精査で、
 以下の方法論的な留保が指摘され（D-030）、S5-14補足（本節末尾のサブセクション）で再評価する
@@ -1836,7 +1836,7 @@ n=3）のみだった。9.8節の「decile 0の64.2%からdecile 8の7.9%への�
 最も強い。Bの低下は同一動画内では一般に再現されなかったため時間文脈の限定診断を同等優先度で
 進める根拠は得られず、Cのexposure固有効果も時間区分別で残らなかったためinverse-occurrence loss
 weighting比較案を優先する根拠も得られなかった。次の改修の最終選択は方針管理チャットの判断を待つ。
-詳細な動画別数値・synthetic検証内容は`.tmp/stage5_s5_14_supplement_report_to_policy_chat.md`を
+詳細な動画別数値・synthetic検証内容は`docs/stage5/s5-14/stage5_s5_14_supplement_report_to_policy_chat.md`を
 参照。
 
 #### 9.8.3 S5-14補足2: 座標変換診断（prediction equivariance、2026-09-15修正後の実機実行結果）
@@ -1893,7 +1893,7 @@ hot bin FP減少を「回転による精度改善」とは解釈しない。正�
 3つの留保により、「座標記憶の確定」「augmentation採用」への飛躍はしない。次工程
 （augmentation単独5 epoch比較案の検討、またはW-A維持でのS5-15 pilot）の選択は方針管理チャット
 が行う。詳細な動画別数値・split別テーブルは
-`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`を参照。
+`docs/stage5/s5-14/stage5_s5_14_supplement2_report_to_policy_chat.md`を参照。
 
 #### 9.8.4 S5-14補足3: 残存集計・記録の確認（CPU専用、2026-09-15完了）
 
@@ -1918,7 +1918,7 @@ recallの加重平均であり、背景点数や全点数で加重されるも�
 recall diffのmean/median取り違え（正しい中央値は`rotate_z_plus`-4.58pt、`rotate_z_minus`
 -9.59pt）の3件を訂正した。再推論（初回・修正後の計336 video-condition相当）の事前承認記録は
 本書上に確認できず、「承認記録未確認」として報告している（得られた数値自体を無効化する趣旨
-ではない）。詳細・全数値は`.tmp/stage5_s5_14_supplement2_report_to_policy_chat.md`の
+ではない）。詳細・全数値は`docs/stage5/s5-14/stage5_s5_14_supplement2_report_to_policy_chat.md`の
 「S5-14補足3 完了報告」を参照。
 
 #### 9.8.5 S5-14全体の完了判断と残る留保（2026-09-15）

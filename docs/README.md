@@ -20,6 +20,9 @@ Stage2to4由来の文書は`stage2to4/`配下に、Stage5由来の文書は`stag
 - `stage2to4/stage4/stage4_sampling_sweep_investigation_edit_prompt.md`: 実教師データに基づくsampling parameter sweep基盤の編集指示
 - `stage2to4/stage4/stage4_sampling_sweep_investigation_rule.md`: 上記調査の進め方に関する方針整理
 
+- [S5-12からのcrop品質調査依頼](stage2to4/stage4/stage5_s5_12_stage4_crop_quality_investigation_request.md)
+- [crop品質修正報告](stage2to4/stage4/stage5_s5_12_stage4_crop_quality_correction_report.md)
+
 ## Stage2to4 / その他
 
 - `stage2to4/legacy/dualtrack_legacy.md`: 旧DualTrack実行手順
@@ -27,11 +30,14 @@ Stage2to4由来の文書は`stage2to4/`配下に、Stage5由来の文書は`stag
 
 ## Stage 5
 
+- [Stage5文書索引](stage5/README.md)：全体管理資料とS5-08〜S5-16のステップ別文書
+- [Stage5調査成果物](../research/stage5/README.md)：調査別データと報告書の対応
+
 - `stage5/stage5_revision_management_record.md`: Stage 5の概要、時系列の改修履歴、採用済み判断、現在状態、次の実施順を管理する正本
 - `stage5/stage5_pointnext_s_training_evaluation_report.md`: PointNeXt-Sのtrain sanity、validation、overlap window、paddingに関する評価・原因調査
 - `stage5/FILES.md`: Stage5リポジトリのファイル構成一覧
 - `stage5/TRAINING_IMPROVEMENT_PLAN.md`: Stage5学習改善方針（初期プラン。現在の優先順には全体改修・管理記録を使用）
-- `stage5/stage5_overlap_aggregation_handoff_prompt.md`: overlap aggregation検証・実装のチャット引継ぎプロンプト
+- `stage5/s5-08-09/stage5_overlap_aggregation_handoff_prompt.md`: overlap aggregation検証・実装のチャット引継ぎプロンプト
 - `stage5/data_construct.md`: Stage5評価出力構成
 - `stage5/stage5_edit_prompt.md`: Stage5暫定モデル実装の編集指示
 
@@ -45,3 +51,10 @@ Stage2to4由来の文書は`stage2to4/`配下に、Stage5由来の文書は`stag
 
 - `../Stage2to4/scripts/data/analyze_local_preprocess_candidates.py`: local前処理候補の解析
 - `../Stage2to4/pseudo3d/analysis/visualize_pseudo3d_h5.py`: pseudo3D H5の可視化
+
+## 開発管理・配置記録
+
+- [コミット分割管理記録](development/uncommitted_changes_commit_plan.md)
+- [コミット調査付録](development/commit_inventory_appendix.md)
+- [ファイル移動方針・実施記録](development/tmp_relocation_plan.md)
+- [コミット準備資料](../research/development/commit-preparation/README.md)

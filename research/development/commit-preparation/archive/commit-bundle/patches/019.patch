@@ -1,0 +1,2823 @@
+diff --git a/Stage2to4/checks/stage4/check_stage4_point_label_visualization.py b/Stage2to4/checks/stage4/check_stage4_point_label_visualization.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..88e11f1575a9b6535984c83e1075b6e3aea10ad9
+--- /dev/null
++++ b/Stage2to4/checks/stage4/check_stage4_point_label_visualization.py
+@@ -0,0 +1,641 @@
++from __future__ import annotations
++
++import csv
++import hashlib
++import json
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++import h5py
++import imageio.v2 as imageio
++import numpy as np
++
++from pseudo3d.export.export_stage4_point_label_visualization import (
++    LABEL_IGNORE,
++    export_stage4_point_label_visualization,
++    file_sha256,
++    load_stage4_point_label_visualization_input,
++    render_point_labels,
++)
++from pseudo3d.export.convert_masks_to_cvat_segmentation_mask_1_1 import (
++    convert_masks_to_cvat_zip,
++)
++
++
++def _sha(path: Path) -> str:
++    digest = hashlib.sha256()
++    digest.update(path.read_bytes())
++    return digest.hexdigest()
++
++
++def _write_text(group: h5py.Group, name: str, values: list[str]) -> None:
++    group.create_dataset(
++        name,
++        data=np.asarray(values, dtype=h5py.string_dtype("utf-8")),
++    )
++
++
++def make_fixture(root: Path) -> tuple[Path, Path]:
++    root.mkdir(parents=True, exist_ok=True)
++    pseudo3d_h5 = root / "synthetic_ts448_oym96_corr.h5"
++    images = np.zeros((3, 12, 16), dtype=np.uint8)
++    images[0] = 20
++    images[1] = 40
++    images[2] = 60
++    with h5py.File(pseudo3d_h5, "w") as handle:
++        handle.create_dataset("local_encoder_images", data=images)
++        handle.create_dataset(
++            "frame_indices", data=np.asarray([10, 20, 40], dtype=np.int64)
++        )
++
++    annotated_h5 = root / "synthetic" / (
++        "synthetic_pointcloud_annotated_foreground_combined_v2_"
++        "global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1.h5"
++    )
++    annotated_h5.parent.mkdir()
++    pixel_xy = np.asarray(
++        [
++            [2, 2],
++            [4, 2],
++            [6, 2],
++            [8, 2],
++            [3, 8],
++            [5, 8],
++            [7, 8],
++            [2, 5],
++            [5, 5],
++        ],
++        dtype=np.float32,
++    )
++    frame_order = np.asarray([0, 0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int32)
++    frame_index = np.asarray([10, 10, 10, 10, 20, 20, 20, 40, 40], dtype=np.int64)
++    labels = np.asarray([-1, 0, 1, 1, -1, 0, 0, 0, 0], dtype=np.int8)
++    with h5py.File(annotated_h5, "w") as handle:
++        handle.attrs["video_name"] = "synthetic"
++        handle.attrs["source_pseudo3d_h5"] = str(pseudo3d_h5.resolve())
++        handle.attrs["contour_teacher_schema"] = "bboxrank_v4_manual_fullvideo_v1"
++        pc = handle.create_group("point_cloud")
++        pc.create_dataset("pixel_xy", data=pixel_xy)
++        pc.create_dataset("frame_order", data=frame_order)
++        pc.create_dataset("frame_index", data=frame_index)
++        ann = handle.create_group("annotation")
++        ann.create_dataset("point_label", data=labels)
++        ann.create_dataset("valid_mask", data=labels != -1)
++        frame = handle.create_group("frame_annotation")
++        frame.create_dataset("frame_order", data=np.asarray([0, 0, 1], dtype=np.int32))
++        frame.create_dataset("frame_index", data=np.asarray([10, 10, 20], dtype=np.int64))
++        frame.create_dataset("bbox_index", data=np.asarray([0, 1, 0], dtype=np.int32))
++        frame.create_dataset(
++            "bbox_local_xyxy",
++            data=np.asarray(
++                [[1, 1, 9, 6], [10, 1, 14, 6], [1, 7, 9, 10]],
++                dtype=np.float32,
++            ),
++        )
++        frame.create_dataset("valid_contour", data=np.asarray([1, 1, 0], dtype=bool))
++        _write_text(
++            frame,
++            "selected_contour_source",
++            ["manual_cvat_fullvideo_v1", "global", "manual_cvat_fullvideo_empty_v1"],
++        )
++        _write_text(
++            frame,
++            "annotation_reason",
++            ["manual_review_completed", "bbox_ranked_selected_global", "manual_review_empty"],
++        )
++    return annotated_h5, pseudo3d_h5
++
++
++def _relative_files(root: Path) -> list[Path]:
++    return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
++
++
++def make_cvat_artifacts(
++    root: Path,
++    annotated_h5: Path,
++    pseudo3d_h5: Path,
++) -> tuple[Path, Path, np.ndarray]:
++    review_root = root / "review"
++    images_dir = review_root / "videos" / "synthetic" / "images"
++    masks_dir = root / "cvat_masks"
++    images_dir.mkdir(parents=True)
++    masks_dir.mkdir(parents=True)
++    stems = [
++        "synthetic__fo00000__fi00000010",
++        "synthetic__fo00001__fi00000020",
++        "synthetic__fo00002__fi00000040",
++    ]
++    with h5py.File(pseudo3d_h5, "r") as handle:
++        images = handle["local_encoder_images"][:]
++    applied_mask = np.zeros(images[0].shape, dtype=np.uint8)
++    applied_mask[2:5, 2:8] = 255
++    for order, stem in enumerate(stems):
++        imageio.imwrite(images_dir / f"{stem}.png", images[order])
++        mask = applied_mask if order == 0 else np.zeros_like(applied_mask)
++        imageio.imwrite(masks_dir / f"{stem}.png", mask)
++
++    snapshot_root = root / "snapshot"
++    task_id = 7
++    annotation_zip = (
++        snapshot_root
++        / "annotations"
++        / "synthetic"
++        / f"synthetic__task{task_id}__reviewed_segmentation_mask_1_1.zip"
++    )
++    convert_masks_to_cvat_zip(
++        images_dir=images_dir,
++        masks_dir=masks_dir,
++        output_zip=annotation_zip,
++    )
++    annotation_sha = file_sha256(annotation_zip)
++    manifest_path = snapshot_root / "export_manifest.csv"
++    manifest_path.parent.mkdir(parents=True, exist_ok=True)
++    with manifest_path.open("w", newline="", encoding="utf-8") as handle:
++        writer = csv.DictWriter(
++            handle,
++            fieldnames=("video_name", "task_id", "status", "annotation_sha256"),
++        )
++        writer.writeheader()
++        writer.writerow(
++            {
++                "video_name": "synthetic",
++                "task_id": task_id,
++                "status": "complete",
++                "annotation_sha256": annotation_sha,
++            }
++        )
++    with h5py.File(annotated_h5, "r+") as handle:
++        handle.attrs["manual_review_fullvideo_snapshot_manifest_sha256"] = (
++            file_sha256(manifest_path)
++        )
++        manual = handle.create_group("manual_review_fullvideo")
++        manual.attrs["reviewed_video"] = True
++        manual.attrs["task_id"] = task_id
++        manual.attrs["annotation_zip_sha256"] = annotation_sha
++        _write_text(manual, "frame_stem", [stems[0]])
++        manual.create_dataset("frame_order", data=np.asarray([0], dtype=np.int32))
++        manual.create_dataset("frame_index", data=np.asarray([10], dtype=np.int64))
++        manual.create_dataset("bbox_index", data=np.asarray([0], dtype=np.int32))
++        _write_text(manual, "decision", ["manual_positive"])
++    return review_root, snapshot_root, applied_mask.astype(bool)
++
++
++def make_authoritative_cvat_artifacts(
++    root: Path,
++    annotated_h5: Path,
++    pseudo3d_h5: Path,
++) -> tuple[Path, Path, dict[int, np.ndarray]]:
++    review_root = root / "review"
++    images_dir = review_root / "videos" / "synthetic" / "images"
++    masks_dir = root / "cvat_masks"
++    images_dir.mkdir(parents=True)
++    masks_dir.mkdir(parents=True)
++    stems = [
++        "synthetic__fo00000__fi00000010",
++        "synthetic__fo00001__fi00000020",
++        "synthetic__fo00002__fi00000040",
++    ]
++    with h5py.File(pseudo3d_h5, "r") as handle:
++        images = handle["local_encoder_images"][:]
++    masks = {order: np.zeros(images[order].shape, dtype=np.uint8) for order in range(3)}
++    masks[0][2:5, 2:8] = 255
++    masks[2][4:7, 1:4] = 255
++    for order, stem in enumerate(stems):
++        imageio.imwrite(images_dir / f"{stem}.png", images[order])
++        imageio.imwrite(masks_dir / f"{stem}.png", masks[order])
++
++    snapshot_root = root / "snapshot"
++    task_id = 8
++    annotation_zip = (
++        snapshot_root
++        / "annotations"
++        / "synthetic"
++        / f"synthetic__task{task_id}__reviewed_segmentation_mask_1_1.zip"
++    )
++    convert_masks_to_cvat_zip(
++        images_dir=images_dir,
++        masks_dir=masks_dir,
++        output_zip=annotation_zip,
++    )
++    annotation_sha = file_sha256(annotation_zip)
++    manifest_path = snapshot_root / "export_manifest.csv"
++    manifest_path.parent.mkdir(parents=True, exist_ok=True)
++    with manifest_path.open("w", newline="", encoding="utf-8") as handle:
++        writer = csv.DictWriter(
++            handle,
++            fieldnames=("video_name", "task_id", "status", "annotation_sha256"),
++        )
++        writer.writeheader()
++        writer.writerow(
++            {
++                "video_name": "synthetic",
++                "task_id": task_id,
++                "status": "complete",
++                "annotation_sha256": annotation_sha,
++            }
++        )
++    labels = np.asarray([1, 1, 1, -1, -1, -1, -1, 1, 0], dtype=np.int8)
++    with h5py.File(annotated_h5, "r+") as handle:
++        handle.attrs["contour_teacher_schema"] = (
++            "bboxrank_v5_cvat_authoritative_v1"
++        )
++        handle.attrs["manual_review_fullvideo_snapshot_manifest_sha256"] = (
++            file_sha256(manifest_path)
++        )
++        handle.attrs["manual_review_fullvideo_authoritative_frame_count"] = 3
++        handle.attrs[
++            "manual_review_fullvideo_positive_outside_cvat_mask_points"
++        ] = 0
++        handle["annotation/point_label"][:] = labels
++        handle["annotation/valid_mask"][:] = labels != -1
++        handle["annotation"].attrs["label_authority"] = "cvat_snapshot"
++        manual = handle.create_group("manual_review_fullvideo")
++        manual.attrs["reviewed_video"] = True
++        manual.attrs["task_id"] = task_id
++        manual.attrs["annotation_zip_sha256"] = annotation_sha
++        _write_text(manual, "frame_stem", [stems[0]])
++        manual.create_dataset("frame_order", data=np.asarray([0], dtype=np.int32))
++        manual.create_dataset("frame_index", data=np.asarray([10], dtype=np.int64))
++        manual.create_dataset("bbox_index", data=np.asarray([0], dtype=np.int32))
++        _write_text(manual, "decision", ["manual_positive"])
++
++        frames = handle.create_group("manual_review_fullvideo_frames")
++        frames.attrs["reviewed_video"] = True
++        frames.attrs["task_id"] = task_id
++        frames.attrs["annotation_zip_sha256"] = annotation_sha
++        frames.attrs["label_authority"] = "cvat_snapshot"
++        _write_text(frames, "frame_stem", stems)
++        _write_text(frames, "frame_role", ["review_target", "context_only", "context_only"])
++        _write_text(frames, "cvat_mask_status", ["positive", "empty", "positive"])
++        _write_text(frames, "label_authority", ["cvat_snapshot"] * 3)
++        for name, values in {
++            "frame_order": [0, 1, 2],
++            "frame_index": [10, 20, 40],
++            "cvat_mask_positive_pixels": [int(masks[0].astype(bool).sum()), 0, int(masks[2].astype(bool).sum())],
++            "positive_points": [3, 0, 1],
++            "ignore_points": [1, 3, 0],
++            "background_points": [0, 0, 1],
++            "positive_outside_cvat_mask_points": [0, 0, 0],
++        }.items():
++            frames.create_dataset(name, data=np.asarray(values, dtype=np.int64))
++    return review_root, snapshot_root, {
++        order: mask.astype(bool) for order, mask in masks.items()
++    }
++
++
++def test_render_colors() -> None:
++    gray = np.zeros((7, 9), dtype=np.uint8)
++    cvat_mask = np.zeros_like(gray, dtype=bool)
++    cvat_mask[1, 1] = True
++    cvat_mask[1, 7] = True
++    cvat_mask[4, 4] = True
++    image = render_point_labels(
++        gray,
++        pixel_xy=np.asarray([[1, 1], [4, 1], [7, 1]], dtype=np.float32),
++        labels=np.asarray([-1, 0, 1], dtype=np.int8),
++        radius=0,
++        alpha=1.0,
++        positive_color=(255, 32, 32),
++        ignore_color=(255, 210, 0),
++        background_color=(80, 140, 200),
++        cvat_mask=cvat_mask,
++        cvat_color=(0, 255, 255),
++        cvat_alpha=1.0,
++    )
++    np.testing.assert_array_equal(image[1, 1], (0, 255, 255))
++    np.testing.assert_array_equal(image[1, 4], (80, 140, 200))
++    np.testing.assert_array_equal(image[1, 7], (255, 32, 32))
++    np.testing.assert_array_equal(image[4, 4], (0, 255, 255))
++    print("[OK] yellow -> CVAT cyan -> positive red overlay order")
++
++
++def test_cvat_mask_integration(root: Path) -> None:
++    annotated_h5, pseudo3d_h5 = make_fixture(root)
++    review_root, snapshot_root, applied_mask = make_cvat_artifacts(
++        root, annotated_h5, pseudo3d_h5
++    )
++    output = root / "output"
++    summary = export_stage4_point_label_visualization(
++        annotated_h5,
++        output,
++        point_radius=0,
++        point_alpha=1.0,
++        cvat_review_root=review_root,
++        cvat_snapshot_root=snapshot_root,
++        cvat_mask_alpha=1.0,
++    )
++    assert summary["cvat_masks_requested"] is True
++    assert summary["cvat_mask_frames"] == 1
++    assert summary["cvat_mask_pixels"] == int(applied_mask.sum())
++    image = imageio.imread(output / "frames" / "annotation_frame_00000.png")
++    np.testing.assert_array_equal(image[4, 5], (0, 255, 255))
++    np.testing.assert_array_equal(image[2, 6], (255, 32, 32))
++    with (output / "frame_labels.csv").open(
++        newline="", encoding="utf-8"
++    ) as handle:
++        rows = list(csv.DictReader(handle))
++    frame_zero = [row for row in rows if row["frame_order"] == "0"]
++    assert {row["cvat_mask_applied"] for row in frame_zero} == {"1"}
++    assert {int(row["cvat_mask_pixels"]) for row in frame_zero} == {
++        int(applied_mask.sum())
++    }
++    print("[OK] corrected CVAT ZIP mask loading, checksum, and frame alignment")
++
++
++def test_authoritative_cvat_mask_integration(root: Path) -> None:
++    annotated_h5, pseudo3d_h5 = make_fixture(root)
++    review_root, snapshot_root, masks = make_authoritative_cvat_artifacts(
++        root, annotated_h5, pseudo3d_h5
++    )
++    output = root / "output"
++    summary = export_stage4_point_label_visualization(
++        annotated_h5,
++        output,
++        point_radius=0,
++        point_alpha=1.0,
++        cvat_review_root=review_root,
++        cvat_snapshot_root=snapshot_root,
++        cvat_mask_alpha=1.0,
++        require_cvat_authoritative=True,
++    )
++    assert summary["cvat_label_authority"] == "cvat_snapshot"
++    assert summary["cvat_mask_frames"] == 3
++    assert summary["cvat_authoritative_frames"] == 3
++    assert summary["cvat_mask_nonempty_frames"] == 2
++    assert summary["cvat_mask_status_counts"] == {"empty": 1, "positive": 2}
++    assert summary["positive_outside_cvat_mask_points"] == 0
++    assert summary["cvat_point_mask_mismatch_points"] == 0
++    assert summary["cvat_mask_pixels"] == sum(int(mask.sum()) for mask in masks.values())
++    context_image = imageio.imread(
++        output / "frames" / "annotation_frame_00002.png"
++    )
++    np.testing.assert_array_equal(context_image[5, 2], (255, 32, 32))
++    np.testing.assert_array_equal(context_image[4, 3], (0, 255, 255))
++    with (output / "frame_labels.csv").open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    by_order = {int(row["frame_order"]): row for row in rows if row["bbox_index"] == ""}
++    assert by_order[2]["cvat_mask_status"] == "positive"
++    assert by_order[2]["positive_points"] == "1"
++    assert by_order[2]["positive_outside_cvat_mask_points"] == "0"
++
++    with h5py.File(annotated_h5, "r+") as handle:
++        handle["annotation/point_label"][8] = 1
++        handle["manual_review_fullvideo_frames/positive_points"][2] = 2
++        handle["manual_review_fullvideo_frames/background_points"][2] = 0
++    try:
++        export_stage4_point_label_visualization(
++            annotated_h5,
++            root / "invalid_output",
++            cvat_review_root=review_root,
++            cvat_snapshot_root=snapshot_root,
++            require_cvat_authoritative=True,
++        )
++    except ValueError as exc:
++        assert "outside authoritative CVAT mask" in str(exc)
++    else:
++        raise AssertionError("Positive point center outside CVAT mask must fail")
++    print(
++        "[OK] authoritative all-frame CVAT overlay and point-center subset contract"
++    )
++
++
++def test_end_to_end(root: Path) -> None:
++    annotated_h5, pseudo3d_h5 = make_fixture(root)
++    before = file_sha256(annotated_h5)
++    pseudo3d_before = file_sha256(pseudo3d_h5)
++    loaded = load_stage4_point_label_visualization_input(annotated_h5)
++    assert loaded["pseudo3d_h5"] == pseudo3d_h5.resolve()
++    assert loaded["video_name"] == "synthetic"
++
++    first = root / "output_1"
++    second = root / "output_2"
++    summary_1 = export_stage4_point_label_visualization(
++        annotated_h5,
++        first,
++        point_radius=0,
++        point_alpha=1.0,
++    )
++    summary_2 = export_stage4_point_label_visualization(
++        annotated_h5,
++        second,
++        point_radius=0,
++        point_alpha=1.0,
++    )
++    assert file_sha256(annotated_h5) == before
++    assert file_sha256(pseudo3d_h5) == pseudo3d_before
++    assert summary_1 == summary_2
++    assert summary_1["automatic_contours_recomputed"] is False
++    assert summary_1["input_files_modified"] is False
++    assert summary_1["num_frames"] == 3
++    assert summary_1["num_bbox_rows"] == 3
++    assert summary_1["num_points"] == 9
++    assert summary_1["positive_points"] == 2
++    assert summary_1["ignore_points"] == 2
++    assert summary_1["background_points"] == 5
++    assert summary_1["source_counts"] == {
++        "global": 1,
++        "manual_cvat_fullvideo_empty_v1": 1,
++        "manual_cvat_fullvideo_v1": 1,
++    }
++
++    files_1 = _relative_files(first)
++    files_2 = _relative_files(second)
++    assert files_1 == files_2
++    for relative in files_1:
++        assert _sha(first / relative) == _sha(second / relative), relative
++    assert len(list((first / "frames").glob("annotation_frame_*.png"))) == 3
++    with (first / "frame_labels.csv").open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    assert len(rows) == 4
++    no_bbox = [row for row in rows if row["frame_order"] == "2"]
++    assert len(no_bbox) == 1
++    assert no_bbox[0]["bbox_index"] == ""
++    assert no_bbox[0]["background_points"] == "2"
++    manual_empty = [
++        row
++        for row in rows
++        if row["selected_contour_source"] == "manual_cvat_fullvideo_empty_v1"
++    ]
++    assert len(manual_empty) == 1
++    assert manual_empty[0]["positive_points"] == "0"
++
++    frame_zero = imageio.imread(first / "frames" / "annotation_frame_00000.png")
++    np.testing.assert_array_equal(frame_zero[2, 2], (255, 210, 0))
++    np.testing.assert_array_equal(frame_zero[2, 4], (80, 140, 200))
++    np.testing.assert_array_equal(frame_zero[2, 6], (255, 32, 32))
++    # BBox comes from the saved H5 and is drawn after point labels.
++    np.testing.assert_array_equal(frame_zero[1, 1], (160, 255, 80))
++    print("[OK] saved labels, saved BBoxes, provenance CSV, and deterministic output")
++
++
++def test_validation(root: Path) -> None:
++    annotated_h5, _ = make_fixture(root / "invalid")
++    with h5py.File(annotated_h5, "r+") as handle:
++        handle["annotation/valid_mask"][0] = True
++    try:
++        load_stage4_point_label_visualization_input(annotated_h5)
++    except ValueError as exc:
++        assert "valid_mask differs" in str(exc)
++    else:
++        raise AssertionError("valid_mask mismatch must be rejected")
++
++    annotated_h5, _ = make_fixture(root / "unknown")
++    with h5py.File(annotated_h5, "r+") as handle:
++        values = [
++            value.decode("utf-8") if isinstance(value, bytes) else str(value)
++            for value in handle["frame_annotation/selected_contour_source"][:]
++        ]
++        values[0] = "mystery"
++        del handle["frame_annotation/selected_contour_source"]
++        _write_text(handle["frame_annotation"], "selected_contour_source", values)
++    try:
++        load_stage4_point_label_visualization_input(annotated_h5)
++    except ValueError as exc:
++        assert "Unknown selected_contour_source" in str(exc)
++    else:
++        raise AssertionError("unknown provenance must be rejected")
++
++    annotated_h5, _ = make_fixture(root / "no_bbox")
++    with h5py.File(annotated_h5, "r+") as handle:
++        handle["annotation/point_label"][7] = LABEL_IGNORE
++        handle["annotation/valid_mask"][7] = False
++    try:
++        load_stage4_point_label_visualization_input(annotated_h5)
++    except ValueError as exc:
++        assert "BBox-free frames contain non-background labels" in str(exc)
++    else:
++        raise AssertionError("non-background label on BBox-free frame must be rejected")
++
++    source = (
++        REPO_ROOT
++        / "pseudo3d/export/export_stage4_point_label_visualization.py"
++    ).read_text(encoding="utf-8")
++    assert "build_frame_contour_mask_results" not in source
++    assert "load_voc_bboxes" not in source
++    print(
++        "[OK] label/provenance/no-BBox validation and no contour/XML recomputation"
++    )
++
++
++def test_batch_cli(root: Path) -> None:
++    annotated_h5, _ = make_fixture(root / "batch_fixture")
++    output_root = root / "batch_output"
++    summary_csv = output_root / "summary.csv"
++    command = [
++        sys.executable,
++        str(
++            REPO_ROOT
++            / "pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py"
++        ),
++        "--annotated_dir",
++        str(annotated_h5.parent),
++        "--pattern",
++        "*.h5",
++        "--output_root",
++        str(output_root),
++        "--summary_csv",
++        str(summary_csv),
++        "--expected_files",
++        "1",
++        "--point_radius",
++        "0",
++        "--point_alpha",
++        "1",
++    ]
++    completed = subprocess.run(command, text=True, capture_output=True, check=False)
++    if completed.returncode:
++        raise AssertionError(completed.stdout + completed.stderr)
++    with summary_csv.open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    assert len(rows) == 1
++    assert rows[0]["status"] == "processed"
++    assert rows[0]["video_name"] == "synthetic"
++    assert rows[0]["positive_points"] == "2"
++    summary = json.loads(
++        (output_root / "synthetic" / "summary.json").read_text(encoding="utf-8")
++    )
++    assert summary["automatic_contours_recomputed"] is False
++
++    completed = subprocess.run(
++        command + ["--skip_existing"], text=True, capture_output=True, check=False
++    )
++    if completed.returncode:
++        raise AssertionError(completed.stdout + completed.stderr)
++    with summary_csv.open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    assert rows[0]["status"] == "skipped_verified"
++    print("[OK] batch CLI, summary, and verified resume")
++
++
++def test_authoritative_batch_cli(root: Path) -> None:
++    annotated_h5, pseudo3d_h5 = make_fixture(root / "fixture")
++    review_root, snapshot_root, _ = make_authoritative_cvat_artifacts(
++        root / "fixture", annotated_h5, pseudo3d_h5
++    )
++    output_root = root / "output"
++    summary_csv = output_root / "summary.csv"
++    command = [
++        sys.executable,
++        str(
++            REPO_ROOT
++            / "pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py"
++        ),
++        "--annotated_dir",
++        str(annotated_h5.parent),
++        "--pattern",
++        "*.h5",
++        "--output_root",
++        str(output_root),
++        "--summary_csv",
++        str(summary_csv),
++        "--expected_files",
++        "1",
++        "--point_radius",
++        "0",
++        "--cvat_review_root",
++        str(review_root),
++        "--cvat_snapshot_root",
++        str(snapshot_root),
++        "--require_cvat_authoritative",
++    ]
++    completed = subprocess.run(command, text=True, capture_output=True, check=False)
++    if completed.returncode:
++        raise AssertionError(completed.stdout + completed.stderr)
++    with summary_csv.open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    assert rows[0]["cvat_label_authority"] == "cvat_snapshot"
++    assert rows[0]["cvat_authoritative_frames"] == "3"
++    assert rows[0]["positive_outside_cvat_mask_points"] == "0"
++    assert rows[0]["cvat_point_mask_mismatch_points"] == "0"
++    completed = subprocess.run(
++        command + ["--skip_existing"], text=True, capture_output=True, check=False
++    )
++    if completed.returncode:
++        raise AssertionError(completed.stdout + completed.stderr)
++    with summary_csv.open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    assert rows[0]["status"] == "skipped_verified"
++    print("[OK] authoritative batch CLI, summary, and verified resume")
++
++
++def main() -> None:
++    test_render_colors()
++    with tempfile.TemporaryDirectory(prefix="stage4_point_label_vis_") as directory:
++        root = Path(directory)
++        test_cvat_mask_integration(root / "cvat_integration")
++        test_authoritative_cvat_mask_integration(root / "authoritative_integration")
++        test_end_to_end(root / "end_to_end")
++        test_validation(root / "validation")
++        test_batch_cli(root / "batch")
++        test_authoritative_batch_cli(root / "authoritative_batch")
++    print("Stage 4 saved point-label visualization synthetic checks passed.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py b/Stage2to4/pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..87fc32f2b84360ded852abdbbc354b21adf7e158
+--- /dev/null
++++ b/Stage2to4/pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py
+@@ -0,0 +1,524 @@
++from __future__ import annotations
++
++import argparse
++import csv
++import json
++import sys
++import traceback
++from pathlib import Path
++from typing import Any, Mapping, Sequence
++
++REPO_ROOT = Path(__file__).resolve().parents[3]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++import h5py
++
++from pseudo3d.export.export_stage4_point_label_visualization import (
++    export_stage4_point_label_visualization,
++    file_sha256,
++    parse_color,
++)
++
++
++SUMMARY_FIELDS = (
++    "status",
++    "video_name",
++    "annotated_h5",
++    "annotated_h5_sha256",
++    "output_dir",
++    "automatic_contours_recomputed",
++    "input_files_modified",
++    "num_frames",
++    "num_bbox_rows",
++    "num_points",
++    "positive_points",
++    "ignore_points",
++    "background_points",
++    "cvat_mask_frames",
++    "cvat_mask_pixels",
++    "suppressed_cvat_mask_frames",
++    "suppressed_cvat_mask_pixels",
++    "cvat_label_authority",
++    "cvat_authoritative_frames",
++    "xml_invalidation_frames",
++    "xml_invalidation_manifest_sha256",
++    "xml_invalidation_fingerprint",
++    "positive_outside_cvat_mask_points",
++    "cvat_point_mask_mismatch_points",
++    "source_counts_json",
++    "error",
++)
++
++
++def _decode(value: Any) -> str:
++    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
++
++
++def _video_name(path: Path) -> str:
++    with h5py.File(path, "r") as handle:
++        value = handle.attrs.get("video_name", path.parent.name)
++    name = _decode(value).strip()
++    if not name or name == "None":
++        raise ValueError(f"Could not resolve video_name: {path}")
++    return name
++
++
++def collect_paths(
++    *,
++    annotated_dir: Path | None,
++    h5_list: Path | None,
++    pattern: str,
++    recursive: bool,
++) -> list[Path]:
++    if (annotated_dir is None) == (h5_list is None):
++        raise ValueError("Specify exactly one of --annotated_dir and --h5_list")
++    if h5_list is not None:
++        if not Path(h5_list).is_file():
++            raise FileNotFoundError(f"h5_list not found: {h5_list}")
++        paths = []
++        with Path(h5_list).open(encoding="utf-8") as handle:
++            for line in handle:
++                value = line.strip()
++                if value and not value.startswith("#"):
++                    paths.append(Path(value).resolve())
++    else:
++        root = Path(annotated_dir)
++        if not root.is_dir():
++            raise FileNotFoundError(f"annotated_dir not found: {root}")
++        globber = root.rglob if recursive else root.glob
++        paths = [path.resolve() for path in sorted(globber(pattern)) if path.is_file()]
++    if not paths:
++        raise FileNotFoundError("No annotated H5 files were found")
++    if len(paths) != len(set(paths)):
++        raise ValueError("Duplicate annotated H5 paths")
++    return paths
++
++
++def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
++    Path(path).parent.mkdir(parents=True, exist_ok=True)
++    with Path(path).open("w", newline="", encoding="utf-8") as handle:
++        writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS)
++        writer.writeheader()
++        writer.writerows(rows)
++
++
++def _existing_summary(
++    output_dir: Path,
++    input_h5: Path,
++    *,
++    require_cvat_masks: bool,
++    require_cvat_authoritative: bool,
++    require_xml_invalidation: bool,
++) -> dict[str, Any]:
++    summary_path = output_dir / "summary.json"
++    if not summary_path.is_file():
++        raise FileNotFoundError(f"Existing output lacks summary.json: {output_dir}")
++    summary = json.loads(summary_path.read_text(encoding="utf-8"))
++    if summary.get("status") != "ok":
++        raise ValueError(f"Existing output status is not ok: {output_dir}")
++    if summary.get("automatic_contours_recomputed") is not False:
++        raise ValueError(f"Existing output is not saved-label visualization: {output_dir}")
++    if require_cvat_masks and summary.get("cvat_masks_requested") is not True:
++        raise ValueError(f"Existing output lacks requested CVAT mask overlay: {output_dir}")
++    if require_cvat_authoritative:
++        authority = summary.get("cvat_label_authority")
++        if authority not in {
++            "cvat_snapshot",
++            "cvat_snapshot_with_xml_invalidation",
++            "inherited",
++            "inherited_with_xml_invalidation",
++        }:
++            raise ValueError(
++                f"Existing output lacks authoritative label contract: {output_dir}"
++            )
++        if int(summary.get("positive_outside_cvat_mask_points", -1)) != 0:
++            raise ValueError(
++                f"Existing output has positive points outside CVAT mask: {output_dir}"
++            )
++        if int(summary.get("cvat_point_mask_mismatch_points", -1)) != 0:
++            raise ValueError(
++                f"Existing output has CVAT/point-label mismatches: {output_dir}"
++            )
++        authoritative_frames = int(
++            summary.get("cvat_authoritative_frames", -1)
++        )
++        cvat_mask_frames = int(summary.get("cvat_mask_frames", -1))
++        suppressed_frames = int(summary.get("suppressed_cvat_mask_frames", 0))
++        if authority == "cvat_snapshot" and (
++            authoritative_frames != int(summary["num_frames"])
++            or cvat_mask_frames != authoritative_frames
++        ):
++            raise ValueError(
++                f"Existing output does not cover every authoritative frame: {output_dir}"
++            )
++        if authority == "cvat_snapshot_with_xml_invalidation" and (
++            authoritative_frames != int(summary["num_frames"])
++            or cvat_mask_frames + suppressed_frames != authoritative_frames
++            or suppressed_frames != int(summary["xml_invalidation_frames"])
++        ):
++            raise ValueError(
++                "Existing output does not suppress exactly the invalidated "
++                f"CVAT frames: {output_dir}"
++            )
++        if authority in {"inherited", "inherited_with_xml_invalidation"} and (
++            authoritative_frames != 0 or cvat_mask_frames != 0
++        ):
++            raise ValueError(
++                f"Inherited output unexpectedly contains CVAT frames: {output_dir}"
++            )
++    if require_xml_invalidation:
++        if summary.get("contour_teacher_schema") != (
++            "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
++        ):
++            raise ValueError(f"Existing output is not v6 XML invalidation: {output_dir}")
++        for name in (
++            "xml_invalidation_manifest_sha256",
++            "xml_invalidation_fingerprint",
++        ):
++            if not str(summary.get(name, "")):
++                raise ValueError(
++                    f"Existing output lacks {name}: {output_dir}"
++                )
++    if summary.get("annotated_h5_sha256") != file_sha256(input_h5):
++        raise ValueError(f"Existing output input checksum mismatch: {output_dir}")
++    pseudo3d_h5 = Path(str(summary.get("pseudo3d_h5", "")))
++    if not pseudo3d_h5.is_file():
++        raise FileNotFoundError(
++            f"Existing output source pseudo3D H5 is missing: {pseudo3d_h5}"
++        )
++    if summary.get("pseudo3d_h5_sha256") != file_sha256(pseudo3d_h5):
++        raise ValueError(
++            f"Existing output source pseudo3D checksum mismatch: {output_dir}"
++        )
++    cvat_source = summary.get("cvat_mask_source", {})
++    cvat_zip_text = str(cvat_source.get("annotation_zip", ""))
++    if cvat_zip_text:
++        cvat_zip = Path(cvat_zip_text)
++        if not cvat_zip.is_file():
++            raise FileNotFoundError(
++                f"Existing output CVAT annotation ZIP is missing: {cvat_zip}"
++            )
++        if cvat_source.get("annotation_zip_sha256") != file_sha256(cvat_zip):
++            raise ValueError(f"Existing output CVAT ZIP checksum mismatch: {output_dir}")
++    expected_frames = int(summary["num_frames"])
++    actual_frames = len(list((output_dir / "frames").glob("annotation_frame_*.png")))
++    if actual_frames != expected_frames:
++        raise ValueError(
++            f"Existing frame count mismatch: {actual_frames} != {expected_frames}"
++        )
++    return summary
++
++
++def run(args: argparse.Namespace) -> dict[str, Any]:
++    if args.skip_existing and args.overwrite:
++        raise ValueError("--skip_existing and --overwrite are mutually exclusive")
++    if (args.cvat_review_root is None) != (args.cvat_snapshot_root is None):
++        raise ValueError(
++            "--cvat_review_root and --cvat_snapshot_root must be specified together"
++        )
++    for name in ("cvat_review_root", "cvat_snapshot_root"):
++        value = getattr(args, name)
++        if value is not None and not Path(value).is_dir():
++            raise FileNotFoundError(f"{name} not found: {value}")
++    paths = collect_paths(
++        annotated_dir=args.annotated_dir,
++        h5_list=args.h5_list,
++        pattern=args.pattern,
++        recursive=args.recursive,
++    )
++    selected_names = {
++        value.strip() for value in args.video_names.split(",") if value.strip()
++    }
++    resolved = [(path, _video_name(path)) for path in paths]
++    if selected_names:
++        found_names = {name for _, name in resolved}
++        missing = selected_names - found_names
++        if missing:
++            raise FileNotFoundError(f"Requested videos not found: {sorted(missing)}")
++        resolved = [(path, name) for path, name in resolved if name in selected_names]
++    names = [name for _, name in resolved]
++    if len(names) != len(set(names)):
++        raise ValueError("Duplicate video_name values in input H5 files")
++    if args.expected_files >= 0 and len(resolved) != args.expected_files:
++        raise ValueError(
++            f"Input H5 count mismatch: {len(resolved)} != {args.expected_files}"
++        )
++
++    output_root = Path(args.output_root).resolve()
++    output_root.mkdir(parents=True, exist_ok=True)
++    rows: list[dict[str, Any]] = []
++    failures = 0
++    print("Stage 4 saved point-label visualization batch")
++    print(f"  inputs      : {len(resolved)}")
++    print(f"  output root : {output_root}")
++    print("  contours    : not recomputed")
++    for index, (path, video_name) in enumerate(resolved, start=1):
++        output_dir = output_root / video_name
++        try:
++            if output_dir.exists() and any(output_dir.iterdir()) and args.skip_existing:
++                summary = _existing_summary(
++                    output_dir,
++                    path,
++                    require_cvat_masks=args.cvat_review_root is not None,
++                    require_cvat_authoritative=args.require_cvat_authoritative,
++                    require_xml_invalidation=args.require_xml_invalidation,
++                )
++                status = "skipped_verified"
++            else:
++                summary = export_stage4_point_label_visualization(
++                    path,
++                    output_dir,
++                    point_radius=args.point_radius,
++                    point_alpha=args.point_alpha,
++                    positive_color=parse_color(args.positive_color),
++                    ignore_color=parse_color(args.ignore_color),
++                    background_color=parse_color(args.background_color),
++                    bbox_color=parse_color(args.bbox_color),
++                    bbox_thickness=args.bbox_thickness,
++                    cvat_review_root=args.cvat_review_root,
++                    cvat_snapshot_root=args.cvat_snapshot_root,
++                    cvat_mask_color=parse_color(args.cvat_mask_color),
++                    cvat_mask_alpha=args.cvat_mask_alpha,
++                    require_cvat_authoritative=args.require_cvat_authoritative,
++                    overwrite=args.overwrite,
++                )
++                status = "processed"
++            if args.require_xml_invalidation:
++                if summary.get("contour_teacher_schema") != (
++                    "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
++                ):
++                    raise ValueError(
++                        f"Visualization input is not v6 XML invalidation: {path}"
++                    )
++                for name in (
++                    "xml_invalidation_manifest_sha256",
++                    "xml_invalidation_fingerprint",
++                ):
++                    if not str(summary.get(name, "")):
++                        raise ValueError(
++                            f"Visualization summary lacks {name}: {path}"
++                        )
++            row = {
++                "status": status,
++                "video_name": video_name,
++                "annotated_h5": str(path),
++                "annotated_h5_sha256": summary["annotated_h5_sha256"],
++                "output_dir": str(output_dir),
++                "automatic_contours_recomputed": False,
++                "input_files_modified": False,
++                "num_frames": summary["num_frames"],
++                "num_bbox_rows": summary["num_bbox_rows"],
++                "num_points": summary["num_points"],
++                "positive_points": summary["positive_points"],
++                "ignore_points": summary["ignore_points"],
++                "background_points": summary["background_points"],
++                "cvat_mask_frames": summary["cvat_mask_frames"],
++                "cvat_mask_pixels": summary["cvat_mask_pixels"],
++                "suppressed_cvat_mask_frames": summary.get(
++                    "suppressed_cvat_mask_frames", 0
++                ),
++                "suppressed_cvat_mask_pixels": summary.get(
++                    "suppressed_cvat_mask_pixels", 0
++                ),
++                "cvat_label_authority": summary.get(
++                    "cvat_label_authority", "legacy"
++                ),
++                "cvat_authoritative_frames": summary.get(
++                    "cvat_authoritative_frames", 0
++                ),
++                "xml_invalidation_frames": summary.get(
++                    "xml_invalidation_frames", 0
++                ),
++                "xml_invalidation_manifest_sha256": summary.get(
++                    "xml_invalidation_manifest_sha256", ""
++                ),
++                "xml_invalidation_fingerprint": summary.get(
++                    "xml_invalidation_fingerprint", ""
++                ),
++                "positive_outside_cvat_mask_points": summary.get(
++                    "positive_outside_cvat_mask_points", 0
++                ),
++                "cvat_point_mask_mismatch_points": summary.get(
++                    "cvat_point_mask_mismatch_points", 0
++                ),
++                "source_counts_json": json.dumps(
++                    summary["source_counts"], sort_keys=True, separators=(",", ":")
++                ),
++                "error": "",
++            }
++            print(
++                f"  [{index}/{len(resolved)}] [OK {status}] {video_name}: "
++                f"frames={summary['num_frames']}, points={summary['num_points']}, "
++                f"positive={summary['positive_points']}"
++            )
++        except Exception as exc:
++            failures += 1
++            row = {
++                "status": "failed",
++                "video_name": video_name,
++                "annotated_h5": str(path),
++                "annotated_h5_sha256": "",
++                "output_dir": str(output_dir),
++                "automatic_contours_recomputed": "",
++                "input_files_modified": "",
++                "num_frames": "",
++                "num_bbox_rows": "",
++                "num_points": "",
++                "positive_points": "",
++                "ignore_points": "",
++                "background_points": "",
++                "cvat_mask_frames": "",
++                "cvat_mask_pixels": "",
++                "suppressed_cvat_mask_frames": "",
++                "suppressed_cvat_mask_pixels": "",
++                "cvat_label_authority": "",
++                "cvat_authoritative_frames": "",
++                "xml_invalidation_frames": "",
++                "xml_invalidation_manifest_sha256": "",
++                "xml_invalidation_fingerprint": "",
++                "positive_outside_cvat_mask_points": "",
++                "cvat_point_mask_mismatch_points": "",
++                "source_counts_json": "",
++                "error": f"{type(exc).__name__}: {exc}",
++            }
++            print(f"  [{index}/{len(resolved)}] [FAILED] {video_name}: {row['error']}")
++            if args.verbose_errors:
++                traceback.print_exc()
++            rows.append(row)
++            _write_csv(args.summary_csv, rows)
++            if not args.continue_on_error:
++                raise
++            continue
++        rows.append(row)
++        _write_csv(args.summary_csv, rows)
++    result = {
++        "inputs": len(resolved),
++        "processed": sum(row["status"] == "processed" for row in rows),
++        "skipped_verified": sum(
++            row["status"] == "skipped_verified" for row in rows
++        ),
++        "failed": failures,
++        "input_files_modified": 0,
++        "xml_invalidation_frames": sum(
++            int(row["xml_invalidation_frames"])
++            for row in rows
++            if row["status"] != "failed"
++        ),
++        "xml_invalidation_videos": sum(
++            int(row["xml_invalidation_frames"]) > 0
++            for row in rows
++            if row["status"] != "failed"
++        ),
++        "suppressed_cvat_mask_frames": sum(
++            int(row["suppressed_cvat_mask_frames"])
++            for row in rows
++            if row["status"] != "failed"
++        ),
++    }
++    manifest_hashes = {
++        str(row["xml_invalidation_manifest_sha256"])
++        for row in rows
++        if row["status"] != "failed"
++        and str(row["xml_invalidation_manifest_sha256"])
++    }
++    fingerprints = {
++        str(row["xml_invalidation_fingerprint"])
++        for row in rows
++        if row["status"] != "failed"
++        and str(row["xml_invalidation_fingerprint"])
++    }
++    if args.require_xml_invalidation and (
++        len(manifest_hashes) != 1 or len(fingerprints) != 1
++    ):
++        raise RuntimeError(
++            "v6 visualization inputs do not share one invalidation manifest"
++        )
++    if (
++        args.expected_xml_invalidated_frames >= 0
++        and result["xml_invalidation_frames"]
++        != args.expected_xml_invalidated_frames
++    ):
++        raise RuntimeError(
++            "XML invalidation frame count mismatch: "
++            f"{result['xml_invalidation_frames']} != "
++            f"{args.expected_xml_invalidated_frames}"
++        )
++    if (
++        args.expected_xml_invalidated_videos >= 0
++        and result["xml_invalidation_videos"]
++        != args.expected_xml_invalidated_videos
++    ):
++        raise RuntimeError(
++            "XML invalidation video count mismatch: "
++            f"{result['xml_invalidation_videos']} != "
++            f"{args.expected_xml_invalidated_videos}"
++        )
++    if (
++        args.expected_suppressed_cvat_frames >= 0
++        and result["suppressed_cvat_mask_frames"]
++        != args.expected_suppressed_cvat_frames
++    ):
++        raise RuntimeError(
++            "Suppressed CVAT frame count mismatch: "
++            f"{result['suppressed_cvat_mask_frames']} != "
++            f"{args.expected_suppressed_cvat_frames}"
++        )
++    print("Stage 4 saved point-label visualization summary")
++    for name, value in result.items():
++        print(f"  {name:16s}: {value}")
++    if failures:
++        raise RuntimeError(f"Saved point-label visualization failures: {failures}")
++    print("Stage 4 saved point-label visualization batch passed.")
++    return result
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description="Batch-render saved Stage 4 point labels without contour recomputation."
++    )
++    source = parser.add_mutually_exclusive_group(required=True)
++    source.add_argument("--annotated_dir", type=Path)
++    source.add_argument("--h5_list", type=Path)
++    parser.add_argument("--pattern", default="*.h5")
++    parser.add_argument("--recursive", action="store_true")
++    parser.add_argument("--video_names", default="")
++    parser.add_argument("--output_root", type=Path, required=True)
++    parser.add_argument("--summary_csv", type=Path, required=True)
++    parser.add_argument("--expected_files", type=int, default=-1)
++    parser.add_argument("--point_radius", type=int, default=1)
++    parser.add_argument("--point_alpha", type=float, default=0.85)
++    parser.add_argument("--positive_color", default="255,32,32")
++    parser.add_argument("--ignore_color", default="255,210,0")
++    parser.add_argument("--background_color", default="80,140,200")
++    parser.add_argument("--bbox_color", default="160,255,80")
++    parser.add_argument("--bbox_thickness", type=int, default=1)
++    parser.add_argument("--cvat_review_root", type=Path, default=None)
++    parser.add_argument("--cvat_snapshot_root", type=Path, default=None)
++    parser.add_argument("--cvat_mask_color", default="0,255,255")
++    parser.add_argument("--cvat_mask_alpha", type=float, default=0.35)
++    parser.add_argument("--require_cvat_authoritative", action="store_true")
++    parser.add_argument("--require_xml_invalidation", action="store_true")
++    parser.add_argument("--expected_xml_invalidated_frames", type=int, default=-1)
++    parser.add_argument("--expected_xml_invalidated_videos", type=int, default=-1)
++    parser.add_argument("--expected_suppressed_cvat_frames", type=int, default=-1)
++    parser.add_argument("--skip_existing", action="store_true")
++    parser.add_argument("--overwrite", action="store_true")
++    parser.add_argument("--continue_on_error", action="store_true")
++    parser.add_argument("--verbose_errors", action="store_true")
++    return parser
++
++
++def main() -> None:
++    args = build_parser().parse_args()
++    try:
++        run(args)
++    except Exception as exc:
++        raise SystemExit(
++            "Stage 4 saved point-label visualization batch failed: "
++            f"{type(exc).__name__}: {exc}"
++        ) from exc
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/export/export_stage4_point_label_visualization.py b/Stage2to4/pseudo3d/export/export_stage4_point_label_visualization.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..97a3656764460bb397f9f427e1d93c8958201ca6
+--- /dev/null
++++ b/Stage2to4/pseudo3d/export/export_stage4_point_label_visualization.py
+@@ -0,0 +1,1552 @@
++from __future__ import annotations
++
++import argparse
++import csv
++import hashlib
++import json
++import os
++import shutil
++import sys
++import tempfile
++from collections import Counter, defaultdict
++from pathlib import Path
++from typing import Any, Mapping, Sequence
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++import cv2
++import h5py
++import imageio.v2 as imageio
++import numpy as np
++
++from src.utils.alpha_texture_processing import image_to_uint8_gray
++from pseudo3d.export.convert_masks_to_cvat_segmentation_mask_1_1 import (
++    read_cvat_segmentation_class_masks,
++    scan_images,
++)
++
++
++LABEL_IGNORE = -1
++LABEL_BACKGROUND = 0
++LABEL_FEMUR_CANDIDATE = 1
++AUTHORITATIVE_SCHEMA = "bboxrank_v5_cvat_authoritative_v1"
++XML_INVALIDATION_SCHEMA = "bboxrank_v6_cvat_authoritative_xml_invalidation_v1"
++AUTHORITATIVE_SCHEMAS = {AUTHORITATIVE_SCHEMA, XML_INVALIDATION_SCHEMA}
++AUTHORITATIVE_LABEL_AUTHORITY = "cvat_snapshot"
++XML_INVALIDATION_LABEL_AUTHORITY = "xml_deletion_manifest"
++XML_INVALIDATION_ACTION = "invalidate_entire_frame"
++XML_INVALIDATION_REASON = "deleted_incorrect_bbox_xml"
++SUPPRESSED_CVAT_STATUS = "suppressed_by_xml_invalidation"
++CVAT_MASK_STATUSES = {"positive", "empty", "omitted_as_empty"}
++KNOWN_EXACT_SOURCES = {
++    "",
++    "none",
++    "global",
++    "local_percentile",
++    "shared",
++}
++KNOWN_SOURCE_PREFIXES = ("phase3_", "manual_cvat_")
++
++FRAME_FIELDS = (
++    "video_name",
++    "frame_order",
++    "frame_index",
++    "bbox_index",
++    "bbox_local_xyxy",
++    "selected_contour_source",
++    "annotation_reason",
++    "valid_contour",
++    "num_points",
++    "positive_points",
++    "ignore_points",
++    "background_points",
++    "label_authority",
++    "xml_invalidated",
++    "xml_invalidation_action",
++    "xml_invalidation_reason_code",
++    "cvat_mask_applied",
++    "cvat_mask_suppressed",
++    "cvat_mask_status",
++    "cvat_mask_pixels",
++    "positive_outside_cvat_mask_points",
++    "cvat_point_mask_mismatch_points",
++    "rendered_image",
++)
++
++
++def _decode(value: Any) -> str:
++    if isinstance(value, bytes):
++        return value.decode("utf-8")
++    if isinstance(value, np.bytes_):
++        return value.tobytes().decode("utf-8")
++    return str(value)
++
++
++def _attr_text(attrs: Mapping[str, Any], name: str, default: str = "") -> str:
++    value = attrs.get(name, default)
++    text = _decode(value) if value is not None else default
++    return text if text not in {"", "None"} else default
++
++
++def parse_color(text: str) -> tuple[int, int, int]:
++    parts = [part.strip() for part in text.split(",")]
++    if len(parts) != 3:
++        raise ValueError(f"Color must be R,G,B, got: {text}")
++    color = tuple(int(part) for part in parts)
++    if any(value < 0 or value > 255 for value in color):
++        raise ValueError(f"Color values must be in [0,255], got: {text}")
++    return color
++
++
++def file_sha256(path: Path) -> str:
++    digest = hashlib.sha256()
++    with Path(path).open("rb") as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def _read_text_array(dataset: h5py.Dataset) -> np.ndarray:
++    return np.asarray([_decode(value) for value in dataset[:]], dtype=object)
++
++
++def _known_source(source: str) -> bool:
++    return source in KNOWN_EXACT_SOURCES or source.startswith(KNOWN_SOURCE_PREFIXES)
++
++
++def _required_dataset(group: h5py.Group, name: str, qualified: str) -> h5py.Dataset:
++    if name not in group:
++        raise KeyError(f"Required dataset {qualified}/{name} is missing")
++    return group[name]
++
++
++def _read_manual_review(group: h5py.Group | None) -> dict[str, Any]:
++    if group is None:
++        return {
++            "reviewed_video": False,
++            "frame_stem": np.asarray([], dtype=object),
++            "frame_order": np.asarray([], dtype=np.int32),
++            "frame_index": np.asarray([], dtype=np.int64),
++            "bbox_index": np.asarray([], dtype=np.int32),
++            "decision": np.asarray([], dtype=object),
++            "attrs": {},
++        }
++    required = (
++        "frame_stem",
++        "frame_order",
++        "frame_index",
++        "bbox_index",
++        "decision",
++    )
++    for name in required:
++        _required_dataset(group, name, "manual_review_fullvideo")
++    result = {
++        "reviewed_video": bool(group.attrs.get("reviewed_video", False)),
++        "frame_stem": _read_text_array(group["frame_stem"]),
++        "frame_order": group["frame_order"][:].astype(np.int32),
++        "frame_index": group["frame_index"][:].astype(np.int64),
++        "bbox_index": group["bbox_index"][:].astype(np.int32),
++        "decision": _read_text_array(group["decision"]),
++        "attrs": dict(group.attrs),
++    }
++    lengths = {values.shape[0] for key, values in result.items() if isinstance(values, np.ndarray)}
++    if len(lengths) != 1:
++        raise ValueError("manual_review_fullvideo datasets have different row counts")
++    return result
++
++
++def _read_manual_review_frames(group: h5py.Group | None) -> dict[str, Any]:
++    empty = {
++        "reviewed_video": False,
++        "frame_stem": np.asarray([], dtype=object),
++        "frame_order": np.asarray([], dtype=np.int32),
++        "frame_index": np.asarray([], dtype=np.int64),
++        "frame_role": np.asarray([], dtype=object),
++        "cvat_mask_status": np.asarray([], dtype=object),
++        "cvat_mask_positive_pixels": np.asarray([], dtype=np.int64),
++        "label_authority": np.asarray([], dtype=object),
++        "positive_points": np.asarray([], dtype=np.int64),
++        "ignore_points": np.asarray([], dtype=np.int64),
++        "background_points": np.asarray([], dtype=np.int64),
++        "positive_outside_cvat_mask_points": np.asarray([], dtype=np.int64),
++        "attrs": {},
++    }
++    if group is None:
++        return empty
++    text_fields = (
++        "frame_stem",
++        "frame_role",
++        "cvat_mask_status",
++        "label_authority",
++    )
++    integer_fields = (
++        "frame_order",
++        "frame_index",
++        "cvat_mask_positive_pixels",
++        "positive_points",
++        "ignore_points",
++        "background_points",
++        "positive_outside_cvat_mask_points",
++    )
++    for name in (*text_fields, *integer_fields):
++        _required_dataset(group, name, "manual_review_fullvideo_frames")
++    result = {
++        "reviewed_video": bool(group.attrs.get("reviewed_video", False)),
++        "attrs": dict(group.attrs),
++    }
++    for name in text_fields:
++        result[name] = _read_text_array(group[name])
++    for name in integer_fields:
++        dtype = np.int32 if name == "frame_order" else np.int64
++        result[name] = group[name][:].astype(dtype)
++    lengths = {
++        values.shape[0]
++        for values in result.values()
++        if isinstance(values, np.ndarray)
++    }
++    if len(lengths) != 1:
++        raise ValueError(
++            "manual_review_fullvideo_frames datasets have different row counts"
++        )
++    return result
++
++
++def _read_xml_invalidations(
++    group: h5py.Group | None,
++    *,
++    schema: str,
++    video_name: str,
++) -> dict[str, Any]:
++    empty = {
++        "frame_order": np.asarray([], dtype=np.int32),
++        "frame_index": np.asarray([], dtype=np.int64),
++        "frame_stem": np.asarray([], dtype=object),
++        "action": np.asarray([], dtype=object),
++        "reason_code": np.asarray([], dtype=object),
++        "attrs": {},
++    }
++    if group is None:
++        if schema == XML_INVALIDATION_SCHEMA:
++            raise ValueError(
++                "v6 H5 lacks xml_annotation_invalidation provenance"
++            )
++        return empty
++    if schema != XML_INVALIDATION_SCHEMA:
++        raise ValueError(
++            "Non-v6 H5 unexpectedly contains xml_annotation_invalidation"
++        )
++    text_fields = ("video_name", "frame_stem", "action", "reason_code")
++    integer_fields = ("frame_order", "frame_index")
++    for name in (*text_fields, *integer_fields):
++        _required_dataset(group, name, "xml_annotation_invalidation")
++    result: dict[str, Any] = {"attrs": dict(group.attrs)}
++    for name in text_fields:
++        result[name] = _read_text_array(group[name])
++    result["frame_order"] = group["frame_order"][:].astype(np.int32)
++    result["frame_index"] = group["frame_index"][:].astype(np.int64)
++    lengths = {
++        value.shape[0]
++        for value in result.values()
++        if isinstance(value, np.ndarray)
++    }
++    if len(lengths) != 1:
++        raise ValueError(
++            "xml_annotation_invalidation datasets have different row counts"
++        )
++    count = int(result["frame_order"].size)
++    keys = list(
++        zip(
++            result["frame_order"].tolist(),
++            result["frame_index"].tolist(),
++            strict=True,
++        )
++    )
++    if len(keys) != len(set(keys)):
++        raise ValueError(
++            "xml_annotation_invalidation contains duplicate frame keys"
++        )
++    if set(str(value) for value in result["video_name"]) not in ({video_name}, set()):
++        raise ValueError("XML invalidation video_name differs from H5 video")
++    if set(str(value) for value in result["action"]) not in (
++        {XML_INVALIDATION_ACTION},
++        set(),
++    ):
++        raise ValueError("Unknown XML invalidation action")
++    if set(str(value) for value in result["reason_code"]) not in (
++        {XML_INVALIDATION_REASON},
++        set(),
++    ):
++        raise ValueError("Unknown XML invalidation reason code")
++    expected_attrs = {
++        "schema_version": 1,
++        "teacher_version": XML_INVALIDATION_SCHEMA,
++        "source_teacher_version": AUTHORITATIVE_SCHEMA,
++        "policy": "explicit_deleted_xml_frame_tombstone",
++        "frame_authority": XML_INVALIDATION_LABEL_AUTHORITY,
++    }
++    for name, expected in expected_attrs.items():
++        actual = group.attrs.get(name)
++        if isinstance(expected, str):
++            actual = _decode(actual)
++        else:
++            actual = int(actual) if actual is not None else None
++        if actual != expected:
++            raise ValueError(
++                f"XML invalidation provenance mismatch for {name}: "
++                f"{actual!r} != {expected!r}"
++            )
++    for name in (
++        "source_h5_sha256",
++        "manifest_sha256",
++        "manifest_fingerprint",
++    ):
++        if not _attr_text(group.attrs, name):
++            raise ValueError(f"XML invalidation provenance lacks {name}")
++    if "removed_frame_annotation" not in group:
++        raise ValueError("XML invalidation provenance lacks removed BBox archive")
++    archive = group["removed_frame_annotation"]
++    if "frame_order" not in archive:
++        raise ValueError("Removed BBox archive lacks frame_order")
++    if int(archive["frame_order"].shape[0]) < count:
++        raise ValueError("Removed BBox archive is smaller than invalidation inventory")
++    return result
++
++
++def load_stage4_point_label_visualization_input(
++    annotated_h5: Path,
++    *,
++    pseudo3d_h5: Path | None = None,
++) -> dict[str, Any]:
++    annotated_h5 = Path(annotated_h5).resolve()
++    if not annotated_h5.is_file():
++        raise FileNotFoundError(f"Annotated H5 not found: {annotated_h5}")
++
++    with h5py.File(annotated_h5, "r") as handle:
++        for name in ("point_cloud", "annotation", "frame_annotation"):
++            if name not in handle:
++                raise KeyError(f"Required group '{name}' is missing: {annotated_h5}")
++        pc = handle["point_cloud"]
++        ann = handle["annotation"]
++        frame = handle["frame_annotation"]
++        attrs = dict(handle.attrs)
++
++        pixel_xy = _required_dataset(pc, "pixel_xy", "point_cloud")[:].astype(
++            np.float32
++        )
++        point_frame_order = _required_dataset(
++            pc, "frame_order", "point_cloud"
++        )[:].astype(np.int32)
++        point_frame_index = (
++            pc["frame_index"][:].astype(np.int64)
++            if "frame_index" in pc
++            else None
++        )
++        point_label = _required_dataset(
++            ann, "point_label", "annotation"
++        )[:].astype(np.int8)
++        valid_mask = _required_dataset(
++            ann, "valid_mask", "annotation"
++        )[:].astype(bool)
++
++        required_frame = (
++            "frame_order",
++            "frame_index",
++            "bbox_index",
++            "bbox_local_xyxy",
++            "selected_contour_source",
++            "annotation_reason",
++            "valid_contour",
++        )
++        for name in required_frame:
++            _required_dataset(frame, name, "frame_annotation")
++        frame_annotation = {
++            "frame_order": frame["frame_order"][:].astype(np.int32),
++            "frame_index": frame["frame_index"][:].astype(np.int64),
++            "bbox_index": frame["bbox_index"][:].astype(np.int32),
++            "bbox_local_xyxy": frame["bbox_local_xyxy"][:].astype(np.float32),
++            "selected_contour_source": _read_text_array(
++                frame["selected_contour_source"]
++            ),
++            "annotation_reason": _read_text_array(frame["annotation_reason"]),
++            "valid_contour": frame["valid_contour"][:].astype(bool),
++        }
++        manual_review = _read_manual_review(
++            handle["manual_review_fullvideo"]
++            if "manual_review_fullvideo" in handle
++            else None
++        )
++        manual_review_frames = _read_manual_review_frames(
++            handle["manual_review_fullvideo_frames"]
++            if "manual_review_fullvideo_frames" in handle
++            else None
++        )
++        schema = _attr_text(attrs, "contour_teacher_schema")
++        video_name = _attr_text(attrs, "video_name", annotated_h5.parent.name)
++        if not video_name:
++            raise ValueError("Could not resolve video_name")
++        xml_invalidations = _read_xml_invalidations(
++            handle["xml_annotation_invalidation"]
++            if "xml_annotation_invalidation" in handle
++            else None,
++            schema=schema,
++            video_name=video_name,
++        )
++
++    source_path = Path(pseudo3d_h5).resolve() if pseudo3d_h5 else None
++    if source_path is None:
++        source_text = _attr_text(attrs, "source_pseudo3d_h5")
++        if not source_text:
++            raise KeyError(
++                "source_pseudo3d_h5 metadata is missing; pass --pseudo3d_h5"
++            )
++        source_path = Path(source_text).resolve()
++    if not source_path.is_file():
++        raise FileNotFoundError(f"Source pseudo3D H5 not found: {source_path}")
++    with h5py.File(source_path, "r") as handle:
++        for name in ("local_encoder_images", "frame_indices"):
++            if name not in handle:
++                raise KeyError(f"Required pseudo3D dataset '{name}' is missing")
++        local_images = handle["local_encoder_images"][:]
++        frame_indices = handle["frame_indices"][:].astype(np.int64)
++
++    num_points = int(point_label.size)
++    if pixel_xy.shape != (num_points, 2):
++        raise ValueError(
++            f"point_cloud/pixel_xy must have shape ({num_points},2), got {pixel_xy.shape}"
++        )
++    for name, values in (
++        ("point_cloud/frame_order", point_frame_order),
++        ("annotation/valid_mask", valid_mask),
++    ):
++        if values.shape != (num_points,):
++            raise ValueError(f"{name} length differs from point_label")
++    if point_frame_index is not None and point_frame_index.shape != (num_points,):
++        raise ValueError("point_cloud/frame_index length differs from point_label")
++    if not np.all(np.isfinite(pixel_xy)):
++        raise ValueError("point_cloud/pixel_xy contains NaN or Inf")
++    labels = set(int(value) for value in np.unique(point_label))
++    if not labels.issubset(
++        {LABEL_IGNORE, LABEL_BACKGROUND, LABEL_FEMUR_CANDIDATE}
++    ):
++        raise ValueError(f"point_label contains unknown values: {sorted(labels)}")
++    if not np.array_equal(valid_mask, point_label != LABEL_IGNORE):
++        raise ValueError("valid_mask differs from point_label != -1")
++
++    num_frames = int(local_images.shape[0])
++    if frame_indices.shape != (num_frames,):
++        raise ValueError("pseudo3D frame_indices length differs from local images")
++    if np.any(point_frame_order < 0) or np.any(point_frame_order >= num_frames):
++        raise ValueError("point_cloud/frame_order is outside pseudo3D frame range")
++    if point_frame_index is not None and not np.array_equal(
++        point_frame_index, frame_indices[point_frame_order]
++    ):
++        raise ValueError("point_cloud/frame_index is not aligned with frame_order")
++
++    frame_lengths = {values.shape[0] for values in frame_annotation.values()}
++    if len(frame_lengths) != 1:
++        raise ValueError("frame_annotation datasets have different row counts")
++    num_bbox_rows = next(iter(frame_lengths), 0)
++    if frame_annotation["bbox_local_xyxy"].shape != (num_bbox_rows, 4):
++        raise ValueError("frame_annotation/bbox_local_xyxy must have shape (N,4)")
++    if not np.all(np.isfinite(frame_annotation["bbox_local_xyxy"])):
++        raise ValueError("frame_annotation/bbox_local_xyxy contains NaN or Inf")
++    orders = frame_annotation["frame_order"]
++    if np.any(orders < 0) or np.any(orders >= num_frames):
++        raise ValueError("frame_annotation/frame_order is outside frame range")
++    if not np.array_equal(
++        frame_annotation["frame_index"], frame_indices[orders]
++    ):
++        raise ValueError("frame_annotation/frame_index is not aligned with frame_order")
++    keys = list(
++        zip(
++            frame_annotation["frame_order"].tolist(),
++            frame_annotation["frame_index"].tolist(),
++            frame_annotation["bbox_index"].tolist(),
++            strict=True,
++        )
++    )
++    if len(keys) != len(set(keys)):
++        raise ValueError("frame_annotation contains duplicate frame/BBox keys")
++    if np.any(frame_annotation["bbox_index"] < 0):
++        raise ValueError("frame_annotation/bbox_index must be >= 0")
++    unknown_sources = sorted(
++        {
++            str(source)
++            for source in frame_annotation["selected_contour_source"]
++            if not _known_source(str(source))
++        }
++    )
++    if unknown_sources:
++        raise ValueError(f"Unknown selected_contour_source values: {unknown_sources}")
++
++    manual_keys = list(
++        zip(
++            manual_review["frame_order"].tolist(),
++            manual_review["frame_index"].tolist(),
++            manual_review["bbox_index"].tolist(),
++            strict=True,
++        )
++    )
++    if len(manual_keys) != len(set(manual_keys)):
++        raise ValueError("manual_review_fullvideo contains duplicate frame/BBox keys")
++    frame_key_to_row = {key: index for index, key in enumerate(keys)}
++    for key in manual_keys:
++        if key not in frame_key_to_row:
++            raise ValueError(f"manual_review_fullvideo has unknown frame/BBox key: {key}")
++        source = str(
++            frame_annotation["selected_contour_source"][frame_key_to_row[key]]
++        )
++        if not source.startswith("manual_cvat_fullvideo"):
++            raise ValueError(
++                "manual_review_fullvideo key does not have manual provenance: "
++                f"{key}/{source}"
++            )
++
++    authoritative = schema in AUTHORITATIVE_SCHEMAS
++    invalidation_keys = set(
++        zip(
++            xml_invalidations["frame_order"].tolist(),
++            xml_invalidations["frame_index"].tolist(),
++            strict=True,
++        )
++    )
++    invalidation_orders = {int(order) for order, _ in invalidation_keys}
++    for row_index, (order, index, stem) in enumerate(
++        zip(
++            xml_invalidations["frame_order"],
++            xml_invalidations["frame_index"],
++            xml_invalidations["frame_stem"],
++            strict=True,
++        )
++    ):
++        order = int(order)
++        index = int(index)
++        expected_stem = f"{video_name}__fo{order:05d}__fi{index:08d}"
++        if order < 0 or order >= num_frames:
++            raise ValueError("XML invalidation frame order is outside frame range")
++        if index != int(frame_indices[order]) or str(stem) != expected_stem:
++            raise ValueError(
++                f"XML invalidation frame identity mismatch: {video_name}/{row_index}"
++            )
++        frame_labels = point_label[point_frame_order == order]
++        if frame_labels.size == 0 or not np.all(
++            frame_labels == LABEL_BACKGROUND
++        ):
++            raise ValueError(
++                f"XML-invalidated frame is not all background: {expected_stem}"
++            )
++        if np.any(
++            (frame_annotation["frame_order"] == order)
++            & (frame_annotation["frame_index"] == index)
++        ):
++            raise ValueError(
++                f"XML-invalidated frame retains saved BBox: {expected_stem}"
++            )
++        if np.any(
++            (manual_review["frame_order"] == order)
++            & (manual_review["frame_index"] == index)
++        ):
++            raise ValueError(
++                f"XML-invalidated frame retains manual BBox: {expected_stem}"
++            )
++    if schema == XML_INVALIDATION_SCHEMA:
++        expected_count = int(
++            attrs.get("xml_annotation_invalidation_frame_count", -1)
++        )
++        if expected_count != len(invalidation_keys):
++            raise ValueError(
++                "Root XML invalidation frame count differs from provenance"
++            )
++    frame_provenance_orders = manual_review_frames["frame_order"]
++    if frame_provenance_orders.size:
++        if not manual_review_frames["reviewed_video"]:
++            raise ValueError(
++                "manual_review_fullvideo_frames has rows but reviewed_video is false"
++            )
++        if len(set(manual_review_frames["frame_stem"].tolist())) != int(
++            frame_provenance_orders.size
++        ):
++            raise ValueError(
++                "manual_review_fullvideo_frames contains duplicate frame stems"
++            )
++        if len(set(frame_provenance_orders.tolist())) != int(
++            frame_provenance_orders.size
++        ):
++            raise ValueError(
++                "manual_review_fullvideo_frames contains duplicate frame orders"
++            )
++        if not np.array_equal(
++            frame_provenance_orders,
++            np.sort(frame_provenance_orders, kind="stable"),
++        ):
++            raise ValueError(
++                "manual_review_fullvideo_frames is not in frame-order order"
++            )
++        if np.any(frame_provenance_orders < 0) or np.any(
++            frame_provenance_orders >= num_frames
++        ):
++            raise ValueError(
++                "manual_review_fullvideo_frames/frame_order is outside frame range"
++            )
++        if not np.array_equal(
++            manual_review_frames["frame_index"],
++            frame_indices[frame_provenance_orders],
++        ):
++            raise ValueError(
++                "manual_review_fullvideo_frames/frame_index is not aligned"
++            )
++        statuses = set(
++            str(value) for value in manual_review_frames["cvat_mask_status"]
++        )
++        if not statuses.issubset(CVAT_MASK_STATUSES):
++            raise ValueError(f"Unknown CVAT mask statuses: {sorted(statuses)}")
++        for order, index, authority in zip(
++            manual_review_frames["frame_order"],
++            manual_review_frames["frame_index"],
++            manual_review_frames["label_authority"],
++            strict=True,
++        ):
++            key = (int(order), int(index))
++            expected_authority = (
++                XML_INVALIDATION_LABEL_AUTHORITY
++                if key in invalidation_keys
++                else AUTHORITATIVE_LABEL_AUTHORITY
++            )
++            if str(authority) != expected_authority:
++                raise ValueError(
++                    "manual_review_fullvideo_frames label authority mismatch: "
++                    f"{video_name}/{key}/{authority}/{expected_authority}"
++                )
++        provenance_keys = set(
++            zip(
++                manual_review_frames["frame_order"].tolist(),
++                manual_review_frames["frame_index"].tolist(),
++                strict=True,
++            )
++        )
++        if invalidation_keys and not invalidation_keys.issubset(provenance_keys):
++            raise ValueError(
++                "Reviewed v6 video lacks invalidated-frame provenance rows"
++            )
++        if np.any(
++            manual_review_frames["positive_outside_cvat_mask_points"] != 0
++        ):
++            raise ValueError(
++                "Saved frame provenance reports positive points outside CVAT mask"
++            )
++    elif authoritative and manual_review_frames["reviewed_video"]:
++        raise ValueError(
++            "Authoritative reviewed video has no frame-level provenance rows"
++        )
++    if authoritative:
++        expected_frame_rows = int(
++            attrs.get("manual_review_fullvideo_authoritative_frame_count", 0)
++        )
++        if expected_frame_rows != int(frame_provenance_orders.size):
++            raise ValueError(
++                "Authoritative frame count metadata differs from frame provenance"
++            )
++        expected_outside = int(
++            attrs.get(
++                "manual_review_fullvideo_positive_outside_cvat_mask_points", 0
++            )
++        )
++        actual_outside = int(
++            np.sum(
++                manual_review_frames[
++                    "positive_outside_cvat_mask_points"
++                ]
++            )
++        )
++        if expected_outside != actual_outside or actual_outside != 0:
++            raise ValueError(
++                "Authoritative positive-outside metadata is not zero/consistent"
++            )
++
++    first_shape: tuple[int, int] | None = None
++    rounded_xy = np.rint(pixel_xy).astype(np.int64)
++    for order in range(num_frames):
++        gray = image_to_uint8_gray(local_images[order])
++        if first_shape is None:
++            first_shape = tuple(gray.shape)
++        elif tuple(gray.shape) != first_shape:
++            raise ValueError("local_encoder_images contain inconsistent frame shapes")
++    if first_shape is None:
++        raise ValueError("Source pseudo3D H5 contains no local frames")
++    height, width = first_shape
++    if rounded_xy.size and (
++        np.any(rounded_xy[:, 0] < 0)
++        or np.any(rounded_xy[:, 0] >= width)
++        or np.any(rounded_xy[:, 1] < 0)
++        or np.any(rounded_xy[:, 1] >= height)
++    ):
++        raise ValueError("point_cloud/pixel_xy lies outside local image bounds")
++
++    bbox_frame_orders = np.unique(frame_annotation["frame_order"])
++    non_background_counts = np.bincount(
++        point_frame_order[point_label != LABEL_BACKGROUND], minlength=num_frames
++    )
++    no_bbox_orders = np.setdiff1d(
++        np.arange(num_frames, dtype=np.int32), bbox_frame_orders, assume_unique=True
++    )
++    invalid_no_bbox_orders = no_bbox_orders[non_background_counts[no_bbox_orders] > 0]
++    if authoritative and invalid_no_bbox_orders.size:
++        provenance_order_set = set(frame_provenance_orders.tolist())
++        allowed = []
++        for order in invalid_no_bbox_orders.tolist():
++            frame_labels = point_label[point_frame_order == order]
++            if (
++                order in provenance_order_set
++                and np.all(frame_labels != LABEL_IGNORE)
++            ):
++                allowed.append(order)
++        invalid_no_bbox_orders = np.setdiff1d(
++            invalid_no_bbox_orders,
++            np.asarray(allowed, dtype=np.int32),
++            assume_unique=True,
++        )
++    if invalid_no_bbox_orders.size:
++        raise ValueError(
++            "BBox-free frames contain non-background labels: "
++            f"{invalid_no_bbox_orders.tolist()}"
++        )
++
++    return {
++        "annotated_h5": annotated_h5,
++        "pseudo3d_h5": source_path,
++        "annotated_attrs": attrs,
++        "video_name": video_name,
++        "local_images": local_images,
++        "frame_indices": frame_indices,
++        "pixel_xy": pixel_xy,
++        "point_frame_order": point_frame_order,
++        "point_label": point_label,
++        "valid_mask": valid_mask,
++        "frame_annotation": frame_annotation,
++        "manual_review": manual_review,
++        "manual_review_frames": manual_review_frames,
++        "xml_invalidations": xml_invalidations,
++        "xml_invalidation_orders": invalidation_orders,
++        "cvat_authoritative": authoritative,
++    }
++
++
++def load_applied_cvat_masks(
++    data: Mapping[str, Any],
++    *,
++    review_root: Path,
++    snapshot_root: Path,
++) -> tuple[dict[int, np.ndarray], dict[str, Any]]:
++    manual = data["manual_review"]
++    manual_frames = data["manual_review_frames"]
++    authoritative = bool(data["cvat_authoritative"])
++    invalidation_orders = set(data.get("xml_invalidation_orders", set()))
++    num_rows = int(manual["frame_order"].size)
++    num_frame_rows = int(manual_frames["frame_order"].size)
++    provenance = manual_frames if authoritative else manual
++    if (num_frame_rows if authoritative else num_rows) == 0:
++        return {}, {
++            "reviewed_video": bool(provenance["reviewed_video"]),
++            "label_authority": (
++                "inherited_with_xml_invalidation"
++                if authoritative and invalidation_orders
++                else "inherited"
++                if authoritative
++                else "legacy"
++            ),
++            "authoritative_frame_count": 0,
++            "suppressed_cvat_mask_frames": 0,
++            "suppressed_cvat_mask_pixels": 0,
++            "positive_outside_cvat_mask_points": 0,
++            "cvat_point_mask_mismatch_points": 0,
++        }
++    if not provenance["reviewed_video"]:
++        raise ValueError(
++            "CVAT provenance has rows but reviewed_video is false"
++        )
++
++    review_root = Path(review_root).resolve()
++    snapshot_root = Path(snapshot_root).resolve()
++    manifest_path = snapshot_root / "export_manifest.csv"
++    if not manifest_path.is_file():
++        raise FileNotFoundError(f"CVAT snapshot manifest not found: {manifest_path}")
++    expected_manifest_sha = _attr_text(
++        data["annotated_attrs"],
++        "manual_review_fullvideo_snapshot_manifest_sha256",
++    )
++    actual_manifest_sha = file_sha256(manifest_path)
++    if expected_manifest_sha != actual_manifest_sha:
++        raise ValueError("CVAT snapshot manifest checksum differs from annotated H5")
++
++    video_name = str(data["video_name"])
++    if Path(video_name).name != video_name:
++        raise ValueError(f"Unsafe video_name in annotated H5: {video_name}")
++    with manifest_path.open(newline="", encoding="utf-8") as handle:
++        manifest_rows = [
++            row
++            for row in csv.DictReader(handle)
++            if str(row.get("video_name", "")) == video_name
++        ]
++    if len(manifest_rows) != 1:
++        raise ValueError(
++            f"Expected one CVAT snapshot manifest row for {video_name}, "
++            f"got {len(manifest_rows)}"
++        )
++    manifest_row = manifest_rows[0]
++    if str(manifest_row.get("status")) != "complete":
++        raise ValueError(f"CVAT snapshot is not complete: {video_name}")
++    task_id = int(manifest_row["task_id"])
++    saved_task_id = int(provenance["attrs"].get("task_id", -1))
++    if task_id != saved_task_id:
++        raise ValueError(f"CVAT task ID differs from annotated H5: {video_name}")
++    annotation_zip = (
++        snapshot_root
++        / "annotations"
++        / video_name
++        / f"{video_name}__task{task_id}__reviewed_segmentation_mask_1_1.zip"
++    )
++    annotation_sha = file_sha256(annotation_zip)
++    expected_annotation_shas = {
++        str(manifest_row.get("annotation_sha256", "")),
++        _attr_text(provenance["attrs"], "annotation_zip_sha256"),
++    }
++    if expected_annotation_shas != {annotation_sha}:
++        raise ValueError(f"CVAT annotation ZIP checksum mismatch: {video_name}")
++
++    images_dir = review_root / "videos" / video_name / "images"
++    image_stems = sorted(scan_images(images_dir))
++    zip_summary, masks = read_cvat_segmentation_class_masks(
++        annotation_zip,
++        label_name="femur",
++        images_dir=images_dir,
++        allowed_missing_mask_stems=image_stems,
++    )
++    if authoritative:
++        expected_orders = np.arange(
++            int(data["local_images"].shape[0]), dtype=np.int32
++        )
++        if not np.array_equal(manual_frames["frame_order"], expected_orders):
++            raise ValueError(
++                "Authoritative frame provenance does not cover every source frame"
++            )
++        expected_stems = [str(value) for value in manual_frames["frame_stem"]]
++        if set(image_stems) != set(expected_stems):
++            raise ValueError(
++                "CVAT review images differ from authoritative frame provenance"
++            )
++        missing_stems = set(zip_summary.missing_mask_stems)
++        masks_by_order: dict[int, np.ndarray] = {}
++        stems_by_order: dict[int, str] = {}
++        statuses_by_order: dict[int, str] = {}
++        outside_by_order: dict[int, int] = {}
++        mismatch_by_order: dict[int, int] = {}
++        status_counts: Counter[str] = Counter()
++        rendered_status_counts: Counter[str] = Counter()
++        suppressed_by_order: dict[int, int] = {}
++        rounded_xy = np.rint(data["pixel_xy"]).astype(np.int64)
++        for row_index in range(num_frame_rows):
++            stem = expected_stems[row_index]
++            order = int(manual_frames["frame_order"][row_index])
++            index = int(manual_frames["frame_index"][row_index])
++            if index != int(data["frame_indices"][order]):
++                raise ValueError(
++                    f"Authoritative CVAT frame index mismatch: {video_name}/{stem}"
++                )
++            expected_stem = (
++                f"{video_name}__fo{order:05d}__fi{index:08d}"
++            )
++            if stem != expected_stem:
++                raise ValueError(
++                    "Authoritative CVAT frame stem/order/index mismatch: "
++                    f"{video_name}/{stem}/{expected_stem}"
++                )
++            if stem not in masks:
++                raise KeyError(
++                    f"Authoritative CVAT mask stem is missing: {video_name}/{stem}"
++                )
++            mask = np.asarray(masks[stem], dtype=bool)
++            expected_shape = image_to_uint8_gray(
++                data["local_images"][order]
++            ).shape
++            if mask.shape != expected_shape:
++                raise ValueError(
++                    f"CVAT mask/image shape mismatch: {video_name}/{stem}"
++                )
++            positive_pixels = int(np.sum(mask))
++            actual_status = (
++                "omitted_as_empty"
++                if stem in missing_stems
++                else "positive"
++                if positive_pixels
++                else "empty"
++            )
++            saved_status = str(manual_frames["cvat_mask_status"][row_index])
++            if saved_status != actual_status:
++                raise ValueError(
++                    "CVAT mask status differs from saved frame provenance: "
++                    f"{video_name}/{stem}/{saved_status}/{actual_status}"
++                )
++            if positive_pixels != int(
++                manual_frames["cvat_mask_positive_pixels"][row_index]
++            ):
++                raise ValueError(
++                    "CVAT mask pixel count differs from saved frame provenance: "
++                    f"{video_name}/{stem}"
++                )
++
++            point_selector = data["point_frame_order"] == order
++            frame_xy = rounded_xy[point_selector]
++            frame_labels = data["point_label"][point_selector]
++            status_counts[actual_status] += 1
++            if order in invalidation_orders:
++                if not np.all(frame_labels == LABEL_BACKGROUND):
++                    raise ValueError(
++                        "XML-invalidated CVAT frame is not all background: "
++                        f"{video_name}/{stem}"
++                    )
++                expected_counts = {
++                    "positive_points": 0,
++                    "ignore_points": 0,
++                    "background_points": int(frame_labels.size),
++                    "positive_outside_cvat_mask_points": 0,
++                }
++                for name, expected in expected_counts.items():
++                    if int(manual_frames[name][row_index]) != expected:
++                        raise ValueError(
++                            "XML-invalidated frame provenance count mismatch: "
++                            f"{video_name}/{stem}/{name}"
++                        )
++                statuses_by_order[order] = SUPPRESSED_CVAT_STATUS
++                outside_by_order[order] = 0
++                mismatch_by_order[order] = 0
++                suppressed_by_order[order] = positive_pixels
++                rendered_status_counts[SUPPRESSED_CVAT_STATUS] += 1
++                continue
++            sampled_mask = (
++                mask[frame_xy[:, 1], frame_xy[:, 0]]
++                if frame_xy.size
++                else np.zeros((0,), dtype=bool)
++            )
++            positive = frame_labels == LABEL_FEMUR_CANDIDATE
++            outside_count = int(np.sum(positive & ~sampled_mask))
++            mismatch_count = int(np.sum(positive != sampled_mask))
++            saved_counts = {
++                "positive_points": int(np.sum(positive)),
++                "ignore_points": int(np.sum(frame_labels == LABEL_IGNORE)),
++                "background_points": int(
++                    np.sum(frame_labels == LABEL_BACKGROUND)
++                ),
++            }
++            for name, actual in saved_counts.items():
++                if actual != int(manual_frames[name][row_index]):
++                    raise ValueError(
++                        "Saved point count differs from authoritative frame "
++                        f"provenance: {video_name}/{stem}/{name}"
++                    )
++            saved_outside = int(
++                manual_frames["positive_outside_cvat_mask_points"][row_index]
++            )
++            if outside_count or saved_outside:
++                raise ValueError(
++                    "Positive point centers lie outside authoritative CVAT mask: "
++                    f"{video_name}/{stem}/{outside_count}"
++                )
++            if mismatch_count:
++                raise ValueError(
++                    "Saved positive labels differ from authoritative CVAT mask at "
++                    f"sampled point centers: {video_name}/{stem}/{mismatch_count}"
++                )
++            masks_by_order[order] = mask
++            stems_by_order[order] = stem
++            statuses_by_order[order] = actual_status
++            outside_by_order[order] = outside_count
++            mismatch_by_order[order] = mismatch_count
++            rendered_status_counts[actual_status] += 1
++        return masks_by_order, {
++            "reviewed_video": True,
++            "task_id": task_id,
++            "annotation_zip": str(annotation_zip),
++            "annotation_zip_sha256": annotation_sha,
++            "applied_bbox_rows": num_rows,
++            "applied_frame_stems": dict(sorted(stems_by_order.items())),
++            "label_authority": (
++                "cvat_snapshot_with_xml_invalidation"
++                if invalidation_orders
++                else AUTHORITATIVE_LABEL_AUTHORITY
++            ),
++            "authoritative_frame_count": num_frame_rows,
++            "cvat_mask_status_counts": dict(sorted(status_counts.items())),
++            "rendered_cvat_mask_status_counts": dict(
++                sorted(rendered_status_counts.items())
++            ),
++            "cvat_mask_status_by_order": dict(sorted(statuses_by_order.items())),
++            "suppressed_cvat_mask_frames": len(suppressed_by_order),
++            "suppressed_cvat_mask_pixels": int(sum(suppressed_by_order.values())),
++            "suppressed_cvat_mask_pixels_by_order": dict(
++                sorted(suppressed_by_order.items())
++            ),
++            "positive_outside_cvat_mask_points": int(sum(outside_by_order.values())),
++            "positive_outside_cvat_mask_points_by_order": dict(
++                sorted(outside_by_order.items())
++            ),
++            "cvat_point_mask_mismatch_points": int(sum(mismatch_by_order.values())),
++            "cvat_point_mask_mismatch_points_by_order": dict(
++                sorted(mismatch_by_order.items())
++            ),
++        }
++
++    masks_by_order: dict[int, np.ndarray] = {}
++    stems_by_order: dict[int, str] = {}
++    decisions_by_order: dict[int, set[str]] = defaultdict(set)
++    for stem_value, order_value, index_value, decision_value in zip(
++        manual["frame_stem"],
++        manual["frame_order"],
++        manual["frame_index"],
++        manual["decision"],
++        strict=True,
++    ):
++        stem = str(stem_value)
++        order = int(order_value)
++        index = int(index_value)
++        if index != int(data["frame_indices"][order]):
++            raise ValueError(f"Manual CVAT frame index mismatch: {video_name}/{stem}")
++        if stem not in masks:
++            raise KeyError(f"Manual CVAT mask stem is missing: {video_name}/{stem}")
++        if order in stems_by_order and stems_by_order[order] != stem:
++            raise ValueError(f"Multiple CVAT stems map to frame order {order}")
++        stems_by_order[order] = stem
++        masks_by_order[order] = np.asarray(masks[stem], dtype=bool)
++        decision = str(decision_value)
++        if decision not in {"manual_positive", "manual_empty"}:
++            raise ValueError(f"Unknown manual CVAT decision: {decision}")
++        decisions_by_order[order].add(decision)
++    for order, decisions in decisions_by_order.items():
++        has_pixels = bool(np.any(masks_by_order[order]))
++        if "manual_positive" in decisions and not has_pixels:
++            raise ValueError(
++                f"manual_positive frame has an empty CVAT mask: {video_name}/{order}"
++            )
++        if decisions == {"manual_empty"} and has_pixels:
++            raise ValueError(
++                f"manual_empty frame has a non-empty CVAT mask: {video_name}/{order}"
++            )
++    return masks_by_order, {
++        "reviewed_video": True,
++        "task_id": task_id,
++        "annotation_zip": str(annotation_zip),
++        "annotation_zip_sha256": annotation_sha,
++        "applied_bbox_rows": num_rows,
++        "applied_frame_stems": dict(sorted(stems_by_order.items())),
++        "label_authority": "legacy_bbox_rows",
++        "authoritative_frame_count": 0,
++        "positive_outside_cvat_mask_points": 0,
++        "cvat_point_mask_mismatch_points": 0,
++    }
++
++
++def _blend_mask(
++    rgb: np.ndarray,
++    mask: np.ndarray,
++    *,
++    color: tuple[int, int, int],
++    alpha: float,
++) -> None:
++    if not np.any(mask):
++        return
++    color_array = np.asarray(color, dtype=np.float32)
++    blended = (
++        (1.0 - alpha) * rgb[mask].astype(np.float32) + alpha * color_array
++    )
++    rgb[mask] = np.clip(blended, 0, 255).astype(np.uint8)
++
++
++def render_point_labels(
++    gray: np.ndarray,
++    *,
++    pixel_xy: np.ndarray,
++    labels: np.ndarray,
++    radius: int,
++    alpha: float,
++    positive_color: tuple[int, int, int],
++    ignore_color: tuple[int, int, int],
++    background_color: tuple[int, int, int],
++    cvat_mask: np.ndarray | None = None,
++    cvat_color: tuple[int, int, int] = (0, 255, 255),
++    cvat_alpha: float = 0.35,
++) -> np.ndarray:
++    gray = np.asarray(gray, dtype=np.uint8)
++    if gray.ndim != 2:
++        raise ValueError(f"gray image must be 2-D, got {gray.shape}")
++    pixel_xy = np.asarray(pixel_xy, dtype=np.float32)
++    labels = np.asarray(labels, dtype=np.int8)
++    if pixel_xy.shape != (labels.size, 2):
++        raise ValueError("pixel_xy/labels shape mismatch")
++    radius = int(radius)
++    if radius < 0:
++        raise ValueError("point radius must be >= 0")
++    alpha = float(alpha)
++    if not 0.0 <= alpha <= 1.0:
++        raise ValueError("point alpha must be in [0,1]")
++    cvat_alpha = float(cvat_alpha)
++    if not 0.0 <= cvat_alpha <= 1.0:
++        raise ValueError("CVAT mask alpha must be in [0,1]")
++    rgb = np.stack([gray, gray, gray], axis=-1)
++    height, width = gray.shape
++    xy = np.rint(pixel_xy).astype(np.int64)
++    kernel = None
++    if radius > 0:
++        size = 2 * radius + 1
++        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
++    # Draw the dense CVAT mask after ignore points and before positive points.
++    for label, color in (
++        (LABEL_BACKGROUND, background_color),
++        (LABEL_IGNORE, ignore_color),
++    ):
++        selected = labels == label
++        marker = np.zeros((height, width), dtype=np.uint8)
++        if np.any(selected):
++            marker[xy[selected, 1], xy[selected, 0]] = 1
++            if kernel is not None:
++                marker = cv2.dilate(marker, kernel)
++        _blend_mask(rgb, marker.astype(bool), color=color, alpha=alpha)
++    if cvat_mask is not None:
++        cvat_mask = np.asarray(cvat_mask)
++        if cvat_mask.shape != gray.shape:
++            raise ValueError(
++                f"CVAT mask/image shape mismatch: {cvat_mask.shape} != {gray.shape}"
++            )
++        _blend_mask(rgb, cvat_mask.astype(bool), color=cvat_color, alpha=cvat_alpha)
++    positive = labels == LABEL_FEMUR_CANDIDATE
++    marker = np.zeros((height, width), dtype=np.uint8)
++    if np.any(positive):
++        marker[xy[positive, 1], xy[positive, 0]] = 1
++        if kernel is not None:
++            marker = cv2.dilate(marker, kernel)
++    _blend_mask(rgb, marker.astype(bool), color=positive_color, alpha=alpha)
++    return rgb
++
++
++def _draw_saved_bbox(
++    rgb: np.ndarray,
++    bbox: np.ndarray,
++    *,
++    color: tuple[int, int, int],
++    thickness: int,
++) -> None:
++    height, width = rgb.shape[:2]
++    x1, y1, x2, y2 = (float(value) for value in bbox)
++    left = max(0, min(width - 1, int(round(x1))))
++    top = max(0, min(height - 1, int(round(y1))))
++    right = max(0, min(width - 1, int(round(x2))))
++    bottom = max(0, min(height - 1, int(round(y2))))
++    if right <= left or bottom <= top:
++        return
++    cv2.rectangle(rgb, (left, top), (right, bottom), color, int(thickness))
++
++
++def _bbox_text(bbox: np.ndarray) -> str:
++    return "|".join(f"{float(value):.8g}" for value in bbox)
++
++
++def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
++    with Path(path).open("w", newline="", encoding="utf-8") as handle:
++        writer = csv.DictWriter(handle, fieldnames=FRAME_FIELDS)
++        writer.writeheader()
++        writer.writerows(rows)
++
++
++def _write_json(path: Path, value: Mapping[str, Any]) -> None:
++    Path(path).write_text(
++        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
++        encoding="utf-8",
++    )
++
++
++def export_stage4_point_label_visualization(
++    annotated_h5: Path,
++    output_dir: Path,
++    *,
++    pseudo3d_h5: Path | None = None,
++    point_radius: int = 1,
++    point_alpha: float = 0.85,
++    positive_color: tuple[int, int, int] = (255, 32, 32),
++    ignore_color: tuple[int, int, int] = (255, 210, 0),
++    background_color: tuple[int, int, int] = (80, 140, 200),
++    bbox_color: tuple[int, int, int] = (160, 255, 80),
++    bbox_thickness: int = 1,
++    cvat_review_root: Path | None = None,
++    cvat_snapshot_root: Path | None = None,
++    cvat_mask_color: tuple[int, int, int] = (0, 255, 255),
++    cvat_mask_alpha: float = 0.35,
++    require_cvat_authoritative: bool = False,
++    overwrite: bool = False,
++) -> dict[str, Any]:
++    output_dir = Path(output_dir).resolve()
++    if output_dir.is_symlink():
++        raise ValueError(f"output_dir must not be a symlink: {output_dir}")
++    if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
++        raise FileExistsError(f"output_dir is not empty; pass --overwrite: {output_dir}")
++    if bbox_thickness <= 0:
++        raise ValueError("bbox_thickness must be > 0")
++
++    data = load_stage4_point_label_visualization_input(
++        annotated_h5, pseudo3d_h5=pseudo3d_h5
++    )
++    if require_cvat_authoritative and not data["cvat_authoritative"]:
++        raise ValueError(
++            "Annotated H5 is not a supported CVAT-authoritative teacher"
++        )
++    if (cvat_review_root is None) != (cvat_snapshot_root is None):
++        raise ValueError(
++            "cvat_review_root and cvat_snapshot_root must be specified together"
++        )
++    if cvat_review_root is not None:
++        cvat_masks, cvat_meta = load_applied_cvat_masks(
++            data,
++            review_root=cvat_review_root,
++            snapshot_root=cvat_snapshot_root,
++        )
++        cvat_masks_requested = True
++    else:
++        if require_cvat_authoritative:
++            raise ValueError(
++                "Authoritative visualization requires CVAT review/snapshot roots"
++            )
++        cvat_masks = {}
++        cvat_meta = {"reviewed_video": False}
++        cvat_masks_requested = False
++    input_sha = file_sha256(data["annotated_h5"])
++    pseudo3d_sha = file_sha256(data["pseudo3d_h5"])
++    output_dir.parent.mkdir(parents=True, exist_ok=True)
++    temporary = Path(
++        tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent)
++    )
++    try:
++        frames_dir = temporary / "frames"
++        frames_dir.mkdir(parents=True)
++        frame_annotation = data["frame_annotation"]
++        bbox_rows_by_order: dict[int, list[int]] = defaultdict(list)
++        for row_index, order in enumerate(frame_annotation["frame_order"]):
++            bbox_rows_by_order[int(order)].append(row_index)
++        for order in bbox_rows_by_order:
++            bbox_rows_by_order[order].sort(
++                key=lambda index: int(frame_annotation["bbox_index"][index])
++            )
++
++        rows: list[dict[str, Any]] = []
++        label_totals = Counter()
++        source_counts = Counter()
++        cvat_mask_pixels = 0
++        status_by_order = {
++            int(order): str(status)
++            for order, status in cvat_meta.get(
++                "cvat_mask_status_by_order", {}
++            ).items()
++        }
++        outside_by_order = {
++            int(order): int(count)
++            for order, count in cvat_meta.get(
++                "positive_outside_cvat_mask_points_by_order", {}
++            ).items()
++        }
++        mismatch_by_order = {
++            int(order): int(count)
++            for order, count in cvat_meta.get(
++                "cvat_point_mask_mismatch_points_by_order", {}
++            ).items()
++        }
++        suppressed_by_order = {
++            int(order): int(count)
++            for order, count in cvat_meta.get(
++                "suppressed_cvat_mask_pixels_by_order", {}
++            ).items()
++        }
++        xml_invalidations = data["xml_invalidations"]
++        invalidation_by_order = {
++            int(order): {
++                "action": str(action),
++                "reason_code": str(reason),
++            }
++            for order, action, reason in zip(
++                xml_invalidations["frame_order"],
++                xml_invalidations["action"],
++                xml_invalidations["reason_code"],
++                strict=True,
++            )
++        }
++        frame_authority_by_order = {
++            int(order): str(authority)
++            for order, authority in zip(
++                data["manual_review_frames"]["frame_order"],
++                data["manual_review_frames"]["label_authority"],
++                strict=True,
++            )
++        }
++        num_frames = int(data["local_images"].shape[0])
++        sorted_point_indices = np.argsort(
++            data["point_frame_order"], kind="stable"
++        )
++        points_per_frame = np.bincount(
++            data["point_frame_order"], minlength=num_frames
++        )
++        point_offsets = np.concatenate(
++            (np.asarray([0], dtype=np.int64), np.cumsum(points_per_frame))
++        )
++        for frame_order in range(num_frames):
++            point_indices = sorted_point_indices[
++                point_offsets[frame_order] : point_offsets[frame_order + 1]
++            ]
++            labels = data["point_label"][point_indices]
++            gray = image_to_uint8_gray(data["local_images"][frame_order])
++            cvat_mask = cvat_masks.get(frame_order)
++            rgb = render_point_labels(
++                gray,
++                pixel_xy=data["pixel_xy"][point_indices],
++                labels=labels,
++                radius=point_radius,
++                alpha=point_alpha,
++                positive_color=positive_color,
++                ignore_color=ignore_color,
++                background_color=background_color,
++                cvat_mask=cvat_mask,
++                cvat_color=cvat_mask_color,
++                cvat_alpha=cvat_mask_alpha,
++            )
++            bbox_row_indices = bbox_rows_by_order.get(frame_order, [])
++            for row_index in bbox_row_indices:
++                _draw_saved_bbox(
++                    rgb,
++                    frame_annotation["bbox_local_xyxy"][row_index],
++                    color=bbox_color,
++                    thickness=bbox_thickness,
++                )
++            relative_image = Path("frames") / f"annotation_frame_{frame_order:05d}.png"
++            imageio.imwrite(temporary / relative_image, rgb)
++
++            counts = {
++                "num_points": int(labels.size),
++                "positive_points": int(np.sum(labels == LABEL_FEMUR_CANDIDATE)),
++                "ignore_points": int(np.sum(labels == LABEL_IGNORE)),
++                "background_points": int(np.sum(labels == LABEL_BACKGROUND)),
++                "label_authority": frame_authority_by_order.get(
++                    frame_order,
++                    XML_INVALIDATION_LABEL_AUTHORITY
++                    if frame_order in invalidation_by_order
++                    else "inherited",
++                ),
++                "xml_invalidated": int(frame_order in invalidation_by_order),
++                "xml_invalidation_action": invalidation_by_order.get(
++                    frame_order, {}
++                ).get("action", ""),
++                "xml_invalidation_reason_code": invalidation_by_order.get(
++                    frame_order, {}
++                ).get("reason_code", ""),
++                "cvat_mask_applied": int(cvat_mask is not None),
++                "cvat_mask_suppressed": int(frame_order in suppressed_by_order),
++                "cvat_mask_status": status_by_order.get(frame_order, ""),
++                "cvat_mask_pixels": (
++                    int(np.sum(cvat_mask)) if cvat_mask is not None else 0
++                ),
++                "positive_outside_cvat_mask_points": outside_by_order.get(
++                    frame_order, 0
++                ),
++                "cvat_point_mask_mismatch_points": mismatch_by_order.get(
++                    frame_order, 0
++                ),
++            }
++            cvat_mask_pixels += counts["cvat_mask_pixels"]
++            label_totals.update(
++                positive_points=counts["positive_points"],
++                ignore_points=counts["ignore_points"],
++                background_points=counts["background_points"],
++            )
++            common = {
++                "video_name": data["video_name"],
++                "frame_order": frame_order,
++                "frame_index": int(data["frame_indices"][frame_order]),
++                **counts,
++                "rendered_image": relative_image.as_posix(),
++            }
++            if not bbox_row_indices:
++                rows.append(
++                    {
++                        **common,
++                        "bbox_index": "",
++                        "bbox_local_xyxy": "",
++                        "selected_contour_source": "",
++                        "annotation_reason": "",
++                        "valid_contour": "",
++                    }
++                )
++            for row_index in bbox_row_indices:
++                source = str(
++                    frame_annotation["selected_contour_source"][row_index]
++                )
++                source_counts[source] += 1
++                rows.append(
++                    {
++                        **common,
++                        "bbox_index": int(frame_annotation["bbox_index"][row_index]),
++                        "bbox_local_xyxy": _bbox_text(
++                            frame_annotation["bbox_local_xyxy"][row_index]
++                        ),
++                        "selected_contour_source": source,
++                        "annotation_reason": str(
++                            frame_annotation["annotation_reason"][row_index]
++                        ),
++                        "valid_contour": int(
++                            bool(frame_annotation["valid_contour"][row_index])
++                        ),
++                    }
++                )
++
++        _write_csv(temporary / "frame_labels.csv", rows)
++        summary = {
++            "status": "ok",
++            "schema_version": 2,
++            "visualization_kind": "saved_stage4_point_labels",
++            "automatic_contours_recomputed": False,
++            "input_files_modified": False,
++            "video_name": data["video_name"],
++            "contour_teacher_schema": _attr_text(
++                data["annotated_attrs"], "contour_teacher_schema"
++            ),
++            "annotated_h5": str(data["annotated_h5"]),
++            "annotated_h5_sha256": input_sha,
++            "pseudo3d_h5": str(data["pseudo3d_h5"]),
++            "pseudo3d_h5_sha256": pseudo3d_sha,
++            "num_frames": num_frames,
++            "num_frame_csv_rows": len(rows),
++            "num_bbox_rows": int(frame_annotation["frame_order"].size),
++            "num_points": int(data["point_label"].size),
++            "positive_points": int(label_totals["positive_points"]),
++            "ignore_points": int(label_totals["ignore_points"]),
++            "background_points": int(label_totals["background_points"]),
++            "cvat_masks_requested": cvat_masks_requested,
++            "cvat_mask_frames": len(cvat_masks),
++            "cvat_mask_nonempty_frames": sum(
++                bool(np.any(mask)) for mask in cvat_masks.values()
++            ),
++            "cvat_mask_pixels": int(cvat_mask_pixels),
++            "cvat_label_authority": cvat_meta.get("label_authority", "none"),
++            "cvat_authoritative_frames": int(
++                cvat_meta.get("authoritative_frame_count", 0)
++            ),
++            "cvat_mask_status_counts": cvat_meta.get(
++                "cvat_mask_status_counts", {}
++            ),
++            "rendered_cvat_mask_status_counts": cvat_meta.get(
++                "rendered_cvat_mask_status_counts", {}
++            ),
++            "suppressed_cvat_mask_frames": int(
++                cvat_meta.get("suppressed_cvat_mask_frames", 0)
++            ),
++            "suppressed_cvat_mask_pixels": int(
++                cvat_meta.get("suppressed_cvat_mask_pixels", 0)
++            ),
++            "positive_outside_cvat_mask_points": int(
++                cvat_meta.get("positive_outside_cvat_mask_points", 0)
++            ),
++            "cvat_point_mask_mismatch_points": int(
++                cvat_meta.get("cvat_point_mask_mismatch_points", 0)
++            ),
++            "cvat_mask_source": cvat_meta,
++            "source_counts": dict(sorted(source_counts.items())),
++            "xml_invalidation_frames": len(invalidation_by_order),
++            "xml_invalidation_manifest_sha256": _attr_text(
++                xml_invalidations["attrs"], "manifest_sha256"
++            ),
++            "xml_invalidation_fingerprint": _attr_text(
++                xml_invalidations["attrs"], "manifest_fingerprint"
++            ),
++            "point_radius": int(point_radius),
++            "point_alpha": float(point_alpha),
++            "positive_color_rgb": list(positive_color),
++            "ignore_color_rgb": list(ignore_color),
++            "background_color_rgb": list(background_color),
++            "bbox_color_rgb": list(bbox_color),
++            "cvat_mask_color_rgb": list(cvat_mask_color),
++            "cvat_mask_alpha": float(cvat_mask_alpha),
++        }
++        _write_json(temporary / "summary.json", summary)
++        if file_sha256(data["annotated_h5"]) != input_sha:
++            raise RuntimeError("Annotated input H5 changed during visualization")
++        if file_sha256(data["pseudo3d_h5"]) != pseudo3d_sha:
++            raise RuntimeError("Source pseudo3D H5 changed during visualization")
++        cvat_zip = cvat_meta.get("annotation_zip")
++        if cvat_zip and file_sha256(Path(cvat_zip)) != cvat_meta.get(
++            "annotation_zip_sha256"
++        ):
++            raise RuntimeError("CVAT annotation ZIP changed during visualization")
++        if output_dir.exists():
++            shutil.rmtree(output_dir)
++        os.replace(temporary, output_dir)
++        return summary
++    except Exception:
++        shutil.rmtree(temporary, ignore_errors=True)
++        raise
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description=(
++            "Render saved Stage 4 point_label values and saved BBoxes without "
++            "recomputing automatic contours."
++        )
++    )
++    parser.add_argument("--annotated_h5", type=Path, required=True)
++    parser.add_argument("--pseudo3d_h5", type=Path, default=None)
++    parser.add_argument("--output_dir", type=Path, required=True)
++    parser.add_argument("--point_radius", type=int, default=1)
++    parser.add_argument("--point_alpha", type=float, default=0.85)
++    parser.add_argument("--positive_color", default="255,32,32")
++    parser.add_argument("--ignore_color", default="255,210,0")
++    parser.add_argument("--background_color", default="80,140,200")
++    parser.add_argument("--bbox_color", default="160,255,80")
++    parser.add_argument("--bbox_thickness", type=int, default=1)
++    parser.add_argument("--cvat_review_root", type=Path, default=None)
++    parser.add_argument("--cvat_snapshot_root", type=Path, default=None)
++    parser.add_argument("--cvat_mask_color", default="0,255,255")
++    parser.add_argument("--cvat_mask_alpha", type=float, default=0.35)
++    parser.add_argument("--require_cvat_authoritative", action="store_true")
++    parser.add_argument("--overwrite", action="store_true")
++    return parser
++
++
++def main() -> None:
++    args = build_parser().parse_args()
++    try:
++        summary = export_stage4_point_label_visualization(
++            args.annotated_h5,
++            args.output_dir,
++            pseudo3d_h5=args.pseudo3d_h5,
++            point_radius=args.point_radius,
++            point_alpha=args.point_alpha,
++            positive_color=parse_color(args.positive_color),
++            ignore_color=parse_color(args.ignore_color),
++            background_color=parse_color(args.background_color),
++            bbox_color=parse_color(args.bbox_color),
++            bbox_thickness=args.bbox_thickness,
++            cvat_review_root=args.cvat_review_root,
++            cvat_snapshot_root=args.cvat_snapshot_root,
++            cvat_mask_color=parse_color(args.cvat_mask_color),
++            cvat_mask_alpha=args.cvat_mask_alpha,
++            require_cvat_authoritative=args.require_cvat_authoritative,
++            overwrite=args.overwrite,
++        )
++    except Exception as exc:
++        raise SystemExit(
++            f"Stage 4 point-label visualization failed: {type(exc).__name__}: {exc}"
++        ) from exc
++    print("Stage 4 point-label visualization passed.")
++    print(f"  video       : {summary['video_name']}")
++    print(f"  frames      : {summary['num_frames']}")
++    print(f"  points      : {summary['num_points']}")
++    print(f"  positive    : {summary['positive_points']}")
++    print(f"  output      : {Path(args.output_dir).resolve()}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/pipelines/export_stage4_v4_point_label_visualizations.sh b/Stage2to4/pseudo3d/pipelines/export_stage4_v4_point_label_visualizations.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..af6c35ebf8f4943df32b01a76735ad3b3fef91fc
+--- /dev/null
++++ b/Stage2to4/pseudo3d/pipelines/export_stage4_v4_point_label_visualizations.sh
+@@ -0,0 +1,82 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
++REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
++DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset/stage4_training_ablation/260711}"
++RUN_NAME="${RUN_NAME:-global_local_l75_w31_c12_area15_bboxrank_v4_manual_fullvideo_v1}"
++RUN_ROOT="${RUN_ROOT:-${DATASET_ROOT}/${RUN_NAME}}"
++SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1}"
++PHASE5_RETURN_ROOT="${PHASE5_RETURN_ROOT:-${DATASET_ROOT}/cvat_returns/phase5_fullvideo_v3_textfree_reviewed_snapshot_59_v2/manual_review_cvat_phase5_fullvideo_v3_textfree}"
++CVAT_REVIEW_ROOT="${CVAT_REVIEW_ROOT:-${SOURCE_RUN_ROOT}/manual_review_cvat_phase5_fullvideo_v3_textfree}"
++CVAT_SNAPSHOT_ROOT="${CVAT_SNAPSHOT_ROOT:-${PHASE5_RETURN_ROOT}/cvat_exports_after_textfree_review_v2}"
++ANNOTATED_DIR="${ANNOTATED_DIR:-${RUN_ROOT}/annotated}"
++OUTPUT_ROOT="${OUTPUT_ROOT:-${RUN_ROOT}/annotation_textures_v4_labels}"
++SUMMARY_CSV="${SUMMARY_CSV:-${OUTPUT_ROOT}/summary.csv}"
++ANNOTATED_PATTERN="${ANNOTATED_PATTERN:-*_pointcloud_annotated_*bboxrank_v4_manual_fullvideo_v1.h5}"
++EXPECTED_FILES="${EXPECTED_FILES:-181}"
++VIDEO_NAMES="${VIDEO_NAMES:-}"
++SKIP_EXISTING="${SKIP_EXISTING:-1}"
++
++if [[ ! -x "${PYTHON}" ]]; then
++  echo "Python executable not found: ${PYTHON}" >&2
++  exit 1
++fi
++if [[ ! -d "${ANNOTATED_DIR}" ]]; then
++  echo "Annotated H5 directory not found: ${ANNOTATED_DIR}" >&2
++  exit 1
++fi
++for required_dir in "${CVAT_REVIEW_ROOT}" "${CVAT_SNAPSHOT_ROOT}"; do
++  if [[ ! -d "${required_dir}" ]]; then
++    echo "Required CVAT directory not found: ${required_dir}" >&2
++    exit 1
++  fi
++done
++if [[ "${SKIP_EXISTING}" != "0" && "${SKIP_EXISTING}" != "1" ]]; then
++  echo "SKIP_EXISTING must be 0 or 1, got: ${SKIP_EXISTING}" >&2
++  exit 1
++fi
++
++mode_args=()
++if [[ "${SKIP_EXISTING}" == "1" ]]; then
++  mode_args+=(--skip_existing)
++else
++  mode_args+=(--overwrite)
++fi
++selection_args=()
++count_args=(--expected_files "${EXPECTED_FILES}")
++if [[ -n "${VIDEO_NAMES}" ]]; then
++  selection_args+=(--video_names "${VIDEO_NAMES}")
++  count_args=()
++fi
++
++cd "${REPO_ROOT}"
++
++"${PYTHON}" \
++  pseudo3d/batch/export/batch_export_stage4_point_label_visualization.py \
++  --annotated_dir "${ANNOTATED_DIR}" \
++  --pattern "${ANNOTATED_PATTERN}" \
++  --recursive \
++  --output_root "${OUTPUT_ROOT}" \
++  --summary_csv "${SUMMARY_CSV}" \
++  --point_radius 1 \
++  --point_alpha 0.85 \
++  --positive_color "255,32,32" \
++  --ignore_color "255,210,0" \
++  --background_color "80,140,200" \
++  --bbox_color "160,255,80" \
++  --bbox_thickness 1 \
++  --cvat_review_root "${CVAT_REVIEW_ROOT}" \
++  --cvat_snapshot_root "${CVAT_SNAPSHOT_ROOT}" \
++  --cvat_mask_color "0,255,255" \
++  --cvat_mask_alpha 0.35 \
++  "${selection_args[@]}" \
++  "${count_args[@]}" \
++  "${mode_args[@]}" \
++  --continue_on_error
++
++echo
++echo "Stage 4 teacher v4 saved point-label visualization complete."
++echo "  input  : ${ANNOTATED_DIR}"
++echo "  output : ${OUTPUT_ROOT}"
++echo "  summary: ${SUMMARY_CSV}"

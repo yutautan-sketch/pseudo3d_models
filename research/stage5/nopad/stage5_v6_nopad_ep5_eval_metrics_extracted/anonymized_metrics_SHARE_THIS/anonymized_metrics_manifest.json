@@ -1,0 +1,47 @@
+{
+  "schema": "stage5_anonymized_metrics_v1",
+  "checkpoints": [
+    "best.pt",
+    "last.pt"
+  ],
+  "train_sanity_ids": [
+    "train_sanity_fixed_001",
+    "train_sanity_random_001",
+    "train_sanity_random_002"
+  ],
+  "validation_ids": [
+    "validation_001",
+    "validation_002",
+    "validation_003",
+    "validation_004",
+    "validation_005",
+    "validation_006",
+    "validation_007",
+    "validation_008",
+    "validation_009",
+    "validation_010",
+    "validation_011",
+    "validation_012",
+    "validation_013",
+    "validation_014",
+    "validation_015",
+    "validation_016",
+    "validation_017",
+    "validation_018"
+  ],
+  "alias_meaning": {
+    "train_sanity_fixed_NNN": "fixed training-data sanity sample",
+    "train_sanity_random_NNN": "seeded random training-data sanity sample",
+    "validation_NNN": "held-out validation sample"
+  },
+  "included_files": [
+    "train_sanity_evaluation/train_sanity_h5_metrics.csv",
+    "train_sanity_evaluation/train_sanity_window_metrics.csv",
+    "train_sanity_evaluation/train_sanity_checkpoint_summary.csv",
+    "validation_accuracy/validation_h5_metrics.csv",
+    "validation_accuracy/validation_window_metrics.csv",
+    "validation_accuracy/validation_checkpoint_summary.csv",
+    "training_history/training_config_anonymized.json",
+    "training_history/training_epoch_metrics.jsonl"
+  ]
+}

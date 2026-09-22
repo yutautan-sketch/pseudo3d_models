@@ -1,0 +1,1390 @@
+diff --git a/Stage2to4/pseudo3d/analysis/preflight_stage4_phase5_fullvideo_cvat_review.py b/Stage2to4/pseudo3d/analysis/preflight_stage4_phase5_fullvideo_cvat_review.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8878925d76a919ce652db1b462a663607220c519
+--- /dev/null
++++ b/Stage2to4/pseudo3d/analysis/preflight_stage4_phase5_fullvideo_cvat_review.py
+@@ -0,0 +1,583 @@
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from collections import Counter, defaultdict
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any, Iterable, Mapping, Sequence
++
++import h5py
++import yaml
++
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++from pseudo3d.analysis.audit_stage4_contour_teacher import (
++    _assert_metadata_matches_teacher,
++    _assert_snapshot_unchanged,
++    _preflight_annotated_h5,
++    _preflight_pseudo3d,
++    _snapshot,
++    load_audit_teacher_config,
++    preflight_input,
++    resolve_inputs,
++)
++from pseudo3d.analysis.stage4_sampling_sweep_config import (
++    file_sha256,
++    load_stage4_sweep_manifest,
++)
++from pseudo3d.annotation.annotate_pseudo3d_point_cloud import (
++    load_voc_bboxes,
++    xml_bbox_to_local,
++)
++from pseudo3d.annotation.contour_teacher_refinement import (
++    load_contour_refinement_config,
++)
++from pseudo3d.annotation.stage4_manual_review import (
++    ManualReviewError,
++    load_manual_review_config,
++    prepare_output_root,
++    read_csv_rows,
++    write_csv_rows,
++    write_json,
++)
++from pseudo3d.batch.export.batch_export_stage4_manual_review_cvat import (
++    ALL_PHASE3_DECISIONS,
++    DEFAULT_ANNOTATED_GLOB,
++    _bbox_crop_metrics,
++    _phase3_contract,
++    _project_bbox_to_local_unclipped,
++)
++
++
++PREFLIGHT_SCHEMA_VERSION = 1
++DEFAULT_SOURCE_ANNOTATED_GLOB = (
++    "{video_name}/*bboxrank_v3_refined_auto_v1.h5"
++)
++
++
++def _utc_now() -> str:
++    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
++        "+00:00", "Z"
++    )
++
++
++def _pipe_floats(values: Sequence[float]) -> str:
++    return "|".join(str(float(value)) for value in values)
++
++
++def _local_shape(image_shape: Sequence[int]) -> tuple[int, int]:
++    shape = tuple(int(value) for value in image_shape)
++    if len(shape) == 3:
++        return shape[1], shape[2]
++    if len(shape) == 4 and shape[1] == 1:
++        return shape[2], shape[3]
++    raise ManualReviewError(f"Unsupported local frame layout: {shape}")
++
++
++def _strict_xml_paths(
++    *, voc_xml_root: Path, video_name: str, annotation_dir_name: str
++) -> list[Path]:
++    directory = Path(voc_xml_root) / video_name / annotation_dir_name
++    if not directory.is_dir():
++        raise FileNotFoundError(f"Strict XML directory not found: {directory}")
++    paths = sorted(directory.glob("*.xml"), key=lambda path: path.name)
++    if not paths:
++        raise FileNotFoundError(f"Strict XML directory contains no XML files: {directory}")
++    return [path.resolve() for path in paths]
++
++
++def _source_paths(
++    *,
++    selected_videos: Sequence[str],
++    resolved_map: Mapping[str, Any],
++    source_resolved_map: Mapping[str, Any],
++    annotation_dir_name: str,
++) -> list[tuple[str, str, Path]]:
++    rows: list[tuple[str, str, Path]] = []
++    for video_name in selected_videos:
++        resolved = resolved_map[video_name]
++        source = source_resolved_map[video_name]
++        rows.extend(
++            (
++                (video_name, "pseudo3d_h5", resolved.item.pseudo3d_h5.resolve()),
++                (video_name, "annotated_v2_h5", resolved.annotated_h5.resolve()),
++                (video_name, "annotated_v3_h5", source.annotated_h5.resolve()),
++            )
++        )
++        rows.extend(
++            (video_name, "strict_xml", path)
++            for path in _strict_xml_paths(
++                voc_xml_root=resolved.item.voc_xml_root,
++                video_name=video_name,
++                annotation_dir_name=annotation_dir_name,
++            )
++        )
++    paths = [str(path) for _, _, path in rows]
++    if len(set(paths)) != len(paths):
++        duplicates = sorted(path for path, count in Counter(paths).items() if count > 1)
++        raise ManualReviewError(f"Duplicate source file paths: {duplicates}")
++    return rows
++
++
++def _checksum_rows(
++    sources: Sequence[tuple[str, str, Path]],
++) -> list[dict[str, Any]]:
++    rows: list[dict[str, Any]] = []
++    for video_name, role, path in sources:
++        stat = path.stat()
++        rows.append(
++            {
++                "video_name": video_name,
++                "role": role,
++                "path": str(path),
++                "bytes": int(stat.st_size),
++                "mtime_ns": int(stat.st_mtime_ns),
++                "sha256": file_sha256(path),
++            }
++        )
++    rows.sort(key=lambda row: (str(row["video_name"]), str(row["role"]), str(row["path"])))
++    return rows
++
++
++def verify_source_checksum_rows(
++    current_rows: Sequence[Mapping[str, Any]], expected_manifest: Path
++) -> None:
++    expected_manifest = Path(expected_manifest).resolve()
++    expected_rows = read_csv_rows(expected_manifest)
++
++    def normalized(rows: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, str], tuple[int, str]]:
++        result: dict[tuple[str, str, str], tuple[int, str]] = {}
++        for row in rows:
++            key = (
++                str(row.get("video_name", "")),
++                str(row.get("role", "")),
++                str(Path(str(row.get("path", ""))).resolve()),
++            )
++            if not all(key) or key in result:
++                raise ManualReviewError(
++                    f"Invalid/duplicate source checksum identity: {key}"
++                )
++            result[key] = (int(row.get("bytes", -1)), str(row.get("sha256", "")))
++        return result
++
++    current = normalized(current_rows)
++    expected = normalized(expected_rows)
++    if current != expected:
++        missing = sorted(set(expected) - set(current))
++        extra = sorted(set(current) - set(expected))
++        changed = sorted(
++            key for key in set(current) & set(expected) if current[key] != expected[key]
++        )
++        raise ManualReviewError(
++            "Source checksum manifest mismatch: "
++            f"missing={missing[:3]}, extra={extra[:3]}, changed={changed[:3]}"
++        )
++
++
++def _report_checksums(output_root: Path) -> list[dict[str, Any]]:
++    excluded = {"report_checksums.csv", "preflight_summary.json"}
++    rows: list[dict[str, Any]] = []
++    for path in sorted(value for value in Path(output_root).iterdir() if value.is_file()):
++        if path.name in excluded:
++            continue
++        rows.append(
++            {
++                "relative_path": path.name,
++                "bytes": int(path.stat().st_size),
++                "sha256": file_sha256(path),
++            }
++        )
++    return rows
++
++
++def _load_h5_attrs(path: Path) -> dict[str, Any]:
++    with h5py.File(path, "r") as handle:
++        return dict(handle.attrs)
++
++
++def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
++    output_root = Path(args.output_root)
++    if output_root.exists() and any(output_root.iterdir()) and not args.overwrite:
++        raise FileExistsError(
++            f"Output root is not empty; pass --overwrite: {output_root}"
++        )
++    teacher = load_audit_teacher_config(args.teacher_config)
++    refine = load_contour_refinement_config(args.refine_config)
++    refine.validate(require_production_thresholds=True)
++    manual = load_manual_review_config(args.manual_review_config)
++    if refine.base_teacher_config_name != teacher.config_name:
++        raise ManualReviewError("refine/teacher config_name mismatch")
++    if (
++        refine.base_teacher_fingerprint is not None
++        and refine.base_teacher_fingerprint != teacher.fingerprint
++    ):
++        raise ManualReviewError("refine/teacher fingerprint mismatch")
++
++    decisions, phase3_summary, _ = _phase3_contract(
++        phase3_root=args.phase3_root,
++        manifest=args.manifest,
++        annotated_root=args.annotated_root,
++        phase1_audit_root=args.phase1_audit_root,
++        teacher_fingerprint=teacher.fingerprint,
++        refine_fingerprint=refine.fingerprint,
++    )
++    decision_counts = Counter(str(row["proposed_decision"]) for row in decisions)
++    selected_videos = sorted({str(row["video_name"]) for row in decisions})
++    if len(decisions) != int(args.expected_review_bboxes):
++        raise ManualReviewError(
++            "Phase 3 target BBox count mismatch: "
++            f"expected={args.expected_review_bboxes}, actual={len(decisions)}"
++        )
++    if len(selected_videos) != int(args.expected_selected_videos):
++        raise ManualReviewError(
++            "Phase 3 selected video count mismatch: "
++            f"expected={args.expected_selected_videos}, actual={len(selected_videos)}"
++        )
++    for decision in ALL_PHASE3_DECISIONS:
++        expected = int(getattr(args, f"expected_{decision}"))
++        actual = int(decision_counts.get(decision, 0))
++        if actual != expected:
++            raise ManualReviewError(
++                f"Phase 3 {decision} count mismatch: expected={expected}, actual={actual}"
++            )
++
++    items = load_stage4_sweep_manifest(args.manifest)
++    resolved = resolve_inputs(
++        items,
++        annotated_root=args.annotated_root,
++        annotated_glob_template=args.annotated_glob_template,
++        expected_videos=args.expected_videos,
++    )
++    source_resolved = resolve_inputs(
++        items,
++        annotated_root=args.source_annotated_root,
++        annotated_glob_template=args.source_annotated_glob_template,
++        expected_videos=args.expected_videos,
++    )
++    resolved_map = {value.item.video_name: value for value in resolved}
++    source_resolved_map = {value.item.video_name: value for value in source_resolved}
++    unknown = sorted(set(selected_videos) - set(resolved_map))
++    if unknown:
++        raise ManualReviewError(f"Phase 3 references unknown manifest videos: {unknown}")
++
++    sources = _source_paths(
++        selected_videos=selected_videos,
++        resolved_map=resolved_map,
++        source_resolved_map=source_resolved_map,
++        annotation_dir_name=teacher.xml_annotation_dir_name,
++    )
++    before = _snapshot(path for _, _, path in sources)
++
++    decisions_by_video: dict[str, list[dict[str, str]]] = defaultdict(list)
++    for row in decisions:
++        decisions_by_video[str(row["video_name"])].append(row)
++
++    target_rows: list[dict[str, Any]] = []
++    video_rows: list[dict[str, Any]] = []
++    seen_target_keys: set[tuple[str, int, int, int]] = set()
++    print("Stage 4 Phase 5 full-video real-data preflight (read-only)")
++    print(f"  manifest        : {Path(args.manifest).resolve()}")
++    print(f"  annotated v2    : {Path(args.annotated_root).resolve()}")
++    print(f"  annotated v3    : {Path(args.source_annotated_root).resolve()}")
++    print(f"  selected videos : {len(selected_videos)}")
++    print(f"  target BBoxes   : {len(decisions)}")
++
++    for number, video_name in enumerate(selected_videos, start=1):
++        resolved_item = resolved_map[video_name]
++        source_item = source_resolved_map[video_name]
++        preflight = preflight_input(resolved_item, teacher)
++        source_frame_annotation, source_attrs, _ = _preflight_annotated_h5(
++            source_item.annotated_h5
++        )
++        _assert_metadata_matches_teacher(source_attrs, teacher)
++        if len(source_frame_annotation["frame_order"]) != int(preflight["bbox_rows"]):
++            raise ManualReviewError(
++                f"v2/v3 frame_annotation row count mismatch: {video_name}"
++            )
++
++        image_shape, frame_indices = _preflight_pseudo3d(
++            resolved_item.item.pseudo3d_h5
++        )
++        shape_hw = _local_shape(image_shape)
++        pseudo_attrs = _load_h5_attrs(resolved_item.item.pseudo3d_h5)
++        voc_bboxes = load_voc_bboxes(
++            resolved_item.item.voc_xml_root,
++            video_name=video_name,
++            frame_indices=frame_indices,
++            xml_frame_number_offsets=teacher.xml_frame_number_offsets,
++            xml_frame_id_source=teacher.xml_frame_id_source,
++            xml_annotation_dir_name=teacher.xml_annotation_dir_name,
++            strict_xml_annotation_dir=teacher.strict_xml_annotation_dir,
++        )
++
++        local_target_rows: list[dict[str, Any]] = []
++        for decision_row in sorted(
++            decisions_by_video[video_name],
++            key=lambda row: (
++                int(row["frame_order"]),
++                int(row["frame_index"]),
++                int(row["bbox_index"]),
++            ),
++        ):
++            frame_order = int(decision_row["frame_order"])
++            frame_index = int(decision_row["frame_index"])
++            bbox_index = int(decision_row["bbox_index"])
++            key = (video_name, frame_order, frame_index, bbox_index)
++            if key in seen_target_keys:
++                raise ManualReviewError(f"Duplicate target BBox key: {key}")
++            seen_target_keys.add(key)
++            if frame_order < 0 or frame_order >= len(frame_indices):
++                raise ManualReviewError(f"Target frame_order is out of range: {key}")
++            if int(frame_indices[frame_order]) != frame_index:
++                raise ManualReviewError(f"Target frame_index alignment mismatch: {key}")
++            frame_vocs = voc_bboxes.get(frame_order, [])
++            if bbox_index < 0 or bbox_index >= len(frame_vocs):
++                raise ManualReviewError(
++                    f"Target BBox is missing from strict XML geometry: {key}"
++                )
++            voc = frame_vocs[bbox_index]
++            bbox = xml_bbox_to_local(
++                voc.xml_xyxy,
++                image_size_wh=voc.image_size_wh,
++                attrs=pseudo_attrs,
++                local_shape_hw=shape_hw,
++            )
++            projected = _project_bbox_to_local_unclipped(
++                raw_xyxy=bbox.raw_xyxy,
++                attrs=pseudo_attrs,
++                local_shape_hw=shape_hw,
++            )
++            crop = _bbox_crop_metrics(
++                projected_xyxy=projected,
++                local_shape_hw=shape_hw,
++            )
++            target = {
++                "bbox_key": f"{video_name}__fo{frame_order:05d}__fi{frame_index:08d}__bbox{bbox_index:03d}",
++                "video_name": video_name,
++                "frame_order": frame_order,
++                "frame_index": frame_index,
++                "bbox_index": bbox_index,
++                "phase3_decision": decision_row["proposed_decision"],
++                "phase3_reason_codes": decision_row.get("reason_codes", ""),
++                "xml_path": str(voc.xml_path.resolve()),
++                "xml_sha256": file_sha256(voc.xml_path),
++                "bbox_xml_xyxy": _pipe_floats(voc.xml_xyxy),
++                "projected_bbox_xyxy": _pipe_floats(crop["projected_bbox_xyxy"]),
++                "clipped_bbox_xyxy": _pipe_floats(crop["clipped_bbox_xyxy"]),
++                "projected_area": crop["projected_area"],
++                "visible_intersection_area": crop["visible_intersection_area"],
++                "visible_fraction": crop["visible_fraction"],
++                "touches_left": crop["touches_left"],
++                "touches_right": crop["touches_right"],
++                "touches_top": crop["touches_top"],
++                "touches_bottom": crop["touches_bottom"],
++                "fully_outside_crop": crop["fully_outside_crop"],
++                "partially_clipped": crop["partially_clipped"],
++                "fully_visible": crop["fully_visible"],
++                "crop_status": crop["crop_status"],
++            }
++            target_rows.append(target)
++            local_target_rows.append(target)
++
++        local_crop_counts = Counter(str(row["crop_status"]) for row in local_target_rows)
++        local_decision_counts = Counter(
++            str(row["phase3_decision"]) for row in local_target_rows
++        )
++        target_frame_count = len(
++            {
++                (int(row["frame_order"]), int(row["frame_index"]))
++                for row in local_target_rows
++            }
++        )
++        video_row = {
++            "video_name": video_name,
++            "frames": int(image_shape[0]),
++            "height": int(shape_hw[0]),
++            "width": int(shape_hw[1]),
++            "strict_xml_bbox_rows": int(preflight["bbox_rows"]),
++            "target_frames": target_frame_count,
++            "target_bboxes": len(local_target_rows),
++            "auto_accept": int(local_decision_counts.get("auto_accept", 0)),
++            "auto_refine": int(local_decision_counts.get("auto_refine", 0)),
++            "manual_review": int(local_decision_counts.get("manual_review", 0)),
++            "fully_visible": int(local_crop_counts.get("fully_visible", 0)),
++            "partially_clipped": int(local_crop_counts.get("partially_clipped", 0)),
++            "fully_outside_crop": int(local_crop_counts.get("fully_outside_crop", 0)),
++            "pseudo3d_h5": str(resolved_item.item.pseudo3d_h5.resolve()),
++            "annotated_v2_h5": str(resolved_item.annotated_h5.resolve()),
++            "annotated_v3_h5": str(source_item.annotated_h5.resolve()),
++        }
++        video_rows.append(video_row)
++        print(
++            f"  [{number}/{len(selected_videos)}] [OK] {video_name}: "
++            f"frames={video_row['frames']}, targets={video_row['target_bboxes']}, "
++            f"crop={dict(sorted(local_crop_counts.items()))}"
++        )
++
++    target_rows.sort(key=lambda row: str(row["bbox_key"]))
++    video_rows.sort(key=lambda row: str(row["video_name"]))
++    if len(target_rows) != int(args.expected_review_bboxes):
++        raise ManualReviewError("Not every Phase 3 target was resolved to strict XML")
++    if len(seen_target_keys) != len(target_rows):
++        raise ManualReviewError("Resolved target BBox keys are not unique")
++
++    source_role_counts = Counter(role for _, role, _ in sources)
++    print(
++        "  hashing source files : "
++        f"{len(sources)} {dict(sorted(source_role_counts.items()))}"
++    )
++    source_checksum_rows = _checksum_rows(sources)
++    print("  [OK] source SHA-256 manifest created")
++    verified_source_manifest = getattr(args, "verify_source_checksums", None)
++    if verified_source_manifest is not None:
++        verify_source_checksum_rows(
++            source_checksum_rows, Path(verified_source_manifest)
++        )
++    _assert_snapshot_unchanged(before)
++    prepare_output_root(output_root, overwrite=args.overwrite)
++    write_csv_rows(output_root / "video_summary.csv", video_rows)
++    write_csv_rows(output_root / "target_bboxes.csv", target_rows)
++    write_csv_rows(
++        output_root / "source_checksums.csv", source_checksum_rows
++    )
++    run_config = {
++        "schema_version": PREFLIGHT_SCHEMA_VERSION,
++        "manifest": str(Path(args.manifest).resolve()),
++        "manifest_sha256": file_sha256(args.manifest),
++        "annotated_root": str(Path(args.annotated_root).resolve()),
++        "source_annotated_root": str(Path(args.source_annotated_root).resolve()),
++        "phase1_audit_root": str(Path(args.phase1_audit_root).resolve()),
++        "phase3_root": str(Path(args.phase3_root).resolve()),
++        "teacher_config": str(Path(args.teacher_config).resolve()),
++        "teacher_fingerprint": teacher.fingerprint,
++        "refine_config": str(Path(args.refine_config).resolve()),
++        "refine_fingerprint": refine.fingerprint,
++        "manual_review_config": str(Path(args.manual_review_config).resolve()),
++        "manual_review_fingerprint": manual.fingerprint,
++        "expected_videos": int(args.expected_videos),
++        "expected_selected_videos": int(args.expected_selected_videos),
++        "expected_review_bboxes": int(args.expected_review_bboxes),
++        "expected_auto_accept": int(args.expected_auto_accept),
++        "expected_auto_refine": int(args.expected_auto_refine),
++        "expected_manual_review": int(args.expected_manual_review),
++    }
++    with (output_root / "run_config.yaml").open(
++        "w", encoding="utf-8", newline="\n"
++    ) as handle:
++        yaml.safe_dump(run_config, handle, allow_unicode=True, sort_keys=True)
++
++    report_checksum_rows = _report_checksums(output_root)
++    write_csv_rows(
++        output_root / "report_checksums.csv", report_checksum_rows
++    )
++    crop_counts = Counter(str(row["crop_status"]) for row in target_rows)
++    summary = {
++        "schema_version": PREFLIGHT_SCHEMA_VERSION,
++        "created_utc": _utc_now(),
++        "status": "ok",
++        "selected_videos": len(video_rows),
++        "total_frames": int(sum(int(row["frames"]) for row in video_rows)),
++        "target_frames": int(sum(int(row["target_frames"]) for row in video_rows)),
++        "target_bboxes": len(target_rows),
++        "phase3_decision_counts": dict(sorted(decision_counts.items())),
++        "crop_status_counts": dict(sorted(crop_counts.items())),
++        "source_checksum_rows": len(source_checksum_rows),
++        "source_checksums_sha256": file_sha256(
++            output_root / "source_checksums.csv"
++        ),
++        "verified_source_checksums": (
++            str(Path(verified_source_manifest).resolve())
++            if verified_source_manifest is not None
++            else ""
++        ),
++        "phase3_processed_bboxes": int(phase3_summary["processed_bboxes"]),
++        "input_files_unchanged": True,
++        "failure_rows": 0,
++    }
++    write_json(output_root / "preflight_summary.json", summary)
++
++    print("\nFull-video preflight summary")
++    print(f"  videos_checked        : {summary['selected_videos']}")
++    print(f"  total_frames          : {summary['total_frames']}")
++    print(f"  target_frames         : {summary['target_frames']}")
++    print(f"  target_bboxes         : {summary['target_bboxes']}")
++    print(f"  decision_counts       : {summary['phase3_decision_counts']}")
++    print(f"  crop_status_counts    : {summary['crop_status_counts']}")
++    print(f"  source_checksum_rows  : {summary['source_checksum_rows']}")
++    print("  input_files_unchanged : true")
++    print(f"  output_root           : {output_root.resolve()}")
++    print("Stage 4 Phase 5 full-video real-data preflight passed.")
++    return {
++        "summary": summary,
++        "video_rows": video_rows,
++        "target_rows": target_rows,
++        "source_checksum_rows": source_checksum_rows,
++    }
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description=(
++            "Read-only real-data preflight for Stage 4 Phase 5 full-video CVAT export."
++        )
++    )
++    parser.add_argument("--manifest", type=Path, required=True)
++    parser.add_argument("--annotated_root", type=Path, required=True)
++    parser.add_argument("--source_annotated_root", type=Path, required=True)
++    parser.add_argument("--phase1_audit_root", type=Path, required=True)
++    parser.add_argument("--phase3_root", type=Path, required=True)
++    parser.add_argument("--teacher_config", type=Path, required=True)
++    parser.add_argument("--refine_config", type=Path, required=True)
++    parser.add_argument("--manual_review_config", type=Path, required=True)
++    parser.add_argument("--output_root", type=Path, required=True)
++    parser.add_argument("--annotated_glob_template", default=DEFAULT_ANNOTATED_GLOB)
++    parser.add_argument(
++        "--source_annotated_glob_template",
++        default=DEFAULT_SOURCE_ANNOTATED_GLOB,
++    )
++    parser.add_argument("--expected_videos", type=int, default=182)
++    parser.add_argument("--expected_selected_videos", type=int, default=60)
++    parser.add_argument("--expected_review_bboxes", type=int, default=129)
++    parser.add_argument("--expected_auto_accept", type=int, default=31)
++    parser.add_argument("--expected_auto_refine", type=int, default=35)
++    parser.add_argument("--expected_manual_review", type=int, default=63)
++    parser.add_argument(
++        "--verify_source_checksums",
++        type=Path,
++        default=None,
++        help=(
++            "Optional earlier source_checksums.csv. Requiring an exact match makes "
++            "the same preflight usable after package generation."
++        ),
++    )
++    parser.add_argument("--overwrite", action="store_true")
++    return parser
++
++
++def main() -> None:
++    args = build_parser().parse_args()
++    for name in (
++        "expected_videos",
++        "expected_selected_videos",
++        "expected_review_bboxes",
++        "expected_auto_accept",
++        "expected_auto_refine",
++        "expected_manual_review",
++    ):
++        if int(getattr(args, name)) < 0:
++            raise SystemExit(f"--{name} must be >= 0")
++    try:
++        run_preflight(args)
++    except Exception as exc:
++        raise SystemExit(
++            f"Full-video preflight failed: {type(exc).__name__}: {exc}"
++        ) from exc
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/analysis/validate_stage4_phase5_fullvideo_cvat_package.py b/Stage2to4/pseudo3d/analysis/validate_stage4_phase5_fullvideo_cvat_package.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..68b514d413af724c4835d793002c7701e32e5cd2
+--- /dev/null
++++ b/Stage2to4/pseudo3d/analysis/validate_stage4_phase5_fullvideo_cvat_package.py
+@@ -0,0 +1,560 @@
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from collections import Counter, defaultdict
++from pathlib import Path
++from typing import Any, Mapping, Sequence
++
++import cv2
++import numpy as np
++
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++if str(REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(REPO_ROOT))
++
++from pseudo3d.analysis.preflight_stage4_phase5_fullvideo_cvat_review import (
++    verify_source_checksum_rows,
++)
++from pseudo3d.analysis.stage4_sampling_sweep_config import file_sha256
++from pseudo3d.annotation.stage4_manual_review import (
++    ManualReviewError,
++    read_csv_rows,
++    write_csv_rows,
++    write_json,
++)
++from pseudo3d.export.convert_masks_to_cvat_segmentation_mask_1_1 import (
++    validate_cvat_segmentation_mask_zip,
++)
++
++
++VALIDATION_SCHEMA_VERSION = 1
++
++
++def _read_json(path: Path) -> Mapping[str, Any]:
++    path = Path(path)
++    if not path.is_file():
++        raise FileNotFoundError(path)
++    value = json.loads(path.read_text(encoding="utf-8"))
++    if not isinstance(value, Mapping):
++        raise ManualReviewError(f"JSON root must be an object: {path}")
++    return value
++
++
++def _as_bool(value: Any, name: str) -> bool:
++    if isinstance(value, bool):
++        return value
++    normalized = str(value).strip().lower()
++    if normalized in {"true", "1"}:
++        return True
++    if normalized in {"false", "0", ""}:
++        return False
++    raise ManualReviewError(f"{name} must be boolean: {value!r}")
++
++
++def _target_key(row: Mapping[str, Any]) -> tuple[str, int, int, int]:
++    return (
++        str(row["video_name"]),
++        int(row["frame_order"]),
++        int(row["frame_index"]),
++        int(row["bbox_index"]),
++    )
++
++
++def _frame_key(row: Mapping[str, Any]) -> tuple[str, int, int]:
++    return (
++        str(row["video_name"]),
++        int(row["frame_order"]),
++        int(row["frame_index"]),
++    )
++
++
++def _video_key(row: Mapping[str, Any]) -> str:
++    return str(row["video_name"])
++
++
++def _unique_map(
++    rows: Sequence[Mapping[str, Any]], key_function: Any, name: str
++) -> dict[Any, Mapping[str, Any]]:
++    result: dict[Any, Mapping[str, Any]] = {}
++    for row in rows:
++        key = key_function(row)
++        if key in result:
++            raise ManualReviewError(f"Duplicate {name} key: {key}")
++        result[key] = row
++    return result
++
++
++def _verify_checksum_file(
++    root: Path, checksum_csv: Path, *, hash_cache: dict[Path, str]
++) -> int:
++    rows = read_csv_rows(checksum_csv)
++    expected_files = {
++        path.relative_to(root).as_posix()
++        for path in root.rglob("*")
++        if path.is_file()
++        and path.name not in {"checksums.csv", "export_summary.json"}
++    }
++    listed = {str(row.get("relative_path", "")) for row in rows}
++    if "" in listed or len(listed) != len(rows):
++        raise ManualReviewError(f"Invalid/duplicate checksum rows: {checksum_csv}")
++    if listed != expected_files:
++        raise ManualReviewError(
++            f"Checksum member mismatch for {root}: "
++            f"missing={sorted(expected_files - listed)[:3]}, "
++            f"extra={sorted(listed - expected_files)[:3]}"
++        )
++    for row in rows:
++        relative = Path(str(row["relative_path"]))
++        if relative.is_absolute() or ".." in relative.parts:
++            raise ManualReviewError(f"Unsafe checksum path: {relative}")
++        path = (root / relative).resolve()
++        if not path.is_file() or int(row["bytes"]) != int(path.stat().st_size):
++            raise ManualReviewError(f"Checksum size mismatch: {path}")
++        actual = hash_cache.get(path)
++        if actual is None:
++            actual = file_sha256(path)
++            hash_cache[path] = actual
++        if actual != str(row["sha256"]):
++            raise ManualReviewError(f"Checksum SHA-256 mismatch: {path}")
++    return len(rows)
++
++
++def _verify_context_masks(
++    *, video_root: Path, frame_rows: Sequence[Mapping[str, Any]]
++) -> int:
++    checked = 0
++    for row in frame_rows:
++        if str(row.get("frame_role", "")) != "context_only":
++            continue
++        mask_path = video_root / str(row["mask_path"])
++        mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
++        if mask is None or mask.ndim != 2 or mask.dtype != np.uint8:
++            raise ManualReviewError(f"Invalid context mask: {mask_path}")
++        if np.any(mask != 0):
++            raise ManualReviewError(
++                f"Context-only initial mask is not all-background: {mask_path}"
++            )
++        checked += 1
++    return checked
++
++
++def _transfer_paths(review_root: Path) -> list[Path]:
++    top_level = sorted(
++        path
++        for path in review_root.iterdir()
++        if path.is_file()
++        and path.name
++        not in {
++            "mac_transfer_manifest.csv",
++            "mac_transfer_summary.json",
++            "package_validation_summary.json",
++        }
++    )
++    video_files = sorted(
++        path for path in (review_root / "videos").rglob("*") if path.is_file()
++    )
++    paths = top_level + video_files
++    if len({str(path.resolve()) for path in paths}) != len(paths):
++        raise ManualReviewError("Transfer file list contains duplicates")
++    return paths
++
++
++def _write_transfer_manifest(
++    *, review_root: Path, hash_cache: dict[Path, str], overwrite: bool
++) -> tuple[list[dict[str, Any]], Mapping[str, Any]]:
++    manifest_path = review_root / "mac_transfer_manifest.csv"
++    summary_path = review_root / "mac_transfer_summary.json"
++    if (manifest_path.exists() or summary_path.exists()) and not overwrite:
++        raise FileExistsError(
++            "Mac transfer artifacts already exist; pass --overwrite_transfer_manifest"
++        )
++    rows: list[dict[str, Any]] = []
++    for path in _transfer_paths(review_root):
++        resolved = path.resolve()
++        digest = hash_cache.get(resolved)
++        if digest is None:
++            digest = file_sha256(resolved)
++            hash_cache[resolved] = digest
++        rows.append(
++            {
++                "relative_path": path.relative_to(review_root).as_posix(),
++                "bytes": int(path.stat().st_size),
++                "sha256": digest,
++            }
++        )
++    write_csv_rows(
++        manifest_path,
++        rows,
++        fieldnames=("relative_path", "bytes", "sha256"),
++    )
++    summary = {
++        "schema_version": VALIDATION_SCHEMA_VERSION,
++        "status": "ok",
++        "transfer_files": len(rows),
++        "transfer_bytes": int(sum(int(row["bytes"]) for row in rows)),
++        "manifest": manifest_path.name,
++        "manifest_sha256": file_sha256(manifest_path),
++        "scope": "top-level metadata plus videos/; root staging images/masks/overlays/cvat excluded",
++        "control_files_not_listed_in_manifest": [
++            "mac_transfer_manifest.csv",
++            "mac_transfer_summary.json",
++            "package_validation_summary.json",
++        ],
++    }
++    write_json(summary_path, summary)
++    return rows, summary
++
++
++def run_validation(args: argparse.Namespace) -> dict[str, Any]:
++    review_root = Path(args.review_root).resolve()
++    preflight_root = Path(args.preflight_root).resolve()
++    if not review_root.is_dir() or not preflight_root.is_dir():
++        raise FileNotFoundError("review_root and preflight_root must be directories")
++
++    preflight_summary = _read_json(preflight_root / "preflight_summary.json")
++    export_summary = _read_json(review_root / "export_summary.json")
++    partition_summary = _read_json(review_root / "partition_summary.json")
++    for name, summary in (
++        ("preflight", preflight_summary),
++        ("export", export_summary),
++        ("partition", partition_summary),
++    ):
++        if str(summary.get("status", "")) != "ok" or int(
++            summary.get("failure_rows", 0)
++        ) != 0:
++            raise ManualReviewError(f"{name} summary is not complete and failure-free")
++    if str(export_summary.get("export_mode", "")) != "full_video":
++        raise ManualReviewError("Review export is not full_video mode")
++
++    expected_videos = int(args.expected_selected_videos)
++    expected_frames = int(preflight_summary["total_frames"])
++    expected_target_frames = int(preflight_summary["target_frames"])
++    expected_targets = int(args.expected_review_bboxes)
++    expected_crop_counts = {
++        str(key): int(value)
++        for key, value in preflight_summary["crop_status_counts"].items()
++    }
++    expected_decision_counts = {
++        "auto_accept": int(args.expected_auto_accept),
++        "auto_refine": int(args.expected_auto_refine),
++        "manual_review": int(args.expected_manual_review),
++    }
++    for actual, expected, name in (
++        (int(preflight_summary["selected_videos"]), expected_videos, "preflight videos"),
++        (int(preflight_summary["target_bboxes"]), expected_targets, "preflight targets"),
++        (int(export_summary["selected_videos"]), expected_videos, "export videos"),
++        (int(export_summary["review_frames"]), expected_frames, "export frames"),
++        (
++            int(export_summary["target_review_frames"]),
++            expected_target_frames,
++            "export target frames",
++        ),
++        (
++            int(export_summary["selected_review_bboxes"]),
++            expected_targets,
++            "export targets",
++        ),
++        (int(partition_summary["video_packages"]), expected_videos, "video packages"),
++        (int(partition_summary["exported_frames"]), expected_frames, "partition frames"),
++        (
++            int(partition_summary["case_frames"]),
++            expected_target_frames,
++            "case frames",
++        ),
++        (int(partition_summary["review_bboxes"]), expected_targets, "review index"),
++    ):
++        if actual != expected:
++            raise ManualReviewError(f"{name} mismatch: {actual} != {expected}")
++    if {
++        str(key): int(value)
++        for key, value in export_summary["crop_status_counts"].items()
++    } != expected_crop_counts:
++        raise ManualReviewError("Export/preflight crop status counts differ")
++    if {
++        str(key): int(value)
++        for key, value in export_summary["phase3_decision_counts"].items()
++    } != expected_decision_counts:
++        raise ManualReviewError("Export decision counts differ from fixed contract")
++    if str(partition_summary.get("progress_csv", "")) != "video_progress.csv":
++        raise ManualReviewError("Full-video partition does not use video_progress.csv")
++
++    preflight_targets = read_csv_rows(preflight_root / "target_bboxes.csv")
++    export_bboxes = read_csv_rows(review_root / "review_bboxes.csv")
++    export_targets = [
++        row for row in export_bboxes if _as_bool(row.get("review_target", False), "review_target")
++    ]
++    decisions = read_csv_rows(review_root / "crop_review_decisions.csv")
++    review_index = read_csv_rows(review_root / "review_index.csv")
++    preflight_map = _unique_map(preflight_targets, _target_key, "preflight target")
++    export_map = _unique_map(export_targets, _target_key, "export target")
++    decision_map = _unique_map(decisions, _target_key, "crop decision")
++    index_map = _unique_map(review_index, _target_key, "review index")
++    if not (
++        set(preflight_map)
++        == set(export_map)
++        == set(decision_map)
++        == set(index_map)
++    ):
++        raise ManualReviewError("Target BBox key sets differ across preflight/export/index")
++    if len(preflight_map) != expected_targets:
++        raise ManualReviewError("Target BBox key count differs from fixed contract")
++    for key in sorted(preflight_map):
++        expected = preflight_map[key]
++        exported = export_map[key]
++        decision = decision_map[key]
++        indexed = index_map[key]
++        if str(exported["phase3_decision"]) != str(expected["phase3_decision"]):
++            raise ManualReviewError(f"Phase 3 decision mismatch: {key}")
++        if str(exported["crop_status"]) != str(expected["crop_status"]):
++            raise ManualReviewError(f"Crop status mismatch: {key}")
++        if not np.isclose(
++            float(exported["visible_fraction"]),
++            float(expected["visible_fraction"]),
++            rtol=0.0,
++            atol=1e-12,
++        ):
++            raise ManualReviewError(f"Visible fraction mismatch: {key}")
++        if str(decision["review_disposition"]) != "pending":
++            raise ManualReviewError(f"New crop decision is not pending: {key}")
++        if str(indexed["review_status"]) != "pending":
++            raise ManualReviewError(f"New review index is not pending: {key}")
++        for field in ("phase3_decision", "crop_status", "visible_fraction"):
++            if str(indexed[field]) != str(decision[field]):
++                raise ManualReviewError(
++                    f"Review index/crop decision field mismatch: {key} {field}"
++                )
++
++    preflight_videos = read_csv_rows(preflight_root / "video_summary.csv")
++    progress_rows = read_csv_rows(review_root / "video_progress.csv")
++    preflight_video_map = _unique_map(
++        preflight_videos, _video_key, "preflight video"
++    )
++    progress_map = _unique_map(progress_rows, _video_key, "progress video")
++    if len(preflight_video_map) != expected_videos or set(preflight_video_map) != set(
++        progress_map
++    ):
++        raise ManualReviewError("Video set differs between preflight and export progress")
++
++    hash_cache: dict[Path, str] = {}
++    total_checksum_rows = 0
++    total_context_frames = 0
++    total_zip_bytes = 0
++    print("Stage 4 Phase 5 full-video package validation (read-only package check)")
++    print(f"  review_root     : {review_root}")
++    print(f"  preflight_root  : {preflight_root}")
++    print(f"  videos          : {expected_videos}")
++    print(f"  frames          : {expected_frames}")
++    print(f"  target BBoxes   : {expected_targets}")
++
++    for number, video_name in enumerate(sorted(preflight_video_map), start=1):
++        expected_video = preflight_video_map[video_name]
++        progress = progress_map[video_name]
++        video_root = review_root / "videos" / video_name
++        video_summary = _read_json(video_root / "export_summary.json")
++        if str(video_summary.get("status", "")) != "ok" or str(
++            video_summary.get("export_mode", "")
++        ) != "full_video":
++            raise ManualReviewError(f"Invalid video summary: {video_name}")
++        expected_video_frames = int(expected_video["frames"])
++        expected_video_targets = int(expected_video["target_bboxes"])
++        expected_video_target_frames = int(expected_video["target_frames"])
++        for actual, expected, name in (
++            (int(progress["review_frames"]), expected_video_frames, "progress frames"),
++            (
++                int(progress["target_review_frames"]),
++                expected_video_target_frames,
++                "progress target frames",
++            ),
++            (int(progress["review_bboxes"]), expected_video_targets, "progress targets"),
++            (int(video_summary["review_frames"]), expected_video_frames, "summary frames"),
++            (
++                int(video_summary["selected_review_bboxes"]),
++                expected_video_targets,
++                "summary targets",
++            ),
++        ):
++            if actual != expected:
++                raise ManualReviewError(
++                    f"{video_name} {name} mismatch: {actual} != {expected}"
++                )
++
++        frame_rows = read_csv_rows(video_root / "review_frames.csv")
++        if len(frame_rows) != expected_video_frames:
++            raise ManualReviewError(f"Frame CSV count mismatch: {video_name}")
++        _unique_map(frame_rows, _frame_key, "video frame")
++        ordered = sorted(frame_rows, key=lambda row: int(row["frame_order"]))
++        if [int(row["frame_order"]) for row in ordered] != list(
++            range(expected_video_frames)
++        ):
++            raise ManualReviewError(f"Non-contiguous frame_order: {video_name}")
++        expected_stems = {str(row["frame_stem"]) for row in frame_rows}
++        for directory in ("images", "masks", "overlays"):
++            stems = {
++                path.stem for path in (video_root / directory).glob("*.png") if path.is_file()
++            }
++            if stems != expected_stems:
++                raise ManualReviewError(
++                    f"{video_name} {directory} stems differ from frame CSV"
++                )
++        context_count = _verify_context_masks(
++            video_root=video_root, frame_rows=frame_rows
++        )
++        total_context_frames += context_count
++        case_stems = {
++            path.name
++            for path in (video_root / "cases").iterdir()
++            if path.is_dir()
++        }
++        target_frame_stems = {
++            str(row["frame_stem"])
++            for row in frame_rows
++            if _as_bool(row.get("review_target", False), "review_target")
++        }
++        if case_stems != target_frame_stems or len(case_stems) != expected_video_target_frames:
++            raise ManualReviewError(f"Target case directory mismatch: {video_name}")
++        video_decisions = read_csv_rows(video_root / "crop_review_decisions.csv")
++        video_decision_map = _unique_map(
++            video_decisions, _target_key, "video crop decision"
++        )
++        expected_video_decisions = {
++            key: row for key, row in decision_map.items() if key[0] == video_name
++        }
++        if set(video_decision_map) != set(expected_video_decisions):
++            raise ManualReviewError(f"Video decision CSV mismatch: {video_name}")
++        for key, video_decision in video_decision_map.items():
++            root_decision = expected_video_decisions[key]
++            for field in (
++                "phase3_decision",
++                "crop_status",
++                "visible_fraction",
++                "review_disposition",
++            ):
++                if str(video_decision[field]) != str(root_decision[field]):
++                    raise ManualReviewError(
++                        f"Video/root decision field mismatch: {key} {field}"
++                    )
++
++        zip_path = video_root / "cvat" / "annotations_segmentation_mask_1_1.zip"
++        zip_validation = validate_cvat_segmentation_mask_zip(
++            zip_path,
++            label_name="femur",
++            images_dir=video_root / "images",
++            reference_masks_dir=video_root / "masks",
++        )
++        if (
++            zip_validation.images != expected_video_frames
++            or zip_validation.masks != expected_video_frames
++            or zip_validation.reference_pixel_mismatches != 0
++        ):
++            raise ManualReviewError(f"CVAT ZIP contract mismatch: {video_name}")
++        total_zip_bytes += int(zip_path.stat().st_size)
++        total_checksum_rows += _verify_checksum_file(
++            video_root,
++            video_root / "checksums.csv",
++            hash_cache=hash_cache,
++        )
++        print(
++            f"  [{number}/{expected_videos}] [OK] {video_name}: "
++            f"frames={expected_video_frames}, targets={expected_video_targets}, "
++            f"zip_bytes={zip_path.stat().st_size}"
++        )
++
++    source_manifest = preflight_root / "source_checksums.csv"
++    expected_source_rows = read_csv_rows(source_manifest)
++    current_source_rows: list[dict[str, Any]] = []
++    print(f"  verifying source SHA-256: {len(expected_source_rows)} files")
++    for row in expected_source_rows:
++        path = Path(str(row["path"])).resolve()
++        if not path.is_file():
++            raise FileNotFoundError(path)
++        current_source_rows.append(
++            {
++                "video_name": row["video_name"],
++                "role": row["role"],
++                "path": str(path),
++                "bytes": int(path.stat().st_size),
++                "sha256": file_sha256(path),
++            }
++        )
++    verify_source_checksum_rows(current_source_rows, source_manifest)
++    print("  [OK] source H5/XML checksums match preflight")
++
++    transfer_rows, transfer_summary = _write_transfer_manifest(
++        review_root=review_root,
++        hash_cache=hash_cache,
++        overwrite=bool(args.overwrite_transfer_manifest),
++    )
++    summary = {
++        "schema_version": VALIDATION_SCHEMA_VERSION,
++        "status": "ok",
++        "videos_checked": expected_videos,
++        "frames_checked": expected_frames,
++        "target_frames_checked": expected_target_frames,
++        "target_bboxes_checked": expected_targets,
++        "context_masks_checked": total_context_frames,
++        "video_checksum_rows": total_checksum_rows,
++        "cvat_zip_bytes": total_zip_bytes,
++        "source_checksum_rows": len(expected_source_rows),
++        "source_files_unchanged": True,
++        "transfer_files": len(transfer_rows),
++        "transfer_bytes": int(transfer_summary["transfer_bytes"]),
++        "transfer_manifest_sha256": transfer_summary["manifest_sha256"],
++        "failure_rows": 0,
++    }
++    write_json(review_root / "package_validation_summary.json", summary)
++    print("\nFull-video package validation summary")
++    print(f"  videos_checked        : {summary['videos_checked']}")
++    print(f"  frames_checked        : {summary['frames_checked']}")
++    print(f"  target_bboxes_checked : {summary['target_bboxes_checked']}")
++    print(f"  context_masks_checked : {summary['context_masks_checked']}")
++    print(f"  video_checksum_rows   : {summary['video_checksum_rows']}")
++    print(f"  source_checksum_rows  : {summary['source_checksum_rows']}")
++    print("  source_files_unchanged: true")
++    print(f"  transfer_files        : {summary['transfer_files']}")
++    print(f"  transfer_bytes        : {summary['transfer_bytes']}")
++    print("Stage 4 Phase 5 full-video package validation passed.")
++    return {"summary": summary, "transfer_rows": transfer_rows}
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description=(
++            "Validate the generated Stage 4 Phase 5 full-video CVAT packages and "
++            "write a Mac transfer manifest."
++        )
++    )
++    parser.add_argument("--review_root", type=Path, required=True)
++    parser.add_argument("--preflight_root", type=Path, required=True)
++    parser.add_argument("--expected_selected_videos", type=int, default=60)
++    parser.add_argument("--expected_review_bboxes", type=int, default=129)
++    parser.add_argument("--expected_auto_accept", type=int, default=31)
++    parser.add_argument("--expected_auto_refine", type=int, default=35)
++    parser.add_argument("--expected_manual_review", type=int, default=63)
++    parser.add_argument("--overwrite_transfer_manifest", action="store_true")
++    return parser
++
++
++def main() -> None:
++    args = build_parser().parse_args()
++    for name in (
++        "expected_selected_videos",
++        "expected_review_bboxes",
++        "expected_auto_accept",
++        "expected_auto_refine",
++        "expected_manual_review",
++    ):
++        if int(getattr(args, name)) < 0:
++            raise SystemExit(f"--{name} must be >= 0")
++    try:
++        run_validation(args)
++    except Exception as exc:
++        raise SystemExit(
++            f"Full-video package validation failed: {type(exc).__name__}: {exc}"
++        ) from exc
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/Stage2to4/pseudo3d/pipelines/export_stage4_phase5_fullvideo_cvat_review.sh b/Stage2to4/pseudo3d/pipelines/export_stage4_phase5_fullvideo_cvat_review.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..84832669597b98b4103f8548f5dd86e074f830a3
+--- /dev/null
++++ b/Stage2to4/pseudo3d/pipelines/export_stage4_phase5_fullvideo_cvat_review.sh
+@@ -0,0 +1,123 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
++REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
++DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
++MANIFEST="${MANIFEST:-${DATASET_ROOT}/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv}"
++
++SOURCE_RUN_NAME="${SOURCE_RUN_NAME:-global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg}"
++AUTO_RUN_NAME="${AUTO_RUN_NAME:-global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1}"
++SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SOURCE_RUN_NAME}}"
++AUTO_RUN_ROOT="${AUTO_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${AUTO_RUN_NAME}}"
++FULLVIDEO_REVIEW_ROOT="${FULLVIDEO_REVIEW_ROOT:-${AUTO_RUN_ROOT}/manual_review_cvat_phase5_fullvideo_v2}"
++PREFLIGHT_ROOT="${PREFLIGHT_ROOT:-${AUTO_RUN_ROOT}/manual_review_cvat_phase5_fullvideo_v2_preflight}"
++
++SOURCE_ANNOTATED_ROOT="${SOURCE_ANNOTATED_ROOT:-${SOURCE_RUN_ROOT}/annotated}"
++AUTO_ANNOTATED_ROOT="${AUTO_ANNOTATED_ROOT:-${AUTO_RUN_ROOT}/annotated}"
++PHASE1_ROOT="${PHASE1_ROOT:-${SOURCE_RUN_ROOT}/contour_teacher_audit_phase1}"
++PHASE3_ROOT="${PHASE3_ROOT:-${SOURCE_RUN_ROOT}/contour_auto_refine_phase3_production_v1_decisions}"
++TEACHER_CONFIG="${TEACHER_CONFIG:-pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml}"
++REFINE_CONFIG="${REFINE_CONFIG:-pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml}"
++MANUAL_CONFIG="${MANUAL_CONFIG:-pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml}"
++
++EXPECTED_VIDEOS="${EXPECTED_VIDEOS:-182}"
++EXPECTED_SELECTED_VIDEOS="${EXPECTED_SELECTED_VIDEOS:-60}"
++EXPECTED_REVIEW_BBOXES="${EXPECTED_REVIEW_BBOXES:-129}"
++EXPECTED_AUTO_ACCEPT="${EXPECTED_AUTO_ACCEPT:-31}"
++EXPECTED_AUTO_REFINE="${EXPECTED_AUTO_REFINE:-35}"
++EXPECTED_MANUAL_REVIEW="${EXPECTED_MANUAL_REVIEW:-63}"
++OVERWRITE="${OVERWRITE:-0}"
++
++if [[ "${OVERWRITE}" != "0" && "${OVERWRITE}" != "1" ]]; then
++  echo "OVERWRITE must be 0 or 1, got: ${OVERWRITE}" >&2
++  exit 1
++fi
++if [[ ! -x "${PYTHON}" ]]; then
++  echo "Python executable not found: ${PYTHON}" >&2
++  exit 1
++fi
++for required_file in "${MANIFEST}" "${TEACHER_CONFIG}" "${REFINE_CONFIG}" "${MANUAL_CONFIG}"; do
++  if [[ ! -f "${required_file}" && ! -f "${REPO_ROOT}/${required_file}" ]]; then
++    echo "Required file not found: ${required_file}" >&2
++    exit 1
++  fi
++done
++for required_dir in "${SOURCE_ANNOTATED_ROOT}" "${AUTO_ANNOTATED_ROOT}" "${PHASE1_ROOT}" "${PHASE3_ROOT}"; do
++  if [[ ! -d "${required_dir}" ]]; then
++    echo "Required directory not found: ${required_dir}" >&2
++    exit 1
++  fi
++done
++for preflight_file in \
++  "${PREFLIGHT_ROOT}/preflight_summary.json" \
++  "${PREFLIGHT_ROOT}/video_summary.csv" \
++  "${PREFLIGHT_ROOT}/target_bboxes.csv" \
++  "${PREFLIGHT_ROOT}/source_checksums.csv"; do
++  if [[ ! -f "${preflight_file}" ]]; then
++    echo "Required Step 3 preflight artifact not found: ${preflight_file}" >&2
++    exit 1
++  fi
++done
++
++overwrite_args=()
++validation_overwrite_args=()
++if [[ "${OVERWRITE}" == "1" ]]; then
++  overwrite_args+=(--overwrite)
++  validation_overwrite_args+=(--overwrite_transfer_manifest)
++fi
++
++cd "${REPO_ROOT}"
++
++echo "Stage 4 Phase 5 full-video CVAT review export"
++echo "  Phase 3 source : ${SOURCE_ANNOTATED_ROOT}"
++echo "  correction base: ${AUTO_ANNOTATED_ROOT}"
++echo "  review root    : ${FULLVIDEO_REVIEW_ROOT}"
++echo "  preflight root : ${PREFLIGHT_ROOT}"
++echo "  selected videos: ${EXPECTED_SELECTED_VIDEOS}"
++echo "  target BBoxes  : ${EXPECTED_REVIEW_BBOXES}"
++
++"${PYTHON}" \
++  pseudo3d/batch/export/batch_export_stage4_manual_review_cvat.py \
++  --manifest "${MANIFEST}" \
++  --annotated_root "${SOURCE_ANNOTATED_ROOT}" \
++  --source_annotated_root "${AUTO_ANNOTATED_ROOT}" \
++  --phase1_audit_root "${PHASE1_ROOT}" \
++  --phase3_root "${PHASE3_ROOT}" \
++  --teacher_config "${TEACHER_CONFIG}" \
++  --refine_config "${REFINE_CONFIG}" \
++  --manual_review_config "${MANUAL_CONFIG}" \
++  --output_root "${FULLVIDEO_REVIEW_ROOT}" \
++  --annotated_glob_template "{video_name}/*bboxrank_v2_nobbox_bg.h5" \
++  --source_annotated_glob_template "{video_name}/*bboxrank_v3_refined_auto_v1.h5" \
++  --review_scope all_phase3 \
++  --include_all_video_frames \
++  --partition_by_video \
++  --expected_videos "${EXPECTED_VIDEOS}" \
++  --expected_selected_videos "${EXPECTED_SELECTED_VIDEOS}" \
++  --expected_review_bboxes "${EXPECTED_REVIEW_BBOXES}" \
++  --expected_auto_accept "${EXPECTED_AUTO_ACCEPT}" \
++  --expected_auto_refine "${EXPECTED_AUTO_REFINE}" \
++  --expected_manual_review "${EXPECTED_MANUAL_REVIEW}" \
++  "${overwrite_args[@]}"
++
++"${PYTHON}" \
++  pseudo3d/analysis/validate_stage4_phase5_fullvideo_cvat_package.py \
++  --review_root "${FULLVIDEO_REVIEW_ROOT}" \
++  --preflight_root "${PREFLIGHT_ROOT}" \
++  --expected_selected_videos "${EXPECTED_SELECTED_VIDEOS}" \
++  --expected_review_bboxes "${EXPECTED_REVIEW_BBOXES}" \
++  --expected_auto_accept "${EXPECTED_AUTO_ACCEPT}" \
++  --expected_auto_refine "${EXPECTED_AUTO_REFINE}" \
++  --expected_manual_review "${EXPECTED_MANUAL_REVIEW}" \
++  "${validation_overwrite_args[@]}"
++
++echo
++echo "Stage 4 Phase 5 full-video export complete."
++echo "  review index : ${FULLVIDEO_REVIEW_ROOT}/review_index.csv"
++echo "  progress     : ${FULLVIDEO_REVIEW_ROOT}/video_progress.csv"
++echo "  crop decisions: ${FULLVIDEO_REVIEW_ROOT}/crop_review_decisions.csv"
++echo "  video tasks  : ${FULLVIDEO_REVIEW_ROOT}/videos"
++echo "  summary      : ${FULLVIDEO_REVIEW_ROOT}/partition_summary.json"
++echo "  validation   : ${FULLVIDEO_REVIEW_ROOT}/package_validation_summary.json"
++echo "  Mac manifest : ${FULLVIDEO_REVIEW_ROOT}/mac_transfer_manifest.csv"
+diff --git a/Stage2to4/pseudo3d/pipelines/preflight_stage4_phase5_fullvideo_cvat_review.sh b/Stage2to4/pseudo3d/pipelines/preflight_stage4_phase5_fullvideo_cvat_review.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..f96103426c2f622a732734d68a3d8d7c7d3f1201
+--- /dev/null
++++ b/Stage2to4/pseudo3d/pipelines/preflight_stage4_phase5_fullvideo_cvat_review.sh
+@@ -0,0 +1,100 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++PYTHON="${PYTHON:-/home/kodaira/anaconda3/envs/dualtrack311/bin/python}"
++REPO_ROOT="${REPO_ROOT:-/mnt/data/3d_projects/models/Stage2to4}"
++DATASET_ROOT="${DATASET_ROOT:-/mnt/data/3d_projects/pseudo3d_dataset}"
++MANIFEST="${MANIFEST:-${DATASET_ROOT}/stage4_sampling_parameter_sweep/260711/manifests/train_manifest.csv}"
++
++SOURCE_RUN_NAME="${SOURCE_RUN_NAME:-global_local_l75_w31_c12_area15_bboxrank_v2_nobbox_bg}"
++AUTO_RUN_NAME="${AUTO_RUN_NAME:-global_local_l75_w31_c12_area15_bboxrank_v3_refined_auto_v1}"
++SOURCE_RUN_ROOT="${SOURCE_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${SOURCE_RUN_NAME}}"
++AUTO_RUN_ROOT="${AUTO_RUN_ROOT:-${DATASET_ROOT}/stage4_training_ablation/260711/${AUTO_RUN_NAME}}"
++PREFLIGHT_ROOT="${PREFLIGHT_ROOT:-${AUTO_RUN_ROOT}/manual_review_cvat_phase5_fullvideo_v2_preflight}"
++
++SOURCE_ANNOTATED_ROOT="${SOURCE_ANNOTATED_ROOT:-${SOURCE_RUN_ROOT}/annotated}"
++AUTO_ANNOTATED_ROOT="${AUTO_ANNOTATED_ROOT:-${AUTO_RUN_ROOT}/annotated}"
++PHASE1_ROOT="${PHASE1_ROOT:-${SOURCE_RUN_ROOT}/contour_teacher_audit_phase1}"
++PHASE3_ROOT="${PHASE3_ROOT:-${SOURCE_RUN_ROOT}/contour_auto_refine_phase3_production_v1_decisions}"
++TEACHER_CONFIG="${TEACHER_CONFIG:-pseudo3d/analysis/configs/stage4_bbox_ranked_teacher_v2.yaml}"
++REFINE_CONFIG="${REFINE_CONFIG:-pseudo3d/analysis/configs/stage4_contour_auto_refine_phase3_production_v1.yaml}"
++MANUAL_CONFIG="${MANUAL_CONFIG:-pseudo3d/analysis/configs/stage4_manual_review_cvat_v1.yaml}"
++
++EXPECTED_VIDEOS="${EXPECTED_VIDEOS:-182}"
++EXPECTED_SELECTED_VIDEOS="${EXPECTED_SELECTED_VIDEOS:-60}"
++EXPECTED_REVIEW_BBOXES="${EXPECTED_REVIEW_BBOXES:-129}"
++EXPECTED_AUTO_ACCEPT="${EXPECTED_AUTO_ACCEPT:-31}"
++EXPECTED_AUTO_REFINE="${EXPECTED_AUTO_REFINE:-35}"
++EXPECTED_MANUAL_REVIEW="${EXPECTED_MANUAL_REVIEW:-63}"
++VERIFY_SOURCE_CHECKSUMS="${VERIFY_SOURCE_CHECKSUMS:-}"
++OVERWRITE="${OVERWRITE:-0}"
++
++if [[ "${OVERWRITE}" != "0" && "${OVERWRITE}" != "1" ]]; then
++  echo "OVERWRITE must be 0 or 1, got: ${OVERWRITE}" >&2
++  exit 1
++fi
++if [[ ! -x "${PYTHON}" ]]; then
++  echo "Python executable not found: ${PYTHON}" >&2
++  exit 1
++fi
++for required_file in "${MANIFEST}" "${TEACHER_CONFIG}" "${REFINE_CONFIG}" "${MANUAL_CONFIG}"; do
++  if [[ ! -f "${required_file}" && ! -f "${REPO_ROOT}/${required_file}" ]]; then
++    echo "Required file not found: ${required_file}" >&2
++    exit 1
++  fi
++done
++for required_dir in "${SOURCE_ANNOTATED_ROOT}" "${AUTO_ANNOTATED_ROOT}" "${PHASE1_ROOT}" "${PHASE3_ROOT}"; do
++  if [[ ! -d "${required_dir}" ]]; then
++    echo "Required directory not found: ${required_dir}" >&2
++    exit 1
++  fi
++done
++if [[ -n "${VERIFY_SOURCE_CHECKSUMS}" && ! -f "${VERIFY_SOURCE_CHECKSUMS}" ]]; then
++  echo "VERIFY_SOURCE_CHECKSUMS not found: ${VERIFY_SOURCE_CHECKSUMS}" >&2
++  exit 1
++fi
++
++optional_args=()
++if [[ "${OVERWRITE}" == "1" ]]; then
++  optional_args+=(--overwrite)
++fi
++if [[ -n "${VERIFY_SOURCE_CHECKSUMS}" ]]; then
++  optional_args+=(--verify_source_checksums "${VERIFY_SOURCE_CHECKSUMS}")
++fi
++
++cd "${REPO_ROOT}"
++
++echo "Stage 4 Phase 5 full-video real-data preflight"
++echo "  Phase 3 source : ${SOURCE_ANNOTATED_ROOT}"
++echo "  correction base: ${AUTO_ANNOTATED_ROOT}"
++echo "  report root    : ${PREFLIGHT_ROOT}"
++echo "  selected videos: ${EXPECTED_SELECTED_VIDEOS}"
++echo "  target BBoxes  : ${EXPECTED_REVIEW_BBOXES}"
++
++"${PYTHON}" \
++  pseudo3d/analysis/preflight_stage4_phase5_fullvideo_cvat_review.py \
++  --manifest "${MANIFEST}" \
++  --annotated_root "${SOURCE_ANNOTATED_ROOT}" \
++  --source_annotated_root "${AUTO_ANNOTATED_ROOT}" \
++  --phase1_audit_root "${PHASE1_ROOT}" \
++  --phase3_root "${PHASE3_ROOT}" \
++  --teacher_config "${TEACHER_CONFIG}" \
++  --refine_config "${REFINE_CONFIG}" \
++  --manual_review_config "${MANUAL_CONFIG}" \
++  --output_root "${PREFLIGHT_ROOT}" \
++  --annotated_glob_template "{video_name}/*bboxrank_v2_nobbox_bg.h5" \
++  --source_annotated_glob_template "{video_name}/*bboxrank_v3_refined_auto_v1.h5" \
++  --expected_videos "${EXPECTED_VIDEOS}" \
++  --expected_selected_videos "${EXPECTED_SELECTED_VIDEOS}" \
++  --expected_review_bboxes "${EXPECTED_REVIEW_BBOXES}" \
++  --expected_auto_accept "${EXPECTED_AUTO_ACCEPT}" \
++  --expected_auto_refine "${EXPECTED_AUTO_REFINE}" \
++  --expected_manual_review "${EXPECTED_MANUAL_REVIEW}" \
++  "${optional_args[@]}"
++
++echo
++echo "Stage 4 Phase 5 full-video preflight complete."
++echo "  summary         : ${PREFLIGHT_ROOT}/preflight_summary.json"
++echo "  video summary   : ${PREFLIGHT_ROOT}/video_summary.csv"
++echo "  target BBoxes   : ${PREFLIGHT_ROOT}/target_bboxes.csv"
++echo "  source checksums: ${PREFLIGHT_ROOT}/source_checksums.csv"
