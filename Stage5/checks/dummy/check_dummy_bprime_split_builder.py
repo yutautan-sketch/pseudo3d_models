@@ -159,6 +159,21 @@ class Fixture:
         path.write_text("\n".join(str(p) for p in paths) + "\n", encoding="utf-8")
         return path
 
+    def _empty_pins(self) -> Path:
+        """A pins file of this fixture's own.
+
+        Without this the tool falls back to the repo's real pins file, so the
+        test would pass or fail depending on whether a split has been sealed
+        in production. A synthetic test must not read production state.
+        """
+        path = self.root / "empty_pins.json"
+        if not path.is_file():
+            path.write_text(
+                json.dumps({"schema": "stage5_split_contract_pins_v1", "pins": {}}, indent=2),
+                encoding="utf-8",
+            )
+        return path
+
     def run(self, *extra: str, out_dir: Path | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(TOOL), "--bootstrap",
@@ -166,6 +181,7 @@ class Fixture:
              "--old_val_list", str(self.val_list),
              "--sanity_list", str(self.sanity_list),
              "--input_audit_json", str(self.audit),
+             "--split_contract_pins", str(self._empty_pins()),
              "--output_dir", str(out_dir or self.out),
              "--internal_test_size", str(NUM_INTERNAL),
              *extra],

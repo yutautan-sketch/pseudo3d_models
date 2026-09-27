@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 import h5py  # noqa: E402
 import numpy as np  # noqa: E402
 
+from stage5.utils.split_identity import file_sha256  # noqa: E402
 from checks.real_h5.audit_stage5_train_core_mm_metadata import read_spacing  # noqa: E402
 
 # ----------------------------------------------------------------------------
@@ -179,6 +180,95 @@ def test_unresolved_videos_are_reported_not_filled_in() -> None:
     )
 
 
+def test_end_to_end_writes_both_records(root: Path) -> None:
+    print("\n[5] the audit runs to completion and writes both records")
+    # The first real run completed the whole audit and then failed at the
+    # JSON write, because h5py hands attributes back as numpy scalars
+    # (raw_width is an int64, not an int). No test reached the write path --
+    # the only end-to-end case asserted a REFUSAL. This one runs it through.
+    import json
+
+    data = root / "data"
+    finals, ids = [], []
+    for index in range(3):
+        ident = f"2025070{index}_12000{index}_{index}"
+        ids.append(ident)
+        inter = write_intermediate(root / "inter" / f"{ident}_pseudo3d.h5")
+        finals.append(write_final(data / f"{ident}{SUFFIX}", inter))
+
+    listing = root / "train_core.txt"
+    listing.write_text("\n".join(str(p) for p in finals) + "\n", encoding="utf-8")
+
+    # A synthetic contract: the tool refuses to read anything without one.
+    from stage5.utils.file_list_mode import list_identity_sha256
+
+    identity = list_identity_sha256(finals)
+    registry = root / "registry.json"
+    registry.write_text(json.dumps({
+        "schema": "stage5_seal_registry_v1",
+        "sealed_video_identities": ["20259999_999999_9"],
+        "sealed_list_identity_sha256": "sealed-list-hash",
+        "sealed_until": "S5-20c",
+    }, indent=2), encoding="utf-8")
+    manifest = root / "manifest.json"
+    manifest.write_text(json.dumps({
+        "schema": "stage5_split_contract_v1",
+        "name": "synthetic",
+        "lists": {
+            "train_core": {"count": len(finals), "identity_sha256": identity, "content_sha256": "c"},
+            "internal_test": {"count": 1, "identity_sha256": "sealed-list-hash", "content_sha256": "c"},
+        },
+        "sealed_splits": ["internal_test"],
+        "seal_registry_required": True,
+        "allows_new_training": True,
+        "allows_directory_mode": False,
+    }, indent=2), encoding="utf-8")
+    pins = root / "pins.json"
+    pins.write_text(json.dumps({
+        "schema": "stage5_split_contract_pins_v1",
+        "pins": {
+            "seal_registry": {"path": str(registry), "expected_sha256": file_sha256(registry)},
+            "synthetic": {"path": str(manifest), "expected_sha256": file_sha256(manifest)},
+        },
+    }, indent=2), encoding="utf-8")
+
+    private, share = root / "mm_private.json", root / "mm_share.json"
+    result = subprocess.run(
+        [sys.executable, str(TOOL),
+         "--train_core_list", str(listing),
+         "--split_manifest", "synthetic", "--split_contract_pins", str(pins),
+         "--intermediate_root", str(root / "inter"),
+         "--private_json", str(private), "--shareable_json", str(share)],
+        capture_output=True, text=True,
+    )
+    check(result.returncode == 0, f"the audit completes (stderr: {result.stderr.strip()[-300:]})")
+    if result.returncode != 0:
+        return
+
+    check(private.is_file() and share.is_file(), "both records are written")
+    priv = json.loads(private.read_text(encoding="utf-8"))
+    shared = json.loads(share.read_text(encoding="utf-8"))
+    check(priv["findings"]["num_train_core"] == 3, "the private record counts the inputs")
+    check(
+        priv["findings"]["crop_inverse_transform_fields_complete"] == 3,
+        "the numpy-typed crop attrs survived serialisation with their values",
+    )
+    check(
+        priv["per_video"][0]["crop_inverse_transform"]["raw_width"] == 640,
+        "an int64 attribute is written as a number, not dropped or stringified",
+    )
+    check(
+        priv["findings"]["spacing_is_placeholder_default"] == 3,
+        "the placeholder spacing is recognised end to end",
+    )
+    check(shared["conclusion"]["mm_scale"] == "UNCONFIRMED", "the shared record says UNCONFIRMED")
+    check("per_video" not in shared, "the shared record carries no per-video detail")
+    check(
+        not re.search(r"[0-9]{8}_[0-9]{6}_[0-9]+", json.dumps(shared)),
+        "and no video identifier",
+    )
+
+
 def main() -> None:
     print("Stage5 S5-16 Step 0: train_core mm metadata synthetic checks")
     with tempfile.TemporaryDirectory() as tmp:
@@ -187,6 +277,7 @@ def main() -> None:
         test_requires_a_contract(root / "contract")
         test_conclusion_is_unconfirmed_not_unavailable()
         test_unresolved_videos_are_reported_not_filled_in()
+        test_end_to_end_writes_both_records(root / "e2e")
     print(f"\nchecks run: {CHECKS}, failures: {len(FAILURES)}")
     if FAILURES:
         for label in FAILURES:

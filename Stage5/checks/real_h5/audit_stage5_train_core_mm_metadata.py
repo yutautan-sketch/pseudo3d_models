@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import h5py  # noqa: E402
+import numpy as np  # noqa: E402
 
 from stage5.utils.file_list_mode import read_file_list  # noqa: E402
 from stage5.utils.split_contract import resolve_active_contract  # noqa: E402
@@ -50,6 +51,27 @@ from checks.real_h5.check_stage5_xy_coordinate_provenance import (  # noqa: E402
 # ----------------------------------------------------------------------------
 
 PLACEHOLDER_SPACING = 1.0
+
+
+def _json_default(value: Any) -> Any:
+    """Coerce the types h5py hands back into JSON-writable ones.
+
+    Attribute values arrive as numpy scalars (`raw_width` is an `int64`, not an
+    `int`) and strings may arrive as bytes. Passing them straight to
+    `json.dumps` raises, which is what happened on the first real run: the
+    whole audit completed and then failed at the write.
+    """
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    raise TypeError(f"{type(value).__name__} is not JSON serializable")
 
 
 def read_final_attrs(path: Path) -> dict[str, Any]:
@@ -214,7 +236,8 @@ def main() -> None:
     }
     Path(args.private_json).parent.mkdir(parents=True, exist_ok=True)
     Path(args.private_json).write_text(
-        json.dumps(private, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(private, indent=2, ensure_ascii=False, default=_json_default) + "\n",
+        encoding="utf-8",
     )
 
     if args.shareable_json:
@@ -229,6 +252,7 @@ def main() -> None:
                 },
                 indent=2,
                 ensure_ascii=False,
+                default=_json_default,
             )
             + "\n",
             encoding="utf-8",

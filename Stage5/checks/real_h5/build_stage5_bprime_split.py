@@ -308,6 +308,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sanity_list", required=True, help="Saved selected_train_files.txt (3 videos)")
     parser.add_argument("--output_dir", required=True, help="New private output directory")
     parser.add_argument(
+        "--split_contract_pins",
+        default=None,
+        help="Pins file the initial-build check consults. Defaults to the repo file; a "
+        "synthetic test points this at its own so it does not depend on production state.",
+    )
+    parser.add_argument(
         "--input_audit_json",
         required=True,
         help="S0-1 audit record fixing each input's expected SHA-256. Required: the inputs cannot "
@@ -341,7 +347,7 @@ def main() -> None:
     # 10.10.1: the initial build is a narrow, explicitly-requested entry, not a
     # switch that turns the guard off. It closes as soon as a registry is
     # approved or already written, so it can never overwrite a confirmed split.
-    assert_bootstrap_allowed(registry_out=registry_path)
+    assert_bootstrap_allowed(registry_out=registry_path, pins_path=args.split_contract_pins)
 
     # The expected hashes come from the S0-1 audit record, not from the inputs
     # themselves: a hash computed here and compared with itself would always

@@ -58,6 +58,18 @@ def check(condition: bool, label: str) -> None:
         print(f"  FAIL: {label}")
 
 
+def empty_pins(root: Path) -> Path:
+    """A pins file local to the test; see Fixture._empty_pins."""
+    path = root / "empty_pins_local.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.is_file():
+        path.write_text(
+            json.dumps({"schema": "stage5_split_contract_pins_v1", "pins": {}}, indent=2),
+            encoding="utf-8",
+        )
+    return path
+
+
 def identity(index: int) -> str:
     return f"2025070{index % 10}_12{index:04d}_{index}"
 
@@ -116,6 +128,21 @@ class Fixture:
         self.num_train = num_train
         self.num_val = num_val
 
+    def _empty_pins(self) -> Path:
+        """A pins file of this fixture's own.
+
+        Without this the tool falls back to the repo's real pins file, so the
+        test would pass or fail depending on whether a split has been sealed
+        in production. A synthetic test must not read production state.
+        """
+        path = self.root / "empty_pins.json"
+        if not path.is_file():
+            path.write_text(
+                json.dumps({"schema": "stage5_split_contract_pins_v1", "pins": {}}, indent=2),
+                encoding="utf-8",
+            )
+        return path
+
     def run(self, *extra: str, out_name: str = "audit") -> subprocess.CompletedProcess:
         audit_out = self.root / f"{out_name}_input_audit.json"
         private = self.root / f"{out_name}_private.json"
@@ -127,6 +154,7 @@ class Fixture:
             "--evaluation_video_id_map", str(self.id_map),
             "--expected_train_count", str(self.num_train),
             "--expected_val_count", str(self.num_val),
+            "--split_contract_pins", str(self._empty_pins()),
             "--audit_out", str(audit_out),
             "--private_json", str(private),
             "--shareable_json", str(self.root / f"{out_name}_share.json"),
@@ -193,6 +221,7 @@ def test_failures_write_nothing(root: Path) -> None:
          "--sanity_list", str(fx2.sanity_list),
          "--expected_train_count", str(fx2.num_train), "--expected_val_count", str(fx2.num_val),
          "--audit_out", str(root / "b" / "no_map.json"),
+         "--split_contract_pins", str(empty_pins(root)),
          "--private_json", str(root / "b" / "no_map_private.json")],
         capture_output=True, text=True,
     )
@@ -218,6 +247,7 @@ def test_failures_write_nothing(root: Path) -> None:
          "--evaluation_video_id_map", str(fx4.id_map), "--allow_sanity_rederivation",
          "--expected_train_count", str(fx4.num_train), "--expected_val_count", str(fx4.num_val),
          "--audit_out", str(root / "d" / "rederive.json"),
+         "--split_contract_pins", str(empty_pins(root)),
          "--private_json", str(root / "d" / "rederive_private.json")],
         capture_output=True, text=True,
     )
