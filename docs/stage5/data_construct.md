@@ -15,6 +15,7 @@
 ├── checkpoint_epoch_0030/
 ├── checkpoint_epoch_0100/
 ├── checkpoint_epoch_0150/
+├── checkpoint_epoch_0200/
 ├── best/
 ├── anonymized_metrics_SHARE_THIS/
 ├── anonymized_metrics_private_DO_NOT_SHARE/
@@ -65,7 +66,13 @@ reference_ply/
 
 ## 各checkpointディレクトリ
 
-`checkpoint_epoch_0030/`、`checkpoint_epoch_0100/`、`checkpoint_epoch_0150/`、`best/`は同じ構造です。
+評価対象のcheckpointは`evaluate_stage5.sh`の`CHECKPOINT_NAMES`で決まり、既定は
+`checkpoint_epoch_0030.pt`、`checkpoint_epoch_0100.pt`、`checkpoint_epoch_0150.pt`、
+`checkpoint_epoch_0200.pt`、`best.pt`です。ディレクトリ名は`.pt`を除いたものになり、
+`last.pt`を評価した場合は`last/`が同じ構造で作られます。epoch数の短いrunなど、
+列挙したcheckpointが1つでも存在しない場合は起動時に停止するため、
+`CHECKPOINT_NAMES`を実在するものだけに絞って指定します。
+(`STRICT_CHECKPOINT`はstate_dictのstrict loadの可否であり、別の設定です。)
 
 ```text
 <checkpoint>/
@@ -78,10 +85,14 @@ reference_ply/
 ├── predictions/
 │   ├── train_sanity/
 │   └── validation/
-└── ply/
-    ├── train_sanity/
-    └── validation/
+├── ply/
+│   ├── train_sanity/
+│   └── validation/
+└── prediction_frames/
 ```
+
+`prediction_frames/`は`evaluate_stage5.sh`では作られません。後述の
+`export_stage5_prediction_frames.sh`を実行した場合だけ追加されます。
 
 `predictions/`には動画ごとの圧縮NPZがあります。
 
@@ -109,6 +120,57 @@ predictions/<split>/<video>.npz
 - `predicted_positive.ply`: `pred_label=1`の点だけを抽出。ignore領域上のpositive予測も含みます
 
 診断色の対応は`diagnostic_ply_legend.json`に記録されます。
+
+## `prediction_frames/`
+
+S5-15で追加した、予測とGTを元のlocal crop frame画像に重ねた可視化です。PLYの点だけでは
+false positiveが解剖構造なのか器具なのかartifactなのか判断できないため、frame画像上で
+確認するためのものです。既存の評価結果だけを読み、学習も推論もCUDAも使いません。
+
+```text
+<checkpoint>/prediction_frames/
+├── train_sanity/
+│   ├── <video>_frame_summary.csv
+│   └── <video>/
+│       ├── frame_00012_fp0431.png
+│       └── ...
+├── validation/
+│   └── ...
+├── summary.csv
+├── manifest.json
+└── DO_NOT_SHARE.txt
+```
+
+- `<video>/*.png`: local crop grayscale frameに診断色を重ねた画像。ファイル名は
+  `frame_<frame_order>_fp<false positive数>.png`
+- `<video>_frame_summary.csv`: frameごとのカテゴリ別点数、選択されたか、選択理由、PNG名
+- `summary.csv`: 動画ごとのカテゴリ別合計と描画frame数
+- `manifest.json`: 入力(評価ディレクトリ、教師H5、中間pseudo3d H5、`predictions/*.npz`)、
+  描画設定、frame選択設定、可視化できなかった動画とその理由
+
+診断色は`ply/`の`diagnostic.ply`と同じ6分類
+(`true_positive`、`false_positive`、`false_negative`、`true_negative`、
+`ignore_predicted_positive`、`ignore_other`)で、同一の関数から色を取ります。
+`true_negative`と`ignore_other`は画面を埋めてしまうため既定では描画しません。
+
+frameはfalse positive数の降順、同数なら`frame_order`の昇順で選ばれ、既定は動画ごとに
+上位10枚です。全frame出力も可能ですが既定ではありません。
+
+`pixel_xy`の座標系である中間pseudo3d H5の`local_encoder_images`を参照するため、
+中間H5やその寸法が解決できない動画は、他動画の寸法を流用せずに
+「可視化できなかった動画」として記録されます。点数の不一致、`pixel_xy`の範囲外、
+画像枚数を超える`frame_order`は、skipせずに実行を停止します。
+
+生成は次の通りです。まず`DRY_RUN=1`で入力解決とCSV/manifestだけを確認できます。
+
+```bash
+DRY_RUN=1 bash /mnt/data/3d_projects/models/Stage5/export_stage5_prediction_frames.sh
+bash /mnt/data/3d_projects/models/Stage5/export_stage5_prediction_frames.sh
+```
+
+**このディレクトリはDO_NOT_SHAREです。** 患者frameそのものが描画され、ファイル名・CSV・
+manifestに実動画名と絶対パスが残ります。共有する場合は既存の`video_alias`規約で
+匿名化し直す必要があります。
 
 ## Metrics
 
@@ -250,8 +312,8 @@ Metrics解析のために共有してよいのは、原則として以下だけ�
 anonymized_metrics_SHARE_THIS/
 ```
 
-以下は点群形状、点単位予測、元ラベル、モデル重み、識別子対応を含むため、Metrics解析の
-目的では共有しません。
+以下は点群形状、点単位予測、元ラベル、モデル重み、識別子対応、患者frame画像を含むため、
+Metrics解析の目的では共有しません。
 
 ```text
 *.h5
@@ -260,5 +322,54 @@ predictions/**/*.npz
 *.pt
 *.pth
 reference_ply/
+prediction_frames/
 anonymized_metrics_private_DO_NOT_SHARE/
+```
+
+## S5-16 Step 0: split・封印成果物の3領域（2026-09-22）
+
+B′分割の成果物は用途とアクセス権の異なる3領域へ分ける。1つのディレクトリにまとめない。
+「通常処理の一時ファイル」と「封印対象の統計」を同じ場所に置くと、権限も後始末も区別できなくなるため。
+
+```text
+A: /mnt/data/3d_projects/stage5_private_work/            # 通常処理用private作業領域
+   stage5_fixed_list_manifest.XXXXXX                     # train_core/validationのパス一覧（一時）
+   teacher_preflight_log.json                            # preflightの観測値・期待値（診断用）
+
+B: /mnt/data/3d_projects/stage5_splits/s5_16_step0_bprime/
+   train_core_144.txt                                    # 非封印
+   validation_18.txt                                     # 旧リストの写し。内容・順序とも不変
+   s5_16_bprime.json                                     # split manifest（hash・件数・仕様）
+   sealed_registry.json                                  # 封印集合の正本
+   stratification_feasibility_SHARE.json                 # FL周辺度数のみ
+   teacher_preflight_expected_162.json                   # 162件用の期待値。DO_NOT_SHARE
+
+C: .../s5_16_step0_bprime/sealed/                        # mode 0700 / ファイル0600
+   internal_test_18.txt
+   stratification_DO_NOT_SHARE.json                      # 候補159件のGT統計・FL値・群
+   allocation_DO_NOT_SHARE.json                          # セル別配分
+   bootstrap_state.json                                  # 入力hash（再開照合用）
+```
+
+- **A**: 通常のtrain_core／validation処理の一時ファイルとログ。実H5パスを含むため共有しない。
+  `train_stage5.sh`の`LIST_MANIFEST`は`/tmp`ではなくここへ作り、既存の`trap ... EXIT`で
+  正常終了・異常終了のいずれでも削除する。internal_test情報は入らないため、封印領域と同じ場所にしない。
+- **B**: 分割の成果物。共有してよいのは件数・hash・契約検査の成否まで。
+  `teacher_preflight_expected_162.json`は共有しない（既にgitにある180件の定数との差から、
+  封印18動画のQC統計が得られるため）。
+- **C**: internal_test情報を含む成果物。S5-20cまで封印する。
+  中間生成物は最初からここへ書き、`/tmp`や作業ディレクトリを経由して移動しない。
+
+封印の担保範囲と限界は[Step 0報告書](s5-16/stage5_step0_report_to_policy_chat.md)10.5・11.4を参照する。
+権限値の設定とsealedフラグの保存だけでは封印は成立せず、コードguard・出力境界・運用の3層で構成する。
+元H5は移動・改名・権限変更をしないため、ファイルシステム上はinternal_testの元データへ到達可能である。
+
+### 共有時の境界（S5-16 Step 0の追加分）
+
+上記の共有禁止リストに次を加える。
+
+```text
+sealed/                                   # 領域C全体
+teacher_preflight_expected_*.json         # 集合依存の期待値・観測値
+stage5_private_work/                      # 領域A全体
 ```

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from stage5.utils.file_list_mode import list_content_sha256, list_identity_sha256, read_file_list  # noqa: E402
+from stage5.utils.split_contract import resolve_active_contract  # noqa: E402
 
 # ----------------------------------------------------------------------------
 # S5-15 P3: the per-run manifest the policy chat requires at launch.
@@ -127,10 +128,29 @@ def sha256_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+
+_CONTRACT_ARGS: dict[str, Any] = {}
+
+
+def _contract_for(label: str):
+    """The active contract, resolved once from the CLI arguments."""
+    if "resolved" not in _CONTRACT_ARGS:
+        _CONTRACT_ARGS["resolved"] = resolve_active_contract(
+            manifest_key=_CONTRACT_ARGS.get("split_manifest"),
+            pins_path=_CONTRACT_ARGS.get("split_contract_pins"),
+            coverage_path=_CONTRACT_ARGS.get("artifact_coverage"),
+        )
+    return _CONTRACT_ARGS["resolved"]
+
+
 def collect_file_list(path: str | Path | None, *, label: str) -> dict[str, Any]:
     if not path:
         return {"path": None}
     entries = read_file_list(path, label=label)
+
+    # S5-16 Step 0: a manifest must not vouch for a list containing sealed
+    # videos, so the contract is consulted before the entries are fingerprinted.
+    _contract_for(label).assert_paths_allowed(entries, purpose=f"{label} run-manifest inputs")
     return {
         "path": str(path),
         "count": len(entries),
@@ -187,6 +207,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pointnext_norm", default=None)
     parser.add_argument("--pointnext_norm_groups", type=int, default=None)
     parser.add_argument("--init_checkpoint", default=None)
+    parser.add_argument(
+        "--split_manifest",
+        default=None,
+        help="Name of an APPROVED pin in stage5/config/split_contract_pins.json (not a path). "
+        "Falls back to $STAGE5_SPLIT_MANIFEST; absent or unapproved stops the run.",
+    )
+    parser.add_argument("--split_contract_pins", default=None)
+    parser.add_argument("--artifact_coverage", default=None)
     parser.add_argument("--train_list", default=None)
     parser.add_argument("--val_list", default=None)
     parser.add_argument("--command", default=None, help="Resolved launch command")
@@ -198,6 +226,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    _CONTRACT_ARGS.update(
+        {
+            "split_manifest": args.split_manifest,
+            "split_contract_pins": args.split_contract_pins,
+            "artifact_coverage": args.artifact_coverage,
+        }
+    )
     manifest_dir = Path(args.manifest_dir)
     manifest_dir.mkdir(parents=True, exist_ok=True)
 

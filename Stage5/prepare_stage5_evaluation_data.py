@@ -19,6 +19,7 @@ import h5py
 import numpy as np
 
 from stage5.utils.visualization_export import write_probability_ply
+from stage5.utils.split_contract import resolve_active_contract
 
 
 DEFAULT_FIXED_TRAIN_VIDEO = "20250626_124212_7300"
@@ -203,6 +204,15 @@ def prepare(args: argparse.Namespace) -> None:
     for path in (*train_paths, *val_paths):
         if not path.is_file():
             raise FileNotFoundError(f"Evaluation H5 not found: {path}")
+    # S5-16 Step 0: checked before any H5 or reference PLY is read.
+    contract = resolve_active_contract(
+        manifest_key=args.split_manifest,
+        pins_path=args.split_contract_pins,
+        coverage_path=args.artifact_coverage,
+    )
+    contract.assert_paths_allowed(train_paths, purpose="evaluation-data train inputs")
+    contract.assert_paths_allowed(val_paths, purpose="evaluation-data validation inputs")
+
     overlap = set(train_paths) & set(val_paths)
     if overlap:
         raise ValueError(f"Train and validation lists overlap: {sorted(overlap)[:3]}")
@@ -300,6 +310,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Select Stage5 evaluation data and collect corresponding reference PLY files"
     )
+    parser.add_argument(
+        "--split_manifest",
+        default=None,
+        help="Name of an APPROVED pin in stage5/config/split_contract_pins.json (not a path). "
+        "Falls back to $STAGE5_SPLIT_MANIFEST; absent or unapproved stops the run.",
+    )
+    parser.add_argument("--split_contract_pins", default=None)
+    parser.add_argument("--artifact_coverage", default=None)
     parser.add_argument("--train_list", required=True)
     parser.add_argument("--val_list", required=True)
     parser.add_argument("--raw_reference_ply_dir", required=True)

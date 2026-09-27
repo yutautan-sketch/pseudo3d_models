@@ -93,6 +93,31 @@ list_summary="$("${PYTHON}" "${SCRIPT_DIR}/stage5/utils/file_list_mode.py" \
   --expected_train_sha256 "${EXPECTED_TRAIN_LIST_SHA256}" \
   --expected_val_sha256 "${EXPECTED_VAL_LIST_SHA256}")"
 
+# ---------------------------------------------------------------------------
+# S5-16 Step 0 seal contract (report 10.2).
+#
+# This launcher reproduces an S5-15 condition, and the old 162-video train list
+# still names the videos that are now sealed. A legacy manifest does NOT unseal
+# them: the seal registry is consulted independently and denies first, so any
+# target intersecting the seal stops here -- for evaluation and inference too,
+# not only training. Full reproduction of the old condition is given up rather
+# than lifting the seal.
+#
+# SPLIT_MANIFEST names an APPROVED PIN. Leaving it empty stops the launcher; it
+# never means "unrestricted".
+# ---------------------------------------------------------------------------
+SPLIT_MANIFEST="${SPLIT_MANIFEST:-${STAGE5_SPLIT_MANIFEST:-legacy_s5_15}}"
+SPLIT_CONTRACT_PINS="${SPLIT_CONTRACT_PINS:-}"
+legacy_guard_args=(assert --split_manifest "${SPLIT_MANIFEST}"
+  --purpose "S5-15 reproduction inputs"
+  --paths_from "${TRAIN_LIST}" --paths_from "${VAL_LIST}")
+if [[ -n "${SPLIT_CONTRACT_PINS}" ]]; then
+  legacy_guard_args+=(--pins "${SPLIT_CONTRACT_PINS}")
+fi
+"${PYTHON}" "${SCRIPT_DIR}/stage5/utils/split_contract.py" "${legacy_guard_args[@]}"
+export SPLIT_MANIFEST SPLIT_CONTRACT_PINS
+
+
 if [[ -d "${OUTPUT_DIR}" ]] && [[ -n "$(find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   echo "Output directory already exists and is not empty: ${OUTPUT_DIR}" >&2
   echo "Refusing to mix runs. Pick a different EX_DATE, or move the existing run aside." >&2
@@ -171,8 +196,10 @@ if [[ "${CONFIRM_TRAINING}" != "1" ]]; then
   echo "Dry run: training was NOT started."
   echo "Re-run with CONFIRM_TRAINING=1 once this long run has been approved."
   echo
-  echo "After epoch ${SAVE_EVERY} completes, verify the effective settings and periodic saving with:"
-  echo "  RUN_DIR=${OUTPUT_DIR} bash checks/real_h5/check_stage5_effective_run_config.sh"
+  echo "After epoch ${SAVE_EVERY} completes, the effective settings and periodic saving were"
+  echo "previously verified with check_stage5_effective_run_config.sh. That checker is NOT"
+  echo "connected to the split contract and is out of use while internal_test is sealed"
+  echo "(report 11.7.2); the command is deliberately not suggested here any more."
   exit 0
 fi
 

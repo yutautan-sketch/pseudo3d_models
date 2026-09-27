@@ -31,6 +31,7 @@ from stage5.utils.visualization_export import (
     write_probability_ply,
     write_selected_probability_ply,
 )
+from stage5.utils.split_contract import resolve_active_contract
 
 
 DEFAULT_FIXED_TRAIN_VIDEO = "20250626_124212_7300"
@@ -371,6 +372,17 @@ def evaluate(args: argparse.Namespace) -> None:
     for path in (*train_paths, *val_paths):
         if not path.is_file():
             raise FileNotFoundError(f"Evaluation H5 not found: {path}")
+    # S5-16 Step 0: refuse sealed videos before the first H5 is opened. The
+    # lists usually come from the training run's own resolved output, but they
+    # are checked here too rather than trusted second hand.
+    contract = resolve_active_contract(
+        manifest_key=args.split_manifest,
+        pins_path=args.split_contract_pins,
+        coverage_path=args.artifact_coverage,
+    )
+    contract.assert_paths_allowed(train_paths, purpose="evaluation train-sanity inputs")
+    contract.assert_paths_allowed(val_paths, purpose="evaluation validation inputs")
+
     overlap = set(train_paths) & set(val_paths)
     if overlap:
         raise ValueError(f"Train and validation lists overlap: {sorted(overlap)[:3]}")
@@ -543,6 +555,14 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate Stage5 checkpoints on fixed train sanity and full validation splits"
     )
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument(
+        "--split_manifest",
+        default=None,
+        help="Name of an APPROVED pin in stage5/config/split_contract_pins.json (not a path). "
+        "Falls back to $STAGE5_SPLIT_MANIFEST; absent or unapproved stops the run.",
+    )
+    parser.add_argument("--split_contract_pins", default=None)
+    parser.add_argument("--artifact_coverage", default=None)
     parser.add_argument("--train_list", default=None)
     parser.add_argument("--val_list", default=None)
     parser.add_argument(

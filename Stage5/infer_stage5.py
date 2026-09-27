@@ -27,6 +27,7 @@ from stage5.utils.feature_normalization import (
 from stage5.utils.h5_io import copy_h5_group, load_pointcloud_for_inference
 from stage5.utils.frame_windows import generate_frame_order_windows, point_indices_for_window
 from stage5.utils.visualization_export import write_probability_ply, write_selected_probability_ply
+from stage5.utils.split_contract import resolve_active_contract
 
 
 DEFAULT_FEATURES = ("intensity", "confidence")
@@ -328,6 +329,15 @@ def infer(args: argparse.Namespace) -> None:
     if normalize_points is None:
         normalize_points = not bool(config.get("no_normalize_points", False))
 
+    # S5-16 Step 0: a single --input_h5 is the most direct way into a sealed
+    # video, so it is checked before the file is read.
+    contract = resolve_active_contract(
+        manifest_key=args.split_manifest,
+        pins_path=args.split_contract_pins,
+        coverage_path=args.artifact_coverage,
+    )
+    contract.assert_paths_allowed([args.input_h5], purpose="inference input")
+
     data = load_pointcloud_for_inference(args.input_h5)
     raw_points = data["points"].astype(np.float32)
     points = normalize_xyz(raw_points) if normalize_points else raw_points
@@ -433,6 +443,14 @@ def infer(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Stage 5 pseudo-3D femur point-cloud inference")
     parser.add_argument("--input_h5", required=True, help="Annotated or unannotated point-cloud H5")
+    parser.add_argument(
+        "--split_manifest",
+        default=None,
+        help="Name of an APPROVED pin in stage5/config/split_contract_pins.json (not a path). "
+        "Falls back to $STAGE5_SPLIT_MANIFEST; absent or unapproved stops the run.",
+    )
+    parser.add_argument("--split_contract_pins", default=None)
+    parser.add_argument("--artifact_coverage", default=None)
     parser.add_argument("--checkpoint", required=True, help="Stage5 checkpoint .pt")
     parser.add_argument("--output_h5", required=True, help="Output H5 with prediction group")
     parser.add_argument("--output_ply", default=None, help="Optional probability-colored PLY output")

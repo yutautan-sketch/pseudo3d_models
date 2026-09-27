@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from stage5.utils.file_list_mode import read_file_list  # noqa: E402
+from stage5.utils.split_contract import resolve_active_contract  # noqa: E402
 from stage5.utils.rotation_augmentation import (  # noqa: E402
     MODE_NONE,
     MODE_RANDOM_Z_ROTATION,
@@ -441,6 +442,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--stage", choices=["b", "c"], required=True)
     parser.add_argument("--checkpoint", default=None, help="Initialization checkpoint")
+    parser.add_argument(
+        "--split_manifest",
+        default=None,
+        help="Name of an APPROVED pin in stage5/config/split_contract_pins.json (not a path). "
+        "Falls back to $STAGE5_SPLIT_MANIFEST; absent or unapproved stops the run.",
+    )
+    parser.add_argument("--split_contract_pins", default=None)
+    parser.add_argument("--artifact_coverage", default=None)
     parser.add_argument("--train_list", default=None)
     parser.add_argument("--val_list", default=None)
     parser.add_argument("--num_train_videos", type=int, default=DEFAULT_NUM_TRAIN_VIDEOS)
@@ -480,12 +489,22 @@ def main() -> None:
         if not args.train_list or not args.val_list:
             print("FAIL: stage c needs --train_list and --val_list", file=sys.stderr)
             sys.exit(2)
-        train_paths = select_subset(
-            read_file_list(args.train_list, label="train"), args.num_train_videos, label="train"
+        all_train = read_file_list(args.train_list, label="train")
+        all_val = read_file_list(args.val_list, label="val")
+
+        # S5-16 Step 0: the whole list is checked, not just the subset actually
+        # loaded -- a sealed video that happens to fall outside the subset this
+        # time is still a sealed video in the list this preflight is vouching for.
+        contract = resolve_active_contract(
+            manifest_key=args.split_manifest,
+            pins_path=args.split_contract_pins,
+            coverage_path=args.artifact_coverage,
         )
-        val_paths = select_subset(
-            read_file_list(args.val_list, label="val"), args.num_val_videos, label="val"
-        )
+        contract.assert_paths_allowed(all_train, purpose="GPU preflight train inputs")
+        contract.assert_paths_allowed(all_val, purpose="GPU preflight validation inputs")
+
+        train_paths = select_subset(all_train, args.num_train_videos, label="train")
+        val_paths = select_subset(all_val, args.num_val_videos, label="val")
         result = run_stage_c(
             train_paths=train_paths,
             val_paths=val_paths,

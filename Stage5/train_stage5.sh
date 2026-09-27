@@ -83,6 +83,25 @@ MAX_VAL_FILES=0
 TRAIN_LIST="${TRAIN_LIST:-}"
 VAL_LIST="${VAL_LIST:-}"
 
+# S5-16 Step 0 seal contract (report 10.2-10.6).
+# SPLIT_MANIFEST names an APPROVED PIN, never a path: a run cannot be aimed at
+# an arbitrary file, and an unapproved manifest has no name to give. Leaving it
+# empty stops the run -- it never means "unrestricted".
+SPLIT_MANIFEST="${SPLIT_MANIFEST:-${STAGE5_SPLIT_MANIFEST:-}}"
+SPLIT_CONTRACT_PINS="${SPLIT_CONTRACT_PINS:-}"
+ARTIFACT_COVERAGE="${ARTIFACT_COVERAGE:-}"
+PRIVATE_WORK_DIR="${PRIVATE_WORK_DIR:-/mnt/data/3d_projects/stage5_private_work}"
+# Set-dependent teacher expectations live in a pinned private file rather than
+# as literals here: publishing the 162-file values next to the 180-file values
+# already in git would give the sealed 18 videos' QC totals by subtraction
+# (report 10.6). Empty keeps the historical in-script values.
+TEACHER_EXPECTED_JSON="${TEACHER_EXPECTED_JSON:-}"
+# Write the observed totals for a new target set instead of comparing. Used
+# once, by the approved Step 0 工程5, to create the baseline for later change
+# detection -- which is not the same as verifying teacher quality.
+EMIT_TEACHER_EXPECTED="${EMIT_TEACHER_EXPECTED:-}"
+PREFLIGHT_PRIVATE_LOG="${PREFLIGHT_PRIVATE_LOG:-}"
+
 # Emits the train_stage5.py arguments selecting the input source, one per line.
 # Kept as a function so checks/dummy/check_dummy_fixed_list_mode.sh can extract
 # and exercise it without running any training.
@@ -265,7 +284,12 @@ if [[ -n "${TRAIN_LIST}" || -n "${VAL_LIST}" ]]; then
     echo "TRAIN_LIST and VAL_LIST must be set together for fixed-list mode (no directory-split fallback)." >&2
     exit 1
   fi
-  LIST_MANIFEST="$(mktemp "${TMPDIR:-/tmp}/stage5_fixed_list_manifest.XXXXXX")"
+  # Report 10.5: this manifest holds real H5 paths, so it is written to the
+  # private work area, not /tmp. That area is for ordinary train_core and
+  # validation processing and is kept separate from the sealed area, which
+  # holds internal_test material and has its own access rules.
+  mkdir -p "${PRIVATE_WORK_DIR}"
+  LIST_MANIFEST="$(mktemp "${PRIVATE_WORK_DIR}/stage5_fixed_list_manifest.XXXXXX")"
   trap 'rm -f "${LIST_MANIFEST}"' EXIT
   "${PYTHON}" "${SCRIPT_DIR}/stage5/utils/file_list_mode.py" \
     --train_list "${TRAIN_LIST}" \
@@ -298,6 +322,35 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# S5-16 Step 0 seal contract.
+#
+# This runs BEFORE the teacher preflight below, because that preflight opens
+# every H5 in LIST_MANIFEST. A guard placed after it would be reading sealed
+# videos to decide whether it may read sealed videos.
+#
+# The seal registry is resolved independently of the manifest and denies first,
+# so a legacy manifest cannot reach a sealed video either.
+# ---------------------------------------------------------------------------
+split_contract_args=(assert --purpose "training preflight inputs" --require_new_training)
+if [[ -n "${SPLIT_MANIFEST}" ]]; then
+  split_contract_args+=(--split_manifest "${SPLIT_MANIFEST}")
+fi
+if [[ -n "${SPLIT_CONTRACT_PINS}" ]]; then
+  split_contract_args+=(--pins "${SPLIT_CONTRACT_PINS}")
+fi
+if [[ -n "${ARTIFACT_COVERAGE}" ]]; then
+  split_contract_args+=(--coverage "${ARTIFACT_COVERAGE}")
+fi
+if [[ -n "${LIST_MANIFEST}" ]]; then
+  split_contract_args+=(--paths_from "${LIST_MANIFEST}")
+else
+  # A directory scan has no ordered contract to check, so it is refused rather
+  # than sampled; the contract decides, not this script.
+  split_contract_args+=(--require_directory_mode)
+fi
+"${PYTHON}" "${SCRIPT_DIR}/stage5/utils/split_contract.py" "${split_contract_args[@]}"
+
 "${PYTHON}" - \
   "${INPUT_DIR}" \
   "${H5_PATTERN}" \
@@ -315,7 +368,10 @@ fi
   "${EXPECTED_CROP_REMOVED_IGNORE_POINTS}" \
   "${EXPECTED_CROP_REMOVED_BBOX_ROWS}" \
   "${EXPECTED_EXCLUDED_VIDEOS}" \
-  "${LIST_MANIFEST}" <<'PY'
+  "${LIST_MANIFEST}" \
+  "${TEACHER_EXPECTED_JSON}" \
+  "${EMIT_TEACHER_EXPECTED}" \
+  "${PREFLIGHT_PRIVATE_LOG}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -341,6 +397,42 @@ expected_excluded_videos = {
     value.strip() for value in sys.argv[16].split(",") if value.strip()
 }
 list_manifest = sys.argv[17] if len(sys.argv) > 17 else ""
+teacher_expected_json = sys.argv[18] if len(sys.argv) > 18 else ""
+emit_teacher_expected = sys.argv[19] if len(sys.argv) > 19 else ""
+preflight_private_log = sys.argv[20] if len(sys.argv) > 20 else ""
+
+import json as _json
+from pathlib import Path as _Path
+
+# Report 10.6: the set-dependent expectations come from a pinned private file
+# when one is given. They are never recomputed on the fly to make the check
+# pass -- that would turn a change detector into a rubber stamp.
+if teacher_expected_json:
+    _expected_payload = _json.loads(_Path(teacher_expected_json).read_text(encoding="utf-8"))
+    _bound = _expected_payload.get("bound_to", {})
+    _values = _expected_payload.get("expected", {})
+    expected = int(_values.get("input_files", expected))
+    expected_cvat_videos = int(_values.get("cvat_videos", expected_cvat_videos))
+    expected_cvat_frames = int(_values.get("cvat_frames", expected_cvat_frames))
+    expected_invalidated_frames = int(_values.get("invalidated_frames", expected_invalidated_frames))
+    expected_invalidated_videos = int(_values.get("invalidated_videos", expected_invalidated_videos))
+    expected_removed_positive = int(_values.get("removed_positive", expected_removed_positive))
+    expected_removed_bbox_rows = int(_values.get("removed_bbox_rows", expected_removed_bbox_rows))
+    expected_crop_invalidated_frames = int(
+        _values.get("crop_invalidated_frames", expected_crop_invalidated_frames)
+    )
+    expected_crop_invalidated_videos = int(
+        _values.get("crop_invalidated_videos", expected_crop_invalidated_videos)
+    )
+    expected_crop_removed_positive = int(
+        _values.get("crop_removed_positive", expected_crop_removed_positive)
+    )
+    expected_crop_removed_ignore = int(
+        _values.get("crop_removed_ignore", expected_crop_removed_ignore)
+    )
+    expected_crop_removed_bbox_rows = int(
+        _values.get("crop_removed_bbox_rows", expected_crop_removed_bbox_rows)
+    )
 if list_manifest:
     # Fixed-list mode: inspect the listed files themselves, so the preflight and
     # the training run can never look at different file sets.
@@ -600,21 +692,86 @@ expected_counts = {
         expected_crop_removed_bbox_rows,
     ),
 }
-for name, (actual, expected_value) in expected_counts.items():
-    if actual != expected_value:
-        raise SystemExit(f"v7 {name} mismatch: {actual} != {expected_value}")
-print(
-    "Stage 5 teacher v7 input preflight passed: "
-    f"files={len(paths)}, videos={len(videos)}, "
-    f"cvat_videos={cvat_videos}, cvat_frames={cvat_frames}, "
-    f"invalidated_videos={invalidated_videos}, "
-    f"invalidated_frames={invalidated_frames}, "
-    f"removed_positive={removed_positive}, removed_bbox_rows={removed_bbox_rows}, "
-    f"crop_invalidated_videos={crop_invalidated_videos}, "
-    f"crop_invalidated_frames={crop_invalidated_frames}, "
-    f"crop_removed_ignore={crop_removed_ignore}, "
-    f"crop_removed_bbox_rows={crop_removed_bbox_rows}"
-)
+# ---------------------------------------------------------------------------
+# Report 10.10.3: the QC totals are withheld on success AND on failure.
+#
+# The 180-file constants are already in this script's history, so printing the
+# 162-file observations or expectations anywhere shareable would hand over the
+# sealed 18 videos' QC statistics by subtraction. Shared output therefore
+# carries the stage name, the permitted counts and pass/fail only; the numbers
+# a human needs to diagnose a mismatch go to the private log.
+#
+# "no real paths in the output" and "no statistics in the output" are two
+# different properties, and this addresses the second one.
+# ---------------------------------------------------------------------------
+def _write_private(payload):
+    if not preflight_private_log:
+        return
+    log_path = _Path(preflight_private_log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(_json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+observed = {name: int(actual) for name, (actual, _expected) in expected_counts.items()}
+observed["input_files"] = len(paths)
+observed["videos"] = len(videos)
+
+if emit_teacher_expected:
+    # One-time baseline creation for a new target set. It does NOT assert the
+    # teacher quality of that set; passing the checks above and fixing these
+    # expectations are recorded as two separate things.
+    out_path = _Path(emit_teacher_expected)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        _json.dumps(
+            {
+                "schema": "stage5_teacher_preflight_expected_v1",
+                "note": (
+                    "Baseline for later change detection, observed on the listed target set. "
+                    "DO_NOT_SHARE: these values and the in-script 180-file constants differ by "
+                    "the sealed videos' contribution."
+                ),
+                "teacher": expected_teacher,
+                "expected": observed,
+                "bound_to": {"list_manifest": list_manifest},
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_private({"mode": "emit", "observed": observed})
+    print(
+        "Stage 5 teacher v7 preflight: observed totals written for the target set "
+        f"(files={len(paths)}); values withheld from shared output."
+    )
+else:
+    failed = [
+        name for name, (actual, expected_value) in expected_counts.items() if actual != expected_value
+    ]
+    if failed or len(paths) != expected:
+        _write_private(
+            {
+                "mode": "compare",
+                "observed": observed,
+                "expected": {name: int(exp) for name, (_a, exp) in expected_counts.items()},
+                "failed": failed,
+                "expected_input_files": expected,
+            }
+        )
+        raise SystemExit(
+            "Stage 5 teacher v7 input preflight failed. Mismatched check(s): "
+            + ", ".join(failed or ["input_files"])
+            + ". Observed and expected values are withheld from this output; see the private "
+            "preflight log (PREFLIGHT_PRIVATE_LOG) for the numbers."
+        )
+    _write_private({"mode": "compare", "observed": observed, "result": "passed"})
+    print(
+        "Stage 5 teacher v7 input preflight passed: "
+        f"files={len(paths)}, videos={len(videos)}. "
+        "QC totals are withheld from shared output (report 10.10.3)."
+    )
 PY
 
 if [[ "${PREFLIGHT_ONLY}" == "1" ]]; then

@@ -69,6 +69,24 @@ EVALUATION_DATA_DIR="${OUTPUT_ROOT}/evaluation_data"
 REFERENCE_OUTPUT_DIR="${OUTPUT_ROOT}/reference_ply"
 SELECTED_TRAIN_LIST="${EVALUATION_DATA_DIR}/selected_train_files.txt"
 
+# S5-16 Step 0 seal contract (report 10.4). SPLIT_MANIFEST names an APPROVED
+# PIN, not a path. Leaving it empty stops the run; it never means
+# "unrestricted". The seal registry is consulted independently of the manifest
+# and denies first, so no manifest can reach a sealed video.
+SPLIT_MANIFEST="${SPLIT_MANIFEST:-${STAGE5_SPLIT_MANIFEST:-}}"
+SPLIT_CONTRACT_PINS="${SPLIT_CONTRACT_PINS:-}"
+ARTIFACT_COVERAGE="${ARTIFACT_COVERAGE:-}"
+split_contract_cli_args=()
+if [[ -n "${SPLIT_MANIFEST}" ]]; then
+  split_contract_cli_args+=(--split_manifest "${SPLIT_MANIFEST}")
+fi
+if [[ -n "${SPLIT_CONTRACT_PINS}" ]]; then
+  split_contract_cli_args+=(--split_contract_pins "${SPLIT_CONTRACT_PINS}")
+fi
+if [[ -n "${ARTIFACT_COVERAGE}" ]]; then
+  split_contract_cli_args+=(--artifact_coverage "${ARTIFACT_COVERAGE}")
+fi
+
 if [[ ! -d "${RUN_DIR}" ]]; then
   echo "Training run directory not found: ${RUN_DIR}" >&2
   exit 1
@@ -120,6 +138,7 @@ echo "  ann reference PLY: ${ANNOTATED_REFERENCE_PLY_DIR}"
 "${PYTHON}" "${SCRIPT_DIR}/prepare_stage5_evaluation_data.py" \
   --train_list "${TRAIN_LIST}" \
   --val_list "${VAL_LIST}" \
+  "${split_contract_cli_args[@]}" \
   --raw_reference_ply_dir "${RAW_REFERENCE_PLY_DIR}" \
   --annotated_reference_ply_dir "${ANNOTATED_REFERENCE_PLY_DIR}" \
   --output_dir "${EVALUATION_DATA_DIR}" \
@@ -141,6 +160,7 @@ for checkpoint_name in "${CHECKPOINT_ARRAY[@]}"; do
     --checkpoint "${checkpoint}"
     --train_list "${TRAIN_LIST}"
     --val_list "${VAL_LIST}"
+    "${split_contract_cli_args[@]}"
     --selected_train_list "${SELECTED_TRAIN_LIST}"
     --output_dir "${output_dir}"
     --fixed_train_video "${FIXED_TRAIN_VIDEO}"
@@ -169,6 +189,20 @@ for evaluation_dir in "${EVALUATION_DIRS[@]}"; do
   summary_cmd+=(--evaluation_dir "${evaluation_dir}")
 done
 "${summary_cmd[@]}"
+
+# S5-16 Step 0 (report 11.7.2): export_anonymized_stage5_metrics.py is NOT
+# connected to the seal contract yet -- it reads metrics CSVs and the video ID
+# map, whose video membership cannot be read off a file name. While a seal
+# contract is in force this launcher must not run it, and that must not depend
+# on a default value someone can leave set: an explicit refusal is raised here
+# instead. Re-enable only after the route is guarded and its refusal-before-read
+# is covered by a synthetic test.
+if [[ "${EXPORT_ANONYMIZED_METRICS}" == "1" && -n "${SPLIT_MANIFEST}" ]]; then
+  echo "Refusing to run export_anonymized_stage5_metrics.py: it is not connected to the" >&2
+  echo "split contract and is out of use while internal_test is sealed (report 11.7.2)." >&2
+  echo "Set EXPORT_ANONYMIZED_METRICS=0 to finish the evaluation without it." >&2
+  exit 2
+fi
 
 if [[ "${EXPORT_ANONYMIZED_METRICS}" == "1" ]]; then
   "${PYTHON}" "${SCRIPT_DIR}/export_anonymized_stage5_metrics.py" \

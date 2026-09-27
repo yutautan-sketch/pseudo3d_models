@@ -22,6 +22,11 @@ from stage5.datasets import Pseudo3DPointCloudDataset, pad_point_window_collate
 from stage5.models import build_stage5_model
 from stage5.models.norm_layers import SUPPORTED_POINTNEXT_NORMS
 from stage5.training import SegmentationMetricAccumulator, build_loss
+from stage5.utils.class_weights import (
+    compute_class_counts_from_h5,
+    pointnext_class_weights_from_counts,
+)
+from stage5.utils.split_contract import resolve_active_contract
 from stage5.utils.h5_io import load_stage5_pointcloud_h5
 from stage5.utils.label_policy import DEFAULT_LABEL_POLICY, SUPPORTED_LABEL_POLICIES, summarize_label_policy_for_arrays
 from stage5.utils.rotation_augmentation import (
@@ -48,62 +53,6 @@ def is_auto_class_weight(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"auto", "pointnext_auto"}
-
-
-def compute_class_counts_from_h5(
-    h5_paths: Iterable[Path],
-    *,
-    num_classes: int,
-    ignore_index: int,
-) -> np.ndarray:
-    counts = np.zeros((int(num_classes),), dtype=np.int64)
-    for h5_path in h5_paths:
-        with h5py.File(h5_path, "r") as f:
-            if "annotation" not in f:
-                raise KeyError(f"'annotation' group not found in {h5_path}")
-            annotation = f["annotation"]
-            if "point_label" not in annotation:
-                raise KeyError(f"annotation/point_label not found in {h5_path}")
-            labels = annotation["point_label"][:].astype(np.int64)
-            if "valid_mask" in annotation:
-                valid_mask = annotation["valid_mask"][:].astype(bool)
-            else:
-                valid_mask = np.ones_like(labels, dtype=bool)
-
-        if labels.shape != valid_mask.shape:
-            raise ValueError(
-                f"annotation length mismatch in {h5_path}: "
-                f"point_label={labels.shape}, valid_mask={valid_mask.shape}"
-            )
-
-        mask = valid_mask & (labels != int(ignore_index))
-        selected = labels[mask]
-        if selected.size == 0:
-            continue
-        invalid = selected[(selected < 0) | (selected >= int(num_classes))]
-        if invalid.size > 0:
-            unique_invalid = sorted(set(int(item) for item in invalid.tolist()))
-            raise ValueError(
-                f"Found label(s) outside [0, {num_classes - 1}] in {h5_path}: {unique_invalid}"
-            )
-        counts += np.bincount(selected, minlength=int(num_classes))[: int(num_classes)]
-    return counts
-
-
-def pointnext_class_weights_from_counts(
-    counts: np.ndarray,
-    *,
-    epsilon: float = 0.02,
-    normalize: bool = True,
-) -> list[float]:
-    total = int(counts.sum())
-    if total <= 0:
-        raise ValueError("Cannot compute class weights because no valid labeled points were found")
-    frequency = counts.astype(np.float64) / float(total)
-    weights = 1.0 / (frequency + float(epsilon))
-    if normalize:
-        weights = weights * len(weights) / weights.sum()
-    return weights.astype(np.float32).tolist()
 
 
 def resolve_class_weight(
@@ -836,6 +785,23 @@ def train(args: argparse.Namespace) -> None:
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is False")
 
     train_paths, val_paths = resolve_train_val_paths(args)
+
+    # S5-16 Step 0: the seal contract decides before anything is opened. This
+    # sits after path resolution and before the datasets and the class-weight
+    # count, both of which read the H5 files. A directory scan is refused
+    # outright rather than checked, because a glob has no ordered contract to
+    # check against and would pick up whatever is in the directory.
+    contract = resolve_active_contract(
+        manifest_key=args.split_manifest,
+        pins_path=args.split_contract_pins,
+        coverage_path=args.artifact_coverage,
+    )
+    contract.assert_new_training_allowed()
+    if args.train_dir is not None or args.val_dir is not None:
+        contract.assert_directory_mode_allowed()
+    contract.assert_paths_allowed(train_paths, purpose="training inputs")
+    contract.assert_paths_allowed(val_paths, purpose="validation inputs")
+
     write_resolved_path_list(output_dir / "train_files.txt", train_paths)
     if val_paths:
         write_resolved_path_list(output_dir / "val_files.txt", val_paths)
@@ -1102,6 +1068,18 @@ def train(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train Stage 5 pseudo-3D femur point-cloud segmentor")
 
+    parser.add_argument(
+        "--split_manifest",
+        default=None,
+        help="Name of an APPROVED pin in stage5/config/split_contract_pins.json (not a path). "
+        "Falls back to $STAGE5_SPLIT_MANIFEST; absent or unapproved stops the run.",
+    )
+    parser.add_argument("--split_contract_pins", default=None)
+    parser.add_argument(
+        "--artifact_coverage",
+        default=None,
+        help="Coverage JSON tying artifacts without a video ID in their name to their videos",
+    )
     parser.add_argument("--train_list", default=None, help="Text file containing annotated H5 paths")
     parser.add_argument("--train_dir", default=None, help="Directory containing annotated H5 files")
     parser.add_argument("--val_list", default=None, help="Optional text file containing validation H5 paths")

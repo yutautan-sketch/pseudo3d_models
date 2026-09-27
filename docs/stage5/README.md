@@ -2,6 +2,10 @@
 
 現在の判断・優先順位は[改修管理記録](stage5_revision_management_record.md)、数値的根拠は[訓練・評価レポート](stage5_pointnext_s_training_evaluation_report.md)を参照してください。各ステップの依頼・報告には当時の状態も含まれます。
 
+運用は**総括管理チャット1つ＋各ステップの実装チャット**とします（管理記録D-038）。
+Step 0の担当開始には[実装依頼書](s5-16/stage5_step0_implementation_handoff.md)、
+残務・管理返信・実行結果には[Step 0報告書](s5-16/stage5_step0_report_to_policy_chat.md)を使用します。
+
 ## 全体管理・共通資料
 
 - [FILES.md](FILES.md)：Stage5 File Layout
@@ -59,6 +63,8 @@
 
 - [stage5_s5_16_implementation_handoff.md](s5-16/stage5_s5_16_implementation_handoff.md)：Stage 5 S5-16: 汎化不足への改善方針策定と限定比較 ハンドオフ
 - [stage5_s5_16_to_s5_20_policy_chat_transfer.md](s5-16/stage5_s5_16_to_s5_20_policy_chat_transfer.md)：Stage 5: S5-16〜S5-20 総括管理チャットへの引き継ぎ
+- [stage5_step0_report_to_policy_chat.md](s5-16/stage5_step0_report_to_policy_chat.md)：S5-16文書同期・Step 0残務と受入記録
+- [stage5_step0_implementation_handoff.md](s5-16/stage5_step0_implementation_handoff.md)：Step 0の分割・封印・train_core専用weight・メタ情報確認の実装依頼
 
 ## 関連資料
 

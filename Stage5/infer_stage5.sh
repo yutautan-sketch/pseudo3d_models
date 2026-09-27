@@ -91,6 +91,24 @@ EXPERIMENT_NAME="${EX_DATE}/${MODEL}_EX${EX_DATE}_${DATE}_${PREFIX}"
 CHECKPOINT_NAME="${CHECKPOINT_NAME:-best.pt}"
 CHECKPOINT="${CHECKPOINT:-${RUN_ROOT}/${EXPERIMENT_NAME}/${CHECKPOINT_NAME}}"
 
+# S5-16 Step 0 seal contract (report 10.4). SPLIT_MANIFEST names an APPROVED
+# PIN, not a path. Leaving it empty stops the run; it never means
+# "unrestricted". The seal registry is consulted independently of the manifest
+# and denies first, so no manifest can reach a sealed video.
+SPLIT_MANIFEST="${SPLIT_MANIFEST:-${STAGE5_SPLIT_MANIFEST:-}}"
+SPLIT_CONTRACT_PINS="${SPLIT_CONTRACT_PINS:-}"
+ARTIFACT_COVERAGE="${ARTIFACT_COVERAGE:-}"
+split_contract_cli_args=()
+if [[ -n "${SPLIT_MANIFEST}" ]]; then
+  split_contract_cli_args+=(--split_manifest "${SPLIT_MANIFEST}")
+fi
+if [[ -n "${SPLIT_CONTRACT_PINS}" ]]; then
+  split_contract_cli_args+=(--split_contract_pins "${SPLIT_CONTRACT_PINS}")
+fi
+if [[ -n "${ARTIFACT_COVERAGE}" ]]; then
+  split_contract_cli_args+=(--artifact_coverage "${ARTIFACT_COVERAGE}")
+fi
+
 # ------------------------------------------------------------
 # output path info
 # ------------------------------------------------------------
@@ -165,6 +183,7 @@ for input_h5 in "${INPUT_H5_FILES[@]}"; do
   cmd=(
     "${PYTHON}" "${SCRIPT_DIR}/infer_stage5.py"
     --input_h5 "${input_h5}"
+    "${split_contract_cli_args[@]}"
     --checkpoint "${CHECKPOINT}"
     --output_h5 "${output_h5}"
     --model "${MODEL_NAME}"

@@ -3,8 +3,9 @@
 > **位置づけ注記（2026-09-10）:** 本書は検証結果と数値的根拠の正本である。Stage 5全体の
 > 現在状態、採用済み判断、次の実施順は`stage5_revision_management_record.md`を参照する。
 
-> **最終更新・完了注記（2026-09-15）:** S5-14 core・補足1〜3をユーザー判断により完了として受入。
-> 最終的な解釈・転記上の留保は9.8.5節を参照。診断完了は精度問題の解消やproduction採用を意味しない。
+> **最終更新・完了注記（2026-09-22）:** S5-15の50 epoch結果・終了判断を9.10節、S5-16方針と
+> 評価上の留保を9.11節へ反映。S5-16は方針策定完了、Step 0は未完了。新手法の実験結果はまだない。
+> S5-14の最終解釈・転記上の留保は9.8.5節を引き続き参照する。productionは未採用。
 
 ## 1. 目的
 
@@ -2011,9 +2012,117 @@ GPU preflightは4回（うちStage B 1回はpreflightスクリプトの実装不
 history.jsonに残るが中間epochの重みは復元不能である。主比較はepoch5の`last.pt`で成立するため
 再学習は行わず、逸脱として記録する。再発防止はcommit `cd3b886`。
 
+### 9.10 S5-15: R0新規50 epoch・可視化・追加解析と終了判断（2026-09-22反映）
+
+参照: [S5-15報告書](s5-15/stage5_s5_15_report_to_policy_chat.md)8.12・8.14節。
+実行は2026-09-19〜09-20の実機での報告に基づく。本節の同期で学習・推論・追加診断を実行したものではない。
+8.12の初期解釈を無条件に引き継がず、8.14の訂正を適用する。
+
+#### 9.10.1 条件・実施量
+
+teacher v7、保存済みtrain162／validation18、PointNeXt-S＋GroupNorm8、
+`bbox_noncontour_ignore`、CE・smoothing0、旧W-A固定weight `[0.05963856,1.94036150]`、
+AdamW lr1e-3／weight_decay1e-4、grad_clip10、seed42、window16／stride8／tail、
+physical batch1／point-weighted accumulation8、paddingなし、augmentationなし。
+同じS3DIS転移GroupNorm初期重み（SHA-256 `55ec6e6bcb39d58f398719b33826e80715a94bc6e7670d5b88623cd7c668438b`）
+から新規50 epochを実施。P3の学習済み重みからのresumeではなく、10 epoch追加pilotは省略した。
+
+実機報告では50 epoch、optimizer更新4,500回、non-finite 0件。
+best／lastに加え5 epochごとのcheckpoint10件を保存した。P3の保存間隔上書きへの対策が
+長期runで機能したことと、P3の欠落checkpointが復元されないことを区別する。
+固定train sanity3＋validation18のbest（epoch6）／last（epoch50）を42動画条件で評価した。
+
+#### 9.10.2 元点へのmean集約後の公式評価
+
+以下のpooled値は合算TP/FP/TN/FNから導出。長期runの値は共有済み
+[validation checkpoint summary](../../research/stage5/s5-15/260919/pointnext_s_EX260919_s5_15_r0long50_none_gn8_cwfixed_lr1e3_ep50_bs1_acc8_nopad/anonymized_metrics_SHARE_THIS/validation_accuracy/validation_checkpoint_summary.csv)
+および[train sanity summary](../../research/stage5/s5-15/260919/pointnext_s_EX260919_s5_15_r0long50_none_gn8_cwfixed_lr1e3_ep50_bs1_acc8_nopad/anonymized_metrics_SHARE_THIS/train_sanity_evaluation/train_sanity_checkpoint_summary.csv)
+に照合した。動画別値は同じ成果物の`validation_h5_metrics.csv`に照合した。
+
+| validation指標 | P3 R0 epoch5（別run） | 長期best epoch6 | 長期last epoch50 |
+| --- | ---: | ---: | ---: |
+| precision | 3.66% | 5.27% | 3.90% |
+| recall | 45.08% | 38.95% | 6.97% |
+| FPR | 12.53% | 7.41% | 1.81% |
+| F1 | 6.77% | 9.28% | 5.00% |
+| IoU | 3.51% | 4.86% | 2.57% |
+| TP0動画 | 1/18 | 1/18 | 10/18 |
+| 動画別F1中央値 | 5.95% | 7.75% | 0.00% |
+
+train sanity pooled recallはP3 R0 70.30%、長期best62.33%、長期last97.36%。
+validationのlast−best動画別F1は改善4／悪化13／同値1であった。
+ignore上のpositive率はvalidation best29.58%／last6.59%であり、valid GT上のFPに加算しない。
+
+学習履歴のval lossはepoch8の0.4619からepoch50の1.6901へ悪化した。
+学習中のwindow単位metricsと上表の元点集約後metricsは分母・集約が異なるため混合しない。
+P3 R0と長期runも別runであり、epoch5対6の差を1 epoch追加の因果効果としない。
+
+#### 9.10.3 可視化・追加解析
+
+- 固定21動画・834 frameについてbest／last計1,668 PNGを実機で生成。中間H5は全21動画で
+  記録されたsource属性から解決し、合成テスト30項目合格と報告された。保存済み予測を使うCPU処理である。
+- ユーザーの目視では、足・頭蓋骨・腹部の輪郭、細長いアーティファクト、散在ノイズにFPを観察した。
+  本管理チャットが患者画像を直接確認したものではない。画像上の位置とモデルXYZも同一視しない。
+- 調べたデータではintensityと画像グレー値の強い一致を確認。confidenceは画像処理由来のalpha/255であり、
+  大腿骨確率・教師信頼度・`sampling_confidence`とは別である。
+- 「フレーム内相対輝度を追う」は初期仮説で、追加解析後の一般的結論にはしない。絶対輝度との強い関連も
+  bestとlastで異なり、高輝度×位置の関連を因果効果とは呼ばない。
+- 2領域動画群8件と1領域群10件のbest性能差は探索的所見。同一動画内では領域数に伴う一貫した差がなく、
+  領域数そのものを失敗原因と確定しない。lastではゼロrecallが多く群間比較能力が低い。
+- 特定の輝度×位置binによる標準化でGT上の群間平均確率差が32.5%縮小した。追加軸は未実行で、
+  32.5%／67.5%を確定した説明率・上限・下限にしない。共通binの存在は標本数・代表性の保証ではない。
+
+詳細はS5-15報告8.12.13〜8.12.21と8.14、
+[可視化報告11章](s5-15/stage5_prediction_frame_visualization_implementation_handoff.md)を参照。
+可視化報告の21動画合算値と公式validation18動画の値、0始まり／1始まりaliasを混同しない。
+別成果物のaliasは名前だけでは結合しない。
+
+#### 9.10.4 終了判断と限界
+
+2026-09-20のユーザー判断によりS5-15を終了し、現R0の100〜200 epoch延長・production採用へ進まない
+（管理記録D-035）。best／lastは履歴baselineとして保持する。
+このrun/splitでは過学習・汎化不足と強く整合するが、記憶という機序、入力情報不足、
+標本規模・分布差の無関係を確定しない。最良領域が概ねepoch6〜10であることも別runへ一般化しない。
+平均予測確率gapは校正に影響される要約値であり、AUROC／AUPRCと同一視せず、
+gap低下やepoch間相関だけでthreshold調整の可能性を否定しない。
+単一seed、train sanity3動画、方式選択済みvalidation18動画という限界を維持する。
+R1の5 epoch不採用は長期効果・augmentation一般の否定ではない。
+
+### 9.11 S5-16方針と今後の評価境界（2026-09-22）
+
+S5-16は方針策定完了であり、新手法の効果を確認した段階ではない。
+[S5-16 v3](s5-16/stage5_s5_16_implementation_handoff.md)に従い、Step 0の後、
+S5-17の幾何診断・共通評価器、S5-18のCE対CE+Dice、S5-19のcontext比較、S5-20のtask再設計へ進む。
+
+- S5-17は表現の情報保持と保存済み予測からの幾何抽出を診断する。geometry headの学習可能性は証明しない。
+  prior-onlyと非学習後処理baselineを設け、proxy FL定義をtrain_coreで固定する。
+- S5-18では閾値0.5の改善と識別性能改善を分離し、AUPRC・同一FPRのrecall・動画別paired差分を判定に使う。
+  negative-only windowのDice仕様と蓄積単位は実行前に固定する。
+- S5-19は動画単位samplerのみを変えたcontext無し対照を含む。実施方針は確定、S5-20への採用は条件付き。
+  full-gradientを優先し、stop-gradient化は同値なメモリ対策としない。
+- S5-20ではtask／head・loss・Stage 5/6契約を段階化する。元frameに対応するnormalized 2Dとpixel/mmの
+  変換契約を固定し、Zスケール未確立のpseudo-3Dを2D mm値に混在させない。BBoxやsegmentation廃止は未決定。
+
+データ方針はB′→A（D-037）。旧train162からsanity3を保持してtrain_core144／internal_test18を作り、
+validation18は開発用として維持する。**2026-09-22ユーザー回答ではB′分割・封印は未実施。**
+split生成時に限る機械的な層化アクセスと、確定後の封印を区別する。
+旧checkpointをinternal_test評価へ使わず、class weightもtrain_coreだけで同一ロジックにより1回算出する。
+旧runは参考値となり、新splitの比較対照として直接流用しない。
+臨床FLはsplit構築時の層化、S5-17のtrain_coreでの代理値選定、S5-20cの封印評価に用途を限定し、
+validationの臨床FLを開発中に参照しない。A案完成後は未使用動画で最終外部評価を行う。
+B′を過去の開発履歴から完全独立した外部testと呼ばない。
+
+`T_FL`、mmスケールの粒度、各stageの提案値・実施量は未確定事項として管理する。
+R0/R1各25 epoch・特徴削除ablation・追加標準化軸はdeferredであり、今回の同期で実行しない。
+Step 0の進捗は[専用記録](s5-16/stage5_step0_report_to_policy_chat.md)へ集約する。
+
 ## 10. 結論
 
-本章以下は初期調査の履歴要約を含む。2026-09-15時点のS5-14最終判断は9.8.5節を優先する。
+2026-09-22の現行判断: S5-15は終了、現設定の延長・production採用を見送り、S5-16の改善方針を確定した。
+根拠・限界は9.10、今後の評価境界は9.11を参照。S5-16の方針策定とStep 0完了・新手法の有効性確認は区別する。
+
+以下の箇条書きは初期調査の履歴要約として保持する。現在の検証待ち一覧ではない。
+S5-14の最終判断は9.8.5節、後続の現行判断は9.10〜9.11節を優先する。
 
 - PointNeXt-Sはtrain sanityで大腿骨周辺を学習しているが、valid background上のFPが多く、memorization確認としても未解決である。
 - validationでは一部データを検出できるものの、median IoUはほぼ0であり、汎化性能は低い。

@@ -1,0 +1,33 @@
+{
+  "schema": "stage5_split_contract_pins_v1",
+  "_comment": [
+    "Approved seal registry and split manifests for Stage 5 S5-16 Step 0 (report 10.3).",
+    "This file is the authority for what a contract artifact's SHA-256 must be. A hash an",
+    "artifact states about itself is not used as the expected value, because an artifact and",
+    "its self-stated hash can be changed together.",
+    "",
+    "To approve an artifact: add its path and SHA-256 here, review the git diff, and commit.",
+    "Until a pin exists, that artifact cannot be selected and every normal path stops.",
+    "",
+    "Known limit, recorded rather than implied: the same user can edit both this file and the",
+    "artifact it pins. This prevents misdirection and unapproved substitution, not a determined",
+    "operator. No signing infrastructure is introduced.",
+    "",
+    "Empty 'pins' is the pre-Step-0 state: normal training/evaluation/inference refuse to start,",
+    "and only the explicitly requested initial build path may run."
+  ],
+  "pins": {
+    "seal_registry": {
+      "path": "/mnt/data/3d_projects/stage5_splits/s5_16_step0_bprime/sealed_registry.json",
+      "expected_sha256": "882305d566ac0bf0db33923776821c70f50bdca13853999c30bcc4258e8b13e7",
+      "approved_on": "2026-09-27",
+      "approved_scope": "S5-16 Step 0 B' seal registry: the 18 internal_test videos, sealed until S5-20c. Produced by build_stage5_bprime_split.py --confirm from the intermediate f25ee988... approved by the policy chat (report 28)."
+    },
+    "s5_16_bprime": {
+      "path": "/mnt/data/3d_projects/stage5_splits/s5_16_step0_bprime/s5_16_bprime.json",
+      "expected_sha256": "2a0c07433c8a6526b66205a0cf3d5f428f3b1299df2699cb45a070193623744b",
+      "approved_on": "2026-09-27",
+      "approved_scope": "S5-16 Step 0 B' split manifest: train_core 144 / validation 18 / internal_test 18. All six partition checks passed (report 29). Use for S5-17 onward."
+    }
+  }
+}
