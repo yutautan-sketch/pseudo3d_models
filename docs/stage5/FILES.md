@@ -193,6 +193,15 @@ Main groups:
 
 ## Seal period: routes not covered by the split contract (S5-16 Step 0)
 
+**Status (2026-09-27): the B' split is confirmed and sealed, and the pins are committed.** The seal
+is in force, so the restrictions below apply now rather than in prospect. A second, separate gap
+applies to the same routes: every existing Stage 5 tool matches only the three-segment timestamp
+form, so its privacy self-check is blind both to the `D-D_NN` naming convention and to the optional
+fourth segment. No leak is known to have occurred -- `assert_share_bundle_anonymous` also compares
+against the literal `original_*` fields, which does catch both -- but the pattern-based net has
+holes, and **those must be fixed and verified before any of these routes is used again**.
+
+
 The seal contract is wired into these routes: `train_stage5.*`, `evaluate_stage5.*`,
 `infer_stage5.*`, `prepare_stage5_evaluation_data.py`, `write_stage5_s5_15_run_manifest.py`,
 `check_stage5_s5_15_gpu_preflight.py`, the two S5-15 reproduction launchers, and the three new Step 0

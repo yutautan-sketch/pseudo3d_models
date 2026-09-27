@@ -326,7 +326,13 @@ prediction_frames/
 anonymized_metrics_private_DO_NOT_SHARE/
 ```
 
-## S5-16 Step 0: split・封印成果物の3領域（2026-09-22）
+## S5-16 Step 0: split・封印成果物の3領域（2026-09-22、2026-09-27実体化）
+
+**2026-09-27時点の状態:** 下記の3領域は実在する。領域Bに`train_core_144.txt`・`validation_18.txt`・
+`s5_16_bprime.json`・`sealed_registry.json`・`input_audit.json`・`teacher_preflight_expected_162.json`、
+領域Cに`internal_test_18.txt`・層化中間結果・セル別配分・class weightとmm監査のprivate記録がある。
+封印はS5-20cまで有効。pinは`Stage5/stage5/config/split_contract_pins.json`へ登録済み。
+
 
 B′分割の成果物は用途とアクセス権の異なる3領域へ分ける。1つのディレクトリにまとめない。
 「通常処理の一時ファイル」と「封印対象の統計」を同じ場所に置くと、権限も後始末も区別できなくなるため。

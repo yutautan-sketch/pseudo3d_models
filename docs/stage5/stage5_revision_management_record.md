@@ -8,7 +8,7 @@
 | 作成日 | 2026-09-10 |
 | 最終更新日 | 2026-09-22 |
 | 対象 | pseudo-3D point cloudからのpoint-wise大腿骨segmentation |
-| 現在の段階 | S5-15終了、S5-16方針策定完了。**Step 0の層化第2軸はD-039で確定（2026-09-27）、実装着手可。** 2026-09-22に終了判断・方針・データ方針を本書へ同期。Step 0の分割・封印は未実施（09-22ユーザー回答）、class weightは未算出。管理は本総括管理チャットに集約し、S5-16の残務とStep 0の完了後にS5-17実装チャットへの依頼書を作成する（D-038）。production設定は未変更 |
+| 現在の段階 | S5-15終了、S5-16方針策定完了。**Step 0はS0-1〜S0-6とteacher期待値算出を完了し、2026-09-27に総括管理が受入（Step 0報告書35章）。次はS5-17実装依頼書の作成。** 2026-09-22に終了判断・方針・データ方針を本書へ同期。Step 0の分割・封印は未実施（09-22ユーザー回答）、class weightは未算出。管理は本総括管理チャットに集約し、S5-16の残務とStep 0の完了後にS5-17実装チャットへの依頼書を作成する（D-038）。production設定は未変更 |
 | production readiness | 未到達。診断中 |
 
 本書は、Stage 5の目的、現在状態、過去の改修、検証結果、次の実施順を一か所から追えるように
@@ -126,10 +126,10 @@ annotation前H5は実運用推論に使用できる。
 | batch・padding | 既存segmentation比較はphysical batch1／point-weighted accumulation8、paddingなし | 維持。S5-19の動画単位条件は別途固定 |
 | label・loss | `bbox_noncontour_ignore`、CE、smoothing0 | 現行baseline。Diceは未実装・未採用 |
 | optimizer | AdamW、lr1e-3、weight_decay1e-4、grad_clip10、seed42 | 比較固定条件 |
-| split | 旧runはtrain162／validation18。今後はtrain_core144／validation18／internal_test18 | B′方針決定済み、分割・封印未実施。**層化第2軸はD-039で`gt_positive_frame_count`へ変更。抽選単位はファイルのまま維持し、同一検査重複の前提はD-041で訂正** |
-| class weight | 旧W-A `[0.05963856,1.94036150]`は履歴値。今後はtrain_coreのみで1回再算出・固定 | Step 0残務、値未確定 |
+| split | **train_core144（`fa8429e3…`）／validation18（`de3f3d51…`、旧と同一）／internal_test18（`1247e6ae…`、S5-20cまで封印）** | **2026-09-27に分割確定・封印・pin登録まで完了。** 契約検査6項目合格。層化第2軸はD-039で`gt_positive_frame_count`、抽選単位はファイル（D-041） |
+| class weight | **`[0.06023312732577324, 1.9397668838500977]`**（train_core144から1回算出、identity `fa8429e3…`） | **確定。S5-18〜S5-20で固定して使う。** 旧W-A `[0.05963856,1.94036150]`は履歴値 |
 | S5-15 | R0/R1各5 epoch、R0新規50 epoch、固定21動画best/last評価・可視化・追加解析を終了 | completed。100〜200 epoch延長・production採用は行わない |
-| S5-16 | loss／context／geometryの方針策定完了。新手法の実装・実験は未実施 | 方針完了、Step 0を含む残務整理中 |
+| S5-16 | loss／context／geometryの方針策定完了。新手法の実装・実験は未実施 | **方針完了。Step 0も完了・受入済み（2026-09-27）** |
 | 推論・production | 評価は無変換・mean probability・2クラスargmax（同値background） | production既定値未変更、実用精度未到達 |
 | Stage 6 | 未着手と報告されている | S5-20a前に責務境界を改訂予定 |
 
@@ -1332,8 +1332,11 @@ inverse-occurrence loss weighting等）は方針管理チャットの判断を�
 Step 0およびS5-17の専用管理チャットは設けない。判断理由・留保・固定条件は既存管理記録と
 各依頼書に残し、実装担当は必要な節を参照する。小さな修正ごとにチャットを作り直さない。
 
-1. **S5-16残務・Step 0:** 本書・評価レポートの同期、B′分割・封印、train_core専用weight、実機メタ情報の確認と受入。
-   分割・算出を文書の方針決定だけで完了扱いにしない。詳細は[Step 0依頼書](s5-16/stage5_step0_implementation_handoff.md)。
+1. **S5-16残務・Step 0: 完了（2026-09-27受入）。** B′分割・封印・pin登録、train_core専用weight、
+   mmメタ監査、teacher期待値算出まで実施。詳細は[Step 0報告書](s5-16/stage5_step0_report_to_policy_chat.md)23〜36章。
+   **S5-17へ持ち越した未決事項:** mm/pixelの供給元・形式・突合キー・粒度、`T_FL`、
+   H17-1の目的と採否規則の再設計（180動画に臨床実測FLが無いため現行設計は成立しない）、
+   5例（D-040）の比較単位。
 2. **S5-17:** S5-16／Step 0完了後も本総括管理で管理し、S5-17実装チャットへの依頼書を用意する。CPUのみで既存GT・保存済み予測から
    幾何表現・代理FLを診断し、共通評価器を作る。学習可能性の証明とはしない。
 3. **S5-18:** CE対CE+Dice。開始前に原則6・D-004の適用範囲を改訂し、negative-only windowの扱い、
