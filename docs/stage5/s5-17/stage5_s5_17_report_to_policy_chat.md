@@ -1,10 +1,10 @@
 # S5-17 幾何表現のtraining-free診断・共通評価器 報告と進捗管理
 
 作成日: 2026-09-27  
-最終更新日: 2026-09-29（12.10: 12.9の管理書同期、run経路の固定、R6のrepo内確認、S17-4の実行手順）  
+最終更新日: 2026-09-29（13.11: S17-5の実行計画と管理書の同期）  
 開始時HEAD: `f31cdd8444d08adea522e350e0d37b96717c03c4`（`f31cdd8 docs(stage5): record Step 0 acceptance and synchronise Stage 5 records`）  
 担当: S5-17実装チャット（管理は総括管理チャット、D-038）  
-状態: **S17-1・S17-2完了。S17-3は管理側受入済み、S17-4はユーザー・管理側承認済み（12.9）。S4-2・S4-3は確定、S4-4はR6と監査結果を確認して判断する。R1〜R4は事前回答を必須とせずS17-4で確認、R5はpixelモードでは不要、R6は既存記録を確認して報告する。R7・R8はユーザー回答済み。S17-4の実施結果は未報告、S17-5は未承認。12.10で管理書を版6へ同期し、S4-2・S4-3をコードに反映（CLI合成テストの再実行待ち）。**  
+状態: **S17-1〜S17-3完了。S17-4は管理受入済み。S17-5はpixelモードの限定診断として承認済み（13.10）、実行計画の記録・管理書同期後に実施可。評価時revision・checkpoint hashはunknownで続行、teacher生成CSVと過去NPZ hash照合は今回は使用しない。S17-5の実行計画を13.11に記録し、管理書を版8へ同期済み。S17-5の実施結果は未報告。**  
 現行仕様: [S5-17実装・検証管理書](stage5_s5_17_implementation_management.md)。本書1〜3章は提案履歴、4章は承認・文書運用の決定記録として保持する。
 
 
@@ -1993,5 +1993,283 @@ R7・R8は12.8.2の回答を維持する。共有するのは個人情報を含�
 2. （推奨）**S17-4の前に、コードと文書をコミットする。** CLIは出力に`git`の状態（dirtyかどうか）を記録する。未コミットの新規ファイルがあるとdirtyとして記録され、監査結果とコードの版の対応が弱くなるためである。コミットする場合は、差分を確認したうえでコマンドを用意する（実行はユーザー）。
 3. 12.8.3の3コマンド（best・lastの`register-coverage`、`audit`）を順に1回ずつ実行する。途中で停止したら次へ進まず、停止メッセージを共有する。
 4. `${PRIVATE_OUT_DIR}/shared/`の3ファイルと、12.10.3の確認結果を共有する。
+
+コミットは行っていない。
+
+---
+
+## 13. S17-4の実施結果（2026-09-29）
+
+担当: S5-17実装チャット（実行はユーザーの実機）。状態: **S17-4完了。停止なし。管理確認とS17-5の判断を依頼する。**
+本章の数値は、ユーザーが共有した共有JSON3件（`coverage_best.json`・`coverage_last.json`・`audit.json`）と画面出力による。
+private側の記録（coverage記録、動画別のメタ情報）は見ていない。
+
+### 13.1 実施内容と順序
+
+| # | 実行 | 結果 |
+| --- | --- | --- |
+| 0 | CLI合成テストの再実行（12.10.2の修正後） | `checks: 144, failures: 0`（見込みどおり） |
+| 0' | コード・文書のコミット（ユーザー実行） | `9902b3d feat(stage5): add S5-17 geometry diagnostics and synthetic checks`。以後の作業ツリーはclean |
+| 1 | `register-coverage`（best） | `coverage registered: best, 2 artifacts, 21 videos` |
+| 2 | `register-coverage`（last） | `coverage registered: last, 2 artifacts, 21 videos` |
+| 3 | `audit` | `audit complete: counts written to the shared JSON` |
+
+各コマンドは1回ずつで、再実行はしていない。GT・予測の配列値は読んでいない（`audit`はメタ情報のみ、`metadata_only: true`）。
+
+### 13.2 coverage登録（best・last）
+
+| 項目 | best | last |
+| --- | --- | --- |
+| 対象動画 | 21（sanity3＋validation18） | 21 |
+| 証拠(i) ユーザー指定のディレクトリ | 成立 | 成立 |
+| 証拠(ii) validationリストがS5-15 launcherの固定hashと一致 | 成立 | 成立 |
+| 証拠(iii) 予測ファイル名がsanity3＋validation18と過不足なく一致 | 成立 | 成立 |
+| 登録前に内容を解釈していない | はい | はい |
+| git | clean（`git_dirty: false`） | clean |
+| `summary.json`のSHA-256先頭16桁 | `31d9b5a411e12c9f` | `f0a1e2b2adf7b02b` |
+| `h5_metrics.csv`のSHA-256先頭16桁 | `cea248ac28b05222` | `12f785f24ab9c113` |
+
+**sanityリスト（R7）:** 各コマンドは開始時に、sanityリストのSHA-256がpin済みmanifestの`input_sha256.sanity_list`と一致することを検査し、不一致なら停止する。3コマンドとも完走したので、指定したファイルはStep 0が使ったsanityリストと一致した。
+
+### 13.3 入力のメタ監査（`audit`）
+
+| 項目 | train_core | validation |
+| --- | ---: | ---: |
+| 必要なdatasetが揃っている | 144/144 | 18/18 |
+| 入力側で評価可能（crop逆変換が可能） | 144/144 | 18/18 |
+| 入力評価不能 | 0 | 0 |
+| 中間H5の解決方法: 記録attr（`recorded_source_attr`） | 144 | 18 |
+| 中間H5の解決方法: 完全一致basename | 0 | 0 |
+| crop mode（`local_preprocess_effective`） | `resize_shorter_then_offset_crop` 144 | 同 18 |
+
+| 評価run | 状態 | checkpoint hash | 評価時revision | NPZ（sanity／validation、キー完備） |
+| --- | --- | --- | --- | --- |
+| best | `coverage_ok` | `unknown` | `unknown` | 3／18 |
+| last | `coverage_ok` | `unknown` | `unknown` | 3／18 |
+
+`coverage_ok`は、coverageのhash照合の後に`summary.json`・`h5_metrics.csv`を解析し、次の検査を通ったことを意味する。
+
+- 動画集合がsanity3・validation18と過不足なく一致した。
+- 全行の`h5_path`・`video_name`のidentityが一致した。
+- checkpoint名（`best.pt`／`last.pt`）とepoch（6／50）が一致した。
+- window構成（16／8／tail）が一致した。
+
+### 13.4 1.3の所見（F2〜F4）への回答
+
+| 所見 | S17-4の結果 | 扱い |
+| --- | --- | --- |
+| F2 中間H5の前方一致 | 162件すべて記録attrで解決し、globも完全一致basenameも使っていない | 今回の許可した方法（記録attrと完全一致basename）で全件解決できた。Step 0当時の方法別件数（R3）は、S17-5の判断材料としては不要になった（12.9.3のとおり） |
+| F3 NaNのscaleを「完備」と数えていた | crop modeは1種類で、162件すべて有限・正のscaleで逆変換を構築できた | 数値的に逆変換可能な件数は162/162 |
+| F4 Stage 4の`offset_crop_fallback_resize`の扱い | 該当0件 | 今回のデータでは論点が生じない。Stage 4側の判断は不要 |
+
+### 13.5 S17-4で確認していないこと（S17-5の冒頭で検査されるもの）
+
+`audit`はメタ情報だけを読むため、次は未検査である。いずれも`run`の冒頭で動画ごとに検査し、不一致なら停止する。
+
+- teacher H5の配列の値（`point_label`の値域、`valid_mask`と`point_label≠-1`の整合、`frame_order`の範囲、`pixel_xy`がcrop内にあること、元frameへの逆変換後の範囲）。
+- NPZの配列（長さ、`point_indices`、確率とlabelの整合、window数の再計算、混同行列と`h5_metrics.csv`の一致）。
+- 計算時間・メモリ（未計測）。
+
+### 13.6 R6（過去のrevision・hash）の状況
+
+| 項目 | 状況 |
+| --- | --- |
+| 評価時点のgit revision | 未確認（repo内には学習起動時のHEAD`d0e3752…`だけ。12.10.3）。実機の記録はユーザーの回答待ち |
+| best・lastのcheckpoint SHA-256 | 未確認。ユーザーの回答待ち。S17-4では与えていないため`unknown` |
+| teacher H5の動画別SHA-256 | repo内には記録なし。実機の記録（frame可視化の`HASH_H5`等）はユーザーの回答待ち |
+
+### 13.7 S17-5へ進むための判断事項
+
+管理書6章により、S17-5はS17-4の結果とR6を管理が確認し、続行可否を判断した後に承認される。`audit`の正常終了だけでは入力の受入完了としない。
+
+| # | 事項 | 実装チャットの見解 |
+| --- | --- | --- |
+| S5-1 | S17-4結果の確認（13.2〜13.4） | 停止条件に触れた項目はなく、入力の欠落・入力評価不能は0件、来歴の証拠はすべて成立した |
+| S5-2 | R6の扱い（S4-4） | 12.10.3の3点をユーザーに確認してもらう。記録がなければ、hashは`unknown`のまま続行するか（限界として結果に付ける）を判断してほしい。記録されたhashとの不一致は停止する |
+| S5-3 | S17-5の実施承認 | 承認を受けた場合の実行は`MODE=run COORDINATE_MODE=pixel`の1回（不具合修正後の再実行は1回まで）。読むのは、teacher H5 162件の配列、中間H5 162件の属性、NPZ 21件×2、`summary.json`・`h5_metrics.csv`×2。H17-1の判定、H17-2〜H17-5の集計、sanity3の別表を出力する |
+
+S17-5の承認依頼の詳細（読取り量、停止条件、共有出力、計算時間の見込みと計測方法）は、管理の指示を受けて別節でまとめる。
+
+### 13.8 次の作業
+
+1. ユーザー: 12.10.3の3点（評価時revision、checkpoint SHA-256、teacher H5の動画別hashの記録の有無）の確認。
+2. 管理: S5-1〜S5-3の判断。
+3. 実装チャット: 判断を受けて、S17-5の実行計画を具体化し、管理書を同期する。
+
+コミットは行っていない（本章と管理書の更新は未コミット）。
+
+### 13.9 R6の確認結果（2026-09-29）
+
+担当: S5-17実装チャット（確認コマンドはユーザーが実機で実行）。状態: **記録のみ。実装・テスト・実データ処理は行っていない。**
+
+#### 13.9.1 確認の前提
+
+- 探したのは**過去に書かれた記録**だけである。今から計算したhashは、評価当時の証拠として扱わない（12.9.3）。
+- `check_stage5_checkpoint_identity`などの監査スクリプトは実行していない（封印期間中は使用禁止の経路であり、今実行した結果は新しい計算にすぎないため）。
+- 確認コマンドは件数と真偽値だけを表示するものとし、動画IDやパスは出力していない。
+
+#### 13.9.2 結果
+
+| 項目 | 確認方法 | 出力 | 判定 |
+| --- | --- | --- | --- |
+| 評価時点のgit revision | 評価出力のJSON（best・lastの`summary.json`、`comparison_manifest.json`、`evaluation_data/summary.json`）にgit・revision系の項目があるか。評価出力にログファイルがあるか | 0件／0件 | **記録なし**（評価出力内）。`evaluate_stage5.py`はもともとrevisionを書かない。学習起動時のHEAD（`d0e3752…`）は評価時のrevisionとしない。更新時刻とgit logを突き合わせて推定することは、記録ではないので行わない |
+| best・lastのcheckpoint SHA-256 | `work_dirs`内で、長期run名を含み同一性監査の出力形式（`sha256_a`）を持つJSONの件数 | 0件 | **記録なし** |
+| teacher H5の動画別SHA-256（A: teacher v7の生成記録） | v7のrun rootにある`crop_quality_invalidation_summary.csv`の**列名だけ**を確認 | `collected_h5`・`collected_h5_sha256`の2列あり | **記録あり（未読・未照合）。** 生成時に動画別の出力H5のhashを書いた記録。本体は開いていない（13.9.3） |
+| teacher H5の動画別SHA-256（B: S5-15のframe可視化） | best・lastの`prediction_frames/manifest.json`の`hash_h5` | best `False`／last `False` | **記録なし**（H5のhashは計算されていない） |
+
+補足: frame可視化の記録には、`hash_h5`の設定にかかわらず予測NPZのhashが常に書かれている（`export_stage5_prediction_frames.py`）。R6の対象ではないが、NPZが可視化の時点から変わっていないことの補助の証拠になり得る。使うかどうかは13.9.4に含める。
+
+#### 13.9.3 teacher v7生成記録（A）の扱い: 封印に関わるため管理判断を求める
+
+このCSVは、teacher v7の生成時（S5-12、Stage 4）に作られた記録で、Stage 5の入力である`collected/`のH5 180件について、動画ごとの`collected_h5_sha256`を持つ。
+teacher H5の動画別hashとしては最も有力な過去の記録である。
+
+一方で、**CSVの本体にはinternal_testを含む180件すべての行があり、動画ごとのGT統計の列（`positive_after`、`removed_positive_points`等）も入っている。**
+本体を読むと、封印中のinternal_testのGT統計がメモリへ読み込まれる。そのため、列名以外はまだ開いていない。
+
+使う場合の読み方（提案）:
+
+1. 補助コマンドで、CSVを1行ずつ読む。`collected_h5`のファイル名からidentityを求め、許可された162件（pin済みmanifestで照合済みのtrain_core・validationのリスト）に含まれない行は、その場で捨てる。
+2. 残った行からも`collected_h5`と`collected_h5_sha256`以外の列は保持せず、`{identity: sha256}`だけをprivateのJSON（`${PRIVATE_OUT_DIR}`直下、0600）に書く。
+3. 表示するのは、162件のうち記録があった件数と、記録のパスがリストのパスと一致した件数だけにする（捨てた行の数や中身は表示しない）。
+4. S17-5の`run`に`H5_HASH_RECORD`として渡す。`run`は各teacher H5を開く前にhashを取って照合し、一致なら`match`、不一致なら停止する（12.9.3の「記録されたhashとの不一致は停止」）。
+
+この読み方でも、ステップ1では捨てる行も含めて一度はCSVとして解析される。**「封印中のデータを読込前に拒否する」保証は成り立たない。** 捨てる行の内容は保持も出力もしないが、その限界は残る。
+CSVは生成記録なので、S5-17用のcoverage記録（生成時に対象集合を記録する方式）もない。
+
+| 案 | 内容 | 差分 |
+| --- | --- | --- |
+| **(i) 推奨** | 上の読み方で162件分のhashだけを抜き出し、S17-5で照合する | teacher H5がv7の生成時から変わっていないことを動画ごとに確認できる。代わりに、封印中の行を一度解析する限界を受け入れる。S17-5では162件のH5全体のhash計算が加わる（所要時間は未計測） |
+| (ii) | 使わない。teacher H5の状態は`unknown`のまま | 封印中の行には触れない。teacher H5の同一性は、Step 0の集合単位の期待値など間接的な根拠だけになる |
+
+#### 13.9.4 管理判断を求める事項（13.7に追加）
+
+| # | 事項 |
+| --- | --- |
+| S5-2（更新） | 評価時revisionとcheckpoint hashは**記録なし**。`unknown`のまま、限界として結果に付けてS17-5へ進むか |
+| S5-4（新規） | teacher v7生成記録（A）の扱い。(i) 162件分だけを抜き出して照合する（推奨）／(ii) 使わない |
+| S5-5（新規、任意） | frame可視化の記録にあるNPZのhash（21件×2）を、S17-5で補助の照合として使うか。対象は許可された21件だけで、封印には触れない。不一致なら停止とする |
+
+(i)またはS5-5が承認された場合、補助コマンド（抜き出し・照合用）は、実装と合成テストを経てから実機で使う。
+
+コミットは行っていない。
+
+
+### 13.10 総括管理からの回答: S17-4受入・S17-5承認（2026-09-29）
+
+担当: 総括管理チャット。状態: **S17-4を受け入れ、S17-5をpixelモードの限定診断として承認する。**
+本節を13.7および13.9.4のS5-1〜S5-5への管理回答とする。過去の来歴に確認できない部分があることを結果に明記して進める。
+
+#### 13.10.1 S5-1〜S5-5への回答
+
+| 事項 | 管理判断 |
+| --- | --- |
+| S5-1: S17-4の受入 | **受入。** 全162件のメタ情報、予測21件×2、coverage・epoch・windowの検査結果に問題はない。報告された実機結果に基づく受入であり、配列値・点対応の確認はS17-5で行う。 |
+| S5-2: 過去revision・checkpoint hash不明 | **unknownのまま続行を承認。** 調査範囲では記録がなく、追加探索を着手条件にはしない。coverageや整合性検査の通過を、評価当時のコード・checkpointの同一性証明とは扱わず、結果に限界を明記する。必須coverageの欠落・登録後のhash不一致、記録されたhashとの不一致は停止のまま維持する。 |
+| S5-3: S17-5の実施 | **承認。** `MODE=run COORDINATE_MODE=pixel`を1回、不具合修正後の再実行は既定どおり1回まで。読取り対象は13.7の範囲とし、配列値・点対応・必須coverageなどの不一致では停止する。 |
+| S5-4: teacher生成CSVの利用 | **今回は(ii)「使わない」を採用。** 封印対象のGT統計を解析してから捨てる方式は認めない。teacher hashは「過去記録の存在は確認したが、封印を含むため未照合」と記録し、照合状態はunknownとする。記録なしとは区別する。 |
+| S5-5: 可視化時のNPZ hash利用 | **今回は追加しない。** 任意の補助照合であり、現在のcoverageとS17-5の点対応検査で限定診断を進める。既存hashは将来参照できる記録として保持し、今回のための抽出・照合実装は不要とする。 |
+
+S5-4では、hash照合を強化するために封印契約へ例外を設ける必要はないと判断した。
+生成時hashが照合できても評価当時の状態を直接証明するものではないため、今回は未照合という限界を明示して進める。
+本回答は、封印対象を含むteacher生成CSVの本文読取り・抽出を承認するものではない。
+
+#### 13.10.2 実施範囲と実行前の記録
+
+S17-5で読む対象は、teacher H5 162件の配列、中間H5 162件の属性、NPZ 21件×2、`summary.json`・`h5_metrics.csv`×2とする。
+H17-1の判定、H17-2〜H17-5の集計、sanity3の別表を出力する。封印guard・処理目的別許可リスト・coverage照合と、既定の入力検査を維持する。
+mm評価、学習、再推論、production変更は今回の承認に含まない。
+
+実装チャットは、実行前に次を報告書へ記録し、管理書の現行方針・状態・メタ情報を同期する。
+
+- 実行コマンド、読取り対象・件数、停止条件、private／共有出力。
+- 所要時間は未計測と明記し、今回の経過時間・最大メモリ使用量の計測方法。
+- 評価時revision・checkpoint hashの記録なし、teacher生成時hashは未照合、NPZ過去hash照合は未採用という来歴上の限界。
+
+**既定の実施範囲を具体化するだけなら再承認は不要とし、記録・同期後に実行してよい。**
+入力不足による保留、選定不能、固定fallbackの診断専用扱いを維持する。結果を見て閾値や表現を変更しない。
+停止した場合は原因を報告し、既定の不具合修正・再実行の範囲を超える実施や条件変更は別途判断する。
+
+本追記では報告書と冒頭メタ情報のみを更新した。管理書・実装の変更、テスト、実データ処理、コミットは行っていない。
+
+### 13.11 S17-5の実行計画（実行前の記録、2026-09-29）
+
+担当: S5-17実装チャット。状態: **実行計画の記録と管理書の同期（版8）。実行はまだしていない。**
+13.10.2に従い、実行前に記録する。既定の実施範囲を具体化したもので、条件の変更はない。コードはコミット`9902b3d`のまま変更しない。
+
+#### 13.11.1 実行コマンド（ユーザーが実機で1回実行する）
+
+```bash
+cd /mnt/data/3d_projects/models/Stage5
+git status --short            # 何も表示されないこと（作業ツリーclean。出力にgitの状態が記録されるため）
+export TRAIN_SANITY_LIST=/mnt/data/3d_projects/stage5_evaluations/260919/pointnext_s_EX260919_s5_15_r0long50_none_gn8_cwfixed_lr1e3_ep50_bs1_acc8_nopad/evaluation_data/selected_train_files.txt
+export PRIVATE_OUT_DIR=/mnt/data/3d_projects/stage5_private_work/s5_17_geometry
+
+/usr/bin/time -v -o "${PRIVATE_OUT_DIR}/run_resource_usage.txt" \
+  env MODE=run COORDINATE_MODE=pixel SHARED_JSON="${PRIVATE_OUT_DIR}/shared/run.json" \
+  bash evaluate_stage5_geometry.sh
+
+grep -E 'Elapsed \(wall clock\)|Maximum resident set size|Exit status' "${PRIVATE_OUT_DIR}/run_resource_usage.txt"
+```
+
+- `CHECKPOINT_SHA256_*`・`H5_HASH_RECORD`は与えない（13.10: 記録なし、teacher生成時hashは未照合）。
+- coverage記録はS17-4で登録した`${PRIVATE_OUT_DIR}/artifact_coverage_DO_NOT_SHARE.json`（launcherの既定）を使う。評価出力root、中間H5のroot・suffixはS17-4と同じlauncherの既定値を使う。
+- 入力件数の下限は既定値（train_core 130、validation 16）のままとする（launcherは上書き引数を出さない）。
+
+#### 13.11.2 読取り対象・件数
+
+| 対象 | 件数 | 内容 |
+| --- | ---: | --- |
+| 契約・リスト | — | pins、registry、manifest（再hash）、train_core・validation・sanityのリスト |
+| teacher H5 | 162（train_core 144、validation 18。sanity3はtrain_coreの一部として再度読む） | `point_cloud/{pixel_xy,frame_order,points}`、`annotation/{point_label,valid_mask}`、`frame_annotation`、属性 |
+| 中間H5 | 162 | 属性のみ（crop逆変換、local frame数） |
+| 予測NPZ | 21×2（best・last） | `point_indices`・`prob_femur`・`pred_label`・`vote_count` |
+| 評価run | 2×2 | `summary.json`・`h5_metrics.csv`（coverage照合の後に解析） |
+
+internal_testの動画は、どの処理目的の許可リストにも含まれず、開く前に拒否される。teacher v7生成時のCSVは読まない。
+
+#### 13.11.3 停止条件（いずれかで実行全体が停止し、共有JSONは書かない）
+
+- 契約・来歴: pin・hashの不一致、リストidentityの不一致、sanityリストのhashがStep 0の記録と違う、封印動画、許可リスト外、coverageの欠落・登録後のhash変化、評価runの動画集合・checkpoint名・epoch・windowの不一致。
+- 入力: teacher H5・中間H5の欠落、中間H5の解決失敗、`point_label`の値域外、`valid_mask`と`point_label≠-1`の不一致、非有限・非整数・int64範囲外、`frame_order`がlocal frame数以上、`pixel_xy`がcrop外、逆変換後の座標が元frame外。
+- 点対応: NPZの配列長、`point_indices`≠`arange(N)`、確率とlabelの不整合（±1e-6の境界帯を除く）、window数の再計算との不一致、混同行列と`h5_metrics.csv`の不一致。
+- その他: 共有JSONのprivacy検査の失敗、非有限値の混入。想定外の例外（tracebackはprivate側に保存）。
+
+停止した場合は、原因（停止メッセージ。IDとパスは出ない）を報告し、既定の範囲（不具合修正後の再実行1回まで）を超える扱いは管理の判断を待つ。
+
+#### 13.11.4 出力
+
+| 出力 | 場所 | 扱い |
+| --- | --- | --- |
+| private記録 | `${PRIVATE_OUT_DIR}/geometry_run_DO_NOT_SHARE.json`（0600） | alias対応表、動画別の幾何・推定値・誤差。**共有しない** |
+| 計測記録 | `${PRIVATE_OUT_DIR}/run_resource_usage.txt` | 共有するのは上の`grep`で出す3行（経過時間、最大常駐メモリ、終了コード）だけ |
+| 共有JSON | `${PRIVATE_OUT_DIR}/shared/run.json` | 集計のみ（privacy検査済み）。これを共有する |
+| 画面出力 | 標準出力・エラー | そのまま共有してよい（ID・パス・tracebackは出ない） |
+
+#### 13.11.5 所要時間とメモリ
+
+**未計測。** 見込みは立てていない（合成テストの規模では参考にならない）。
+`/usr/bin/time -v`の「Elapsed (wall clock) time」と「Maximum resident set size」で計測する。後者は子プロセスのうち最大のもの（Pythonの本体）の最大常駐メモリである。
+`/usr/bin/time`が無い環境では、実行前後に`date`で時刻を控えて経過時間だけを記録し、メモリは「未計測」と報告する。
+
+#### 13.11.6 来歴上の限界（結果に明記するもの）
+
+| 項目 | 状態 |
+| --- | --- |
+| 評価時点のgit revision | 記録なし（`unknown`） |
+| best・lastのcheckpoint SHA-256 | 記録なし（`unknown`） |
+| teacher H5の動画別SHA-256 | 過去記録（teacher v7生成時のCSV）の存在は確認したが、封印対象のGT統計を含むため**未照合**（`unknown`）。記録なしとは区別する |
+| 予測NPZの過去hash（frame可視化の記録） | 今回は照合に使わない（将来参照できる記録として保持） |
+
+coverageや点対応の整合性検査の通過を、評価当時のコード・checkpointの同一性の証明とは扱わない。
+共有JSONの`provenance_hash_states`では、teacher H5は`unknown`としか表示されない。上の区別（記録なしか、未照合か）は、本報告書の結果報告で明記する。
+
+#### 13.11.7 実行前の手順
+
+1. 本節と管理書（版8）の更新をコミットする（作業ツリーをcleanにするため）。
+2. 13.11.1を実行する。
+3. 画面出力、`shared/run.json`、計測の3行を共有する。
+
+維持する事項: 入力不足による保留、選定不能、固定fallbackの診断専用扱い。結果を見て閾値や表現を変更しない。
 
 コミットは行っていない。
