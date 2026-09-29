@@ -391,12 +391,16 @@ stage5_private_work/                      # 領域A全体
 ├── artifact_coverage_DO_NOT_SHARE.json              # summary.json・h5_metrics.csvのhashと対象動画identity（best・last）
 ├── input_audit_DO_NOT_SHARE.json                    # audit: 動画別のdataset形状・解決方法・crop mode（0600）
 ├── geometry_run_DO_NOT_SHARE.json                   # run: alias対応表（identity・パス）、動画別の幾何・推定値・誤差（0600）
+├── run_resource_usage.txt                           # S17-5の計測記録（/usr/bin/time -v）
+├── supplement_error_traceback_DO_NOT_SHARE.txt      # 補完コマンドの想定外の例外時のみ（0600）
 └── error_traceback_DO_NOT_SHARE.txt                 # 想定外の例外時のみ（0600）
 
 <SHARED_JSON>                                        # 集計のみ。書出し前にprivacy検査
   coverage_<best|last>.json                          # 登録: 件数・hash先頭16桁・証拠の成否
   audit.json                                         # audit: 件数（解決方法・crop mode・入力評価不能の理由・NPZキー・hash状態）
   run.json                                           # run: H17-1〜H17-5の集計・状態・注記・限界
+  supplement_registration.json                       # 補完: private記録の登録（hash先頭16桁・証拠の成否）
+  supplement.json                                    # 補完: (e)・H17-1b・H17-5・matchingペア誤差の集計（run.jsonは上書きしない）
 ```
 
 - private側には、実動画ID・実パス・動画別の座標・長さ・端点・誤差が入る。**共有しない。**
