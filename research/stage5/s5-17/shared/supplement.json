@@ -1,0 +1,1399 @@
+{
+  "code": {
+    "git": {
+      "dirty": false,
+      "head": "b77484d76b9033290e1dcfba8a51af7aac431eec"
+    }
+  },
+  "coordinate_space": "raw_frame_px",
+  "e_pseudo3d_reference": {
+    "denominator": "input-evaluable train_core videos",
+    "failures_by_reason": {},
+    "n_videos": 144,
+    "n_without_gt_points": 0,
+    "note": "reference only, never a candidate; not mm and not a bone length",
+    "unit": "pseudo3d_units",
+    "value_pseudo3d_units": {
+      "median": 82.66157239974176,
+      "n_defined": 144,
+      "n_total": 144,
+      "n_undefined": 0,
+      "p90": 128.06289938574977,
+      "q1": 55.27268563652811,
+      "q3": 109.07477858332024
+    }
+  },
+  "h17_1b_bbox_consistency": {
+    "denominator": "videos with >= 1 compared frame; each value is that video's per-frame median",
+    "iou_video_median": {
+      "median": 0.7310791863657986,
+      "n_defined": 144,
+      "n_total": 144,
+      "n_undefined": 0,
+      "p90": 0.890845898694238,
+      "q1": 0.609286194179264,
+      "q3": 0.8202637058961431
+    },
+    "long_side_relative_difference_video_median": {
+      "median": -0.05901425830382804,
+      "n_defined": 144,
+      "n_total": 144,
+      "n_undefined": 0,
+      "p90": 0.011286284564951517,
+      "q1": -0.12310595365031679,
+      "q3": -0.006512508434564466
+    },
+    "n_frames_compared_total": 2145,
+    "n_videos_compared": 144,
+    "n_videos_without_compared_frames": 0,
+    "note": "region enclosing all BBoxes vs region enclosing all GT instances; descriptive, not per-instance agreement. Frame-level values were saved only as per-video summaries, so pooled frame statistics are not available."
+  },
+  "h17_2_matched_pairs": {
+    "note": "errors of matched pairs only: unmatched GT (FN) and unmatched predictions (FP) are not included, so this is not overall performance. center_error is the box centre; matching used centroids.",
+    "sanity_in_sample": {
+      "best": {
+        "P0": {
+          "abs_length_relative_error": {
+            "median": 0.14614657275082737,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 0.7910686961455088,
+            "q1": 0.12593184353427012,
+            "q3": 0.6488056970634443,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 5.466603898046452,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 20.047482605637168,
+            "q1": 3.2427834806770015,
+            "q3": 12.204125767530659,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 9.869455916541932,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 20.583443503501762,
+            "q1": 3.494438486322786,
+            "q3": 12.494199533604421,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 21.40499669631483,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 42.431904405194686,
+            "q1": 18.245611597657486,
+            "q3": 38.02055089888974,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 14.79522253719534,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 29.603076374494073,
+            "q1": 11.283128421858482,
+            "q3": 25.473824165488075,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.1294940936517648,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 0.5822880116578825,
+            "q1": -0.2328517233778712,
+            "q3": 2.8092757343438357e-05,
+            "unit": "ratio"
+          },
+          "n_pairs": 11,
+          "n_videos_with_pairs": 3
+        },
+        "P1": {
+          "abs_length_relative_error": {
+            "median": 0.13950534761134858,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 0.6449222170041703,
+            "q1": 0.12771296859301748,
+            "q3": 0.34425800234673304,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 12.204125767530659,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 23.038696989430065,
+            "q1": 5.621238960750519,
+            "q3": 20.740459836470674,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 12.107762829803079,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 23.27901803493993,
+            "q1": 7.157414064863771,
+            "q3": 20.22029876310628,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 20.485402438364293,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 44.18426238927425,
+            "q1": 18.674528852581844,
+            "q3": 40.152281311423295,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 17.09641918329806,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 24.35887612518834,
+            "q1": 11.422115958804499,
+            "q3": 21.298440354904166,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.12593184353427012,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 0.6449222170041703,
+            "q1": -0.1361847350416092,
+            "q3": 0.1801815867644845,
+            "unit": "ratio"
+          },
+          "n_pairs": 8,
+          "n_videos_with_pairs": 2
+        },
+        "P1+P2": {
+          "abs_length_relative_error": {
+            "median": 0.13950534761134858,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 0.6449222170041703,
+            "q1": 0.12771296859301748,
+            "q3": 0.34425800234673304,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 12.204125767530659,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 23.038696989430065,
+            "q1": 5.621238960750519,
+            "q3": 20.740459836470674,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 12.107762829803079,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 23.27901803493993,
+            "q1": 7.157414064863771,
+            "q3": 20.22029876310628,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 20.485402438364293,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 44.18426238927425,
+            "q1": 18.674528852581844,
+            "q3": 40.152281311423295,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 17.09641918329806,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 24.35887612518834,
+            "q1": 11.422115958804499,
+            "q3": 21.298440354904166,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.12593184353427012,
+            "n_defined": 8,
+            "n_total": 8,
+            "n_undefined": 0,
+            "p90": 0.6449222170041703,
+            "q1": -0.1361847350416092,
+            "q3": 0.1801815867644845,
+            "unit": "ratio"
+          },
+          "n_pairs": 8,
+          "n_videos_with_pairs": 2
+        },
+        "P2": {
+          "abs_length_relative_error": {
+            "median": 0.14614657275082737,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 0.7910686961455088,
+            "q1": 0.12593184353427012,
+            "q3": 0.4509224428313987,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 6.731999672068791,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 23.550409730500768,
+            "q1": 4.9507294433105375,
+            "q3": 21.43343706730418,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 11.22030108218296,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 29.56869194162899,
+            "q1": 6.19288929735275,
+            "q3": 20.341347009904773,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 21.40499669631483,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 48.27309768545991,
+            "q1": 18.245611597657486,
+            "q3": 40.912155676013754,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 14.79522253719534,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 29.603076374494073,
+            "q1": 11.283128421858482,
+            "q3": 21.569414147479023,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.1294940936517648,
+            "n_defined": 11,
+            "n_total": 11,
+            "n_undefined": 0,
+            "p90": 0.5822880116578825,
+            "q1": -0.2055306193302553,
+            "q3": 2.8092757343438357e-05,
+            "unit": "ratio"
+          },
+          "n_pairs": 11,
+          "n_videos_with_pairs": 3
+        },
+        "P3": {
+          "abs_length_relative_error": {
+            "median": 0.6516753740243649,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 0.886281958452979,
+            "q1": 0.42873600604514384,
+            "q3": 0.8300667007321634,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 3.426679314364054,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 21.82124099260692,
+            "q1": 1.114791755853039,
+            "q3": 5.950318873442346,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 8.294896464294672,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 18.641975526787654,
+            "q1": 3.5285060091014078,
+            "q3": 10.477696124645085,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 32.406524050323576,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 43.86278694192625,
+            "q1": 17.40907451638909,
+            "q3": 40.8343513410341,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 22.32479904963115,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 36.98926667838497,
+            "q1": 13.03072702365,
+            "q3": 29.99544509340089,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.6516753740243649,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": -0.25612235220880203,
+            "q1": -0.8300667007321634,
+            "q3": -0.42873600604514384,
+            "unit": "ratio"
+          },
+          "n_pairs": 17,
+          "n_videos_with_pairs": 3
+        }
+      },
+      "last": {
+        "P0": {
+          "abs_length_relative_error": {
+            "median": 0.016330365628939622,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 0.23351138347766195,
+            "q1": 0.005050083143353541,
+            "q3": 0.17853294844812215,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 1.8135756047875393,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 8.365373459531803,
+            "q1": 0.23757969291020278,
+            "q3": 3.788019376775833,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 2.491933672558227,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 9.164900811123044,
+            "q1": 0.5428980974564823,
+            "q3": 7.659840497318862,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 5.568949238331515,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 16.63496552834135,
+            "q1": 0.9785218691355069,
+            "q3": 9.745037979883033,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 3.081945885266534,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 11.776335624845714,
+            "q1": 0.6303271427425099,
+            "q3": 7.675771359937584,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": 0.008859201376470175,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 0.23351138347766195,
+            "q1": -0.0012598795136667185,
+            "q3": 0.17853294844812215,
+            "unit": "ratio"
+          },
+          "n_pairs": 17,
+          "n_videos_with_pairs": 3
+        },
+        "P1": {
+          "abs_length_relative_error": {
+            "median": 0.012794030799444411,
+            "n_defined": 12,
+            "n_total": 12,
+            "n_undefined": 0,
+            "p90": 0.21525667461735196,
+            "q1": 0.004738918971316785,
+            "q3": 0.1380614998932366,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 1.2814822730355226,
+            "n_defined": 12,
+            "n_total": 12,
+            "n_undefined": 0,
+            "p90": 4.752931502672366,
+            "q1": 0.3277112949305644,
+            "q3": 3.279077161307926,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 3.8821953052334086,
+            "n_defined": 12,
+            "n_total": 12,
+            "n_undefined": 0,
+            "p90": 9.34726724808242,
+            "q1": 1.9100972387025128,
+            "q3": 8.876961658651592,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 8.172971303859738,
+            "n_defined": 12,
+            "n_total": 12,
+            "n_undefined": 0,
+            "p90": 21.60459122019337,
+            "q1": 2.7855844272217665,
+            "q3": 12.316296697463962,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 4.319968354030605,
+            "n_defined": 12,
+            "n_total": 12,
+            "n_undefined": 0,
+            "p90": 14.73229987967434,
+            "q1": 2.2736364738023243,
+            "q3": 9.143513574172436,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": 0.006332313915838345,
+            "n_defined": 12,
+            "n_total": 12,
+            "n_undefined": 0,
+            "p90": 0.21525667461735196,
+            "q1": -0.0022074304210884244,
+            "q3": 0.1380614998932366,
+            "unit": "ratio"
+          },
+          "n_pairs": 12,
+          "n_videos_with_pairs": 3
+        },
+        "P1+P2": {
+          "abs_length_relative_error": {
+            "median": 0.0092576959699492,
+            "n_defined": 9,
+            "n_total": 9,
+            "n_undefined": 0,
+            "p90": 0.33673455122393725,
+            "q1": 0.005050083143353541,
+            "q3": 0.07670236752217617,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 2.588020877245707,
+            "n_defined": 9,
+            "n_total": 9,
+            "n_undefined": 0,
+            "p90": 6.100007489806759,
+            "q1": 0.7493889412835057,
+            "q3": 3.788019376775833,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 7.659840497318862,
+            "n_defined": 9,
+            "n_total": 9,
+            "n_undefined": 0,
+            "p90": 13.28561233286046,
+            "q1": 2.352321175726553,
+            "q3": 9.019007661555541,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 9.745037979883033,
+            "n_defined": 9,
+            "n_total": 9,
+            "n_undefined": 0,
+            "p90": 28.870136838898762,
+            "q1": 3.085852089227174,
+            "q3": 12.65926497485973,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 7.675771359937584,
+            "n_defined": 9,
+            "n_total": 9,
+            "n_undefined": 0,
+            "p90": 18.3121560677465,
+            "q1": 2.4851644633774717,
+            "q3": 9.411564220982813,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": 0.003805426455206515,
+            "n_defined": 9,
+            "n_total": 9,
+            "n_undefined": 0,
+            "p90": 0.33673455122393725,
+            "q1": -0.005050083143353541,
+            "q3": 0.07670236752217617,
+            "unit": "ratio"
+          },
+          "n_pairs": 9,
+          "n_videos_with_pairs": 3
+        },
+        "P2": {
+          "abs_length_relative_error": {
+            "median": 0.016330365628939622,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 0.23351138347766195,
+            "q1": 0.005050083143353541,
+            "q3": 0.17853294844812215,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 1.8135756047875393,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 8.365373459531803,
+            "q1": 0.23757969291020278,
+            "q3": 3.788019376775833,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 2.491933672558227,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 9.164900811123044,
+            "q1": 0.5428980974564823,
+            "q3": 7.659840497318862,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 5.568949238331515,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 16.63496552834135,
+            "q1": 0.9785218691355069,
+            "q3": 9.745037979883033,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 3.081945885266534,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 11.776335624845714,
+            "q1": 0.6303271427425099,
+            "q3": 7.675771359937584,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": 0.008859201376470175,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 0.23351138347766195,
+            "q1": -0.0012598795136667185,
+            "q3": 0.17853294844812215,
+            "unit": "ratio"
+          },
+          "n_pairs": 17,
+          "n_videos_with_pairs": 3
+        },
+        "P3": {
+          "abs_length_relative_error": {
+            "median": 0.34157943322412154,
+            "n_defined": 23,
+            "n_total": 23,
+            "n_undefined": 0,
+            "p90": 0.8048268928326199,
+            "q1": 0.23917717556110965,
+            "q3": 0.6470581063760353,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 4.252853475913928,
+            "n_defined": 23,
+            "n_total": 23,
+            "n_undefined": 0,
+            "p90": 16.310116732201173,
+            "q1": 2.131969583481885,
+            "q3": 8.960679090639132,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 6.25370845666455,
+            "n_defined": 23,
+            "n_total": 23,
+            "n_undefined": 0,
+            "p90": 28.791279129899163,
+            "q1": 3.1762206349586624,
+            "q3": 16.108530090617958,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 15.548631834788244,
+            "n_defined": 23,
+            "n_total": 23,
+            "n_undefined": 0,
+            "p90": 64.21232293984846,
+            "q1": 8.993015643050036,
+            "q3": 36.30156939149465,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 10.26440334716671,
+            "n_defined": 23,
+            "n_total": 23,
+            "n_undefined": 0,
+            "p90": 35.92422314686738,
+            "q1": 5.82897203518367,
+            "q3": 24.106964360025977,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.34157943322412154,
+            "n_defined": 23,
+            "n_total": 23,
+            "n_undefined": 0,
+            "p90": -0.04464565508577001,
+            "q1": -0.6470581063760353,
+            "q3": -0.23917717556110965,
+            "unit": "ratio"
+          },
+          "n_pairs": 23,
+          "n_videos_with_pairs": 3
+        }
+      }
+    },
+    "validation": {
+      "best": {
+        "P0": {
+          "abs_length_relative_error": {
+            "median": 0.3720084425508606,
+            "n_defined": 166,
+            "n_total": 167,
+            "n_undefined": 1,
+            "p90": 0.9617555872567349,
+            "q1": 0.1720087254286911,
+            "q3": 0.7562599492781502,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 6.928935916792382,
+            "n_defined": 166,
+            "n_total": 167,
+            "n_undefined": 1,
+            "p90": 39.11318455404336,
+            "q1": 2.3428314282764826,
+            "q3": 15.297654013299987,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 3.294065220719226,
+            "n_defined": 167,
+            "n_total": 167,
+            "n_undefined": 0,
+            "p90": 13.618685268113905,
+            "q1": 1.6387121130466782,
+            "q3": 6.477155310138457,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 11.78924498448435,
+            "n_defined": 166,
+            "n_total": 167,
+            "n_undefined": 1,
+            "p90": 35.82571821679235,
+            "q1": 5.4642931321428945,
+            "q3": 25.717687122451323,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 8.379629138331033,
+            "n_defined": 166,
+            "n_total": 167,
+            "n_undefined": 1,
+            "p90": 29.408639938156746,
+            "q1": 4.172471277791281,
+            "q3": 18.855362023616465,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.1933942602078497,
+            "n_defined": 166,
+            "n_total": 167,
+            "n_undefined": 1,
+            "p90": 0.876891064376843,
+            "q1": -0.441005443136121,
+            "q3": 0.06473814851700951,
+            "unit": "ratio"
+          },
+          "n_pairs": 167,
+          "n_videos_with_pairs": 16
+        },
+        "P1": {
+          "abs_length_relative_error": {
+            "median": 0.4272607773448588,
+            "n_defined": 58,
+            "n_total": 58,
+            "n_undefined": 0,
+            "p90": 2.015707076719145,
+            "q1": 0.17090838014165996,
+            "q3": 1.1294006558767447,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 4.123164064915213,
+            "n_defined": 58,
+            "n_total": 58,
+            "n_undefined": 0,
+            "p90": 41.47547771452421,
+            "q1": 1.9455065563708904,
+            "q3": 17.220278883123132,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 4.569972558863183,
+            "n_defined": 58,
+            "n_total": 58,
+            "n_undefined": 0,
+            "p90": 18.62156847247025,
+            "q1": 1.8546330762430052,
+            "q3": 12.870877179582042,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 23.707754471198065,
+            "n_defined": 58,
+            "n_total": 58,
+            "n_undefined": 0,
+            "p90": 39.21351298948288,
+            "q1": 9.4859094940865,
+            "q3": 31.589546390961864,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 18.061059652332553,
+            "n_defined": 58,
+            "n_total": 58,
+            "n_undefined": 0,
+            "p90": 31.656887472413526,
+            "q1": 7.1220616960352805,
+            "q3": 25.9938315767789,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": 0.16633479772180665,
+            "n_defined": 58,
+            "n_total": 58,
+            "n_undefined": 0,
+            "p90": 2.015707076719145,
+            "q1": -0.15216422639280358,
+            "q3": 1.1294006558767447,
+            "unit": "ratio"
+          },
+          "n_pairs": 58,
+          "n_videos_with_pairs": 8
+        },
+        "P1+P2": {
+          "abs_length_relative_error": {
+            "median": 0.4661070748239734,
+            "n_defined": 56,
+            "n_total": 56,
+            "n_undefined": 0,
+            "p90": 2.0200348972861137,
+            "q1": 0.17422585382453257,
+            "q3": 1.2253731544570499,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 4.123164064915213,
+            "n_defined": 56,
+            "n_total": 56,
+            "n_undefined": 0,
+            "p90": 42.118121692968124,
+            "q1": 1.8853099819653152,
+            "q3": 17.77629268227866,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 4.569972558863183,
+            "n_defined": 56,
+            "n_total": 56,
+            "n_undefined": 0,
+            "p90": 18.970300798115694,
+            "q1": 1.8516824741964233,
+            "q3": 13.027122285897772,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 24.101652793894367,
+            "n_defined": 56,
+            "n_total": 56,
+            "n_undefined": 0,
+            "p90": 39.319546760619545,
+            "q1": 9.55435186368204,
+            "q3": 31.845251062125534,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 18.804182419758163,
+            "n_defined": 56,
+            "n_total": 56,
+            "n_undefined": 0,
+            "p90": 31.664146038766138,
+            "q1": 7.554962249710411,
+            "q3": 26.76401292303998,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": 0.2289084166121368,
+            "n_defined": 56,
+            "n_total": 56,
+            "n_undefined": 0,
+            "p90": 2.0200348972861137,
+            "q1": -0.0998652828472317,
+            "q3": 1.2253731544570499,
+            "unit": "ratio"
+          },
+          "n_pairs": 56,
+          "n_videos_with_pairs": 7
+        },
+        "P2": {
+          "abs_length_relative_error": {
+            "median": 0.3645057946358154,
+            "n_defined": 164,
+            "n_total": 165,
+            "n_undefined": 1,
+            "p90": 0.9639329593930849,
+            "q1": 0.1703214117522936,
+            "q3": 0.7617568067092247,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 6.928935916792382,
+            "n_defined": 164,
+            "n_total": 165,
+            "n_undefined": 1,
+            "p90": 39.316033460061334,
+            "q1": 2.318527403297347,
+            "q3": 15.332550937206296,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 3.276071531969385,
+            "n_defined": 165,
+            "n_total": 165,
+            "n_undefined": 0,
+            "p90": 13.726842276589249,
+            "q1": 1.6377538865447931,
+            "q3": 6.1192273347484045,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 11.602211971038134,
+            "n_defined": 164,
+            "n_total": 165,
+            "n_undefined": 1,
+            "p90": 35.898499987939914,
+            "q1": 5.435485813298665,
+            "q3": 25.613526943782517,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 8.269147787137332,
+            "n_defined": 164,
+            "n_total": 165,
+            "n_undefined": 1,
+            "p90": 29.449683018723857,
+            "q1": 4.138781181428582,
+            "q3": 18.945449724319342,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.19219276862090046,
+            "n_defined": 164,
+            "n_total": 165,
+            "n_undefined": 1,
+            "p90": 0.9086595013924529,
+            "q1": -0.42977382124653146,
+            "q3": 0.0697871188609275,
+            "unit": "ratio"
+          },
+          "n_pairs": 165,
+          "n_videos_with_pairs": 15
+        },
+        "P3": {
+          "abs_length_relative_error": {
+            "median": 0.420291333695879,
+            "n_defined": 211,
+            "n_total": 211,
+            "n_undefined": 0,
+            "p90": 0.8740244689308684,
+            "q1": 0.2333863666713598,
+            "q3": 0.7412202947219704,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 7.747470672239083,
+            "n_defined": 211,
+            "n_total": 211,
+            "n_undefined": 0,
+            "p90": 34.84285892181502,
+            "q1": 3.044600477408265,
+            "q3": 15.57371626044852,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 3.5092680359635477,
+            "n_defined": 211,
+            "n_total": 211,
+            "n_undefined": 0,
+            "p90": 9.710773368973264,
+            "q1": 1.8868257004366256,
+            "q3": 6.064295974876605,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 9.714423083877312,
+            "n_defined": 211,
+            "n_total": 211,
+            "n_undefined": 0,
+            "p90": 29.77736271752298,
+            "q1": 4.834582023767341,
+            "q3": 17.972870867840726,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 6.90208828094966,
+            "n_defined": 211,
+            "n_total": 211,
+            "n_undefined": 0,
+            "p90": 22.295206164466318,
+            "q1": 3.9870274246227857,
+            "q3": 13.990032152690553,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.35219325571330273,
+            "n_defined": 211,
+            "n_total": 211,
+            "n_undefined": 0,
+            "p90": 0.24891652720243398,
+            "q1": -0.6660397484373917,
+            "q3": -0.08852447355113122,
+            "unit": "ratio"
+          },
+          "n_pairs": 211,
+          "n_videos_with_pairs": 16
+        }
+      },
+      "last": {
+        "P0": {
+          "abs_length_relative_error": {
+            "median": 0.5555833276577776,
+            "n_defined": 29,
+            "n_total": 29,
+            "n_undefined": 0,
+            "p90": 0.7657119787015354,
+            "q1": 0.44993994156104106,
+            "q3": 0.6864898035321674,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 12.896602469387568,
+            "n_defined": 29,
+            "n_total": 29,
+            "n_undefined": 0,
+            "p90": 34.721921551394885,
+            "q1": 4.699375225006875,
+            "q3": 22.96806432266175,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 6.723053559011222,
+            "n_defined": 29,
+            "n_total": 29,
+            "n_undefined": 0,
+            "p90": 17.860986568576124,
+            "q1": 3.5151889741513997,
+            "q3": 12.359495118317756,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 14.387817125552168,
+            "n_defined": 29,
+            "n_total": 29,
+            "n_undefined": 0,
+            "p90": 33.8961656232619,
+            "q1": 10.750775914538304,
+            "q3": 22.587898102345576,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 11.042997392011326,
+            "n_defined": 29,
+            "n_total": 29,
+            "n_undefined": 0,
+            "p90": 19.854921793794496,
+            "q1": 6.656973309011982,
+            "q3": 12.74583825728982,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.5555833276577776,
+            "n_defined": 29,
+            "n_total": 29,
+            "n_undefined": 0,
+            "p90": -0.3986241725339819,
+            "q1": -0.6864898035321674,
+            "q3": -0.44993994156104106,
+            "unit": "ratio"
+          },
+          "n_pairs": 29,
+          "n_videos_with_pairs": 7
+        },
+        "P1": {
+          "abs_length_relative_error": {
+            "median": 0.5555833276577776,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 0.7365717514084984,
+            "q1": 0.4836965998634088,
+            "q3": 0.6520208072199298,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 12.023555260956625,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 36.07586977466356,
+            "q1": 7.12893333817158,
+            "q3": 22.816075283485162,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 7.290584062673523,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 21.39114949803998,
+            "q1": 4.401667475914352,
+            "q3": 15.133030362854697,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 18.747731346115817,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 40.50853048102313,
+            "q1": 13.014557347499089,
+            "q3": 33.65625344725267,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 12.373647123501318,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": 26.601950368548167,
+            "q1": 7.550194400768346,
+            "q3": 19.03281999720153,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.5555833276577776,
+            "n_defined": 17,
+            "n_total": 17,
+            "n_undefined": 0,
+            "p90": -0.4390813562923082,
+            "q1": -0.6520208072199298,
+            "q3": -0.4836965998634088,
+            "unit": "ratio"
+          },
+          "n_pairs": 17,
+          "n_videos_with_pairs": 6
+        },
+        "P1+P2": {
+          "abs_length_relative_error": {
+            "median": 0.5555833276577776,
+            "n_defined": 15,
+            "n_total": 15,
+            "n_undefined": 0,
+            "p90": 0.7086148486207483,
+            "q1": 0.4872232520998873,
+            "q3": 0.6345002222743682,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 16.60557861239759,
+            "n_defined": 15,
+            "n_total": 15,
+            "n_undefined": 0,
+            "p90": 36.12179846930797,
+            "q1": 8.328276648235509,
+            "q3": 22.892069803073454,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 7.290584062673523,
+            "n_defined": 15,
+            "n_total": 15,
+            "n_undefined": 0,
+            "p90": 23.06614868192309,
+            "q1": 3.934771419293171,
+            "q3": 16.47448789550321,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 18.747731346115817,
+            "n_defined": 15,
+            "n_total": 15,
+            "n_undefined": 0,
+            "p90": 43.69029988258098,
+            "q1": 12.075134143368077,
+            "q3": 33.745106278426604,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 12.373647123501318,
+            "n_defined": 15,
+            "n_total": 15,
+            "n_undefined": 0,
+            "p90": 29.781881192066813,
+            "q1": 7.861193747837717,
+            "q3": 19.39547502953347,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.5555833276577776,
+            "n_defined": 15,
+            "n_total": 15,
+            "n_undefined": 0,
+            "p90": -0.43642403633765303,
+            "q1": -0.6345002222743682,
+            "q3": -0.4872232520998873,
+            "unit": "ratio"
+          },
+          "n_pairs": 15,
+          "n_videos_with_pairs": 4
+        },
+        "P2": {
+          "abs_length_relative_error": {
+            "median": 0.5268644266913907,
+            "n_defined": 26,
+            "n_total": 26,
+            "n_undefined": 0,
+            "p90": 0.7560776940671972,
+            "q1": 0.4496998372886182,
+            "q3": 0.6432605147471491,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 14.75109054089258,
+            "n_defined": 26,
+            "n_total": 26,
+            "n_undefined": 0,
+            "p90": 33.15515225108191,
+            "q1": 6.116825114561802,
+            "q3": 22.930067062867604,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 7.006818810842373,
+            "n_defined": 26,
+            "n_total": 26,
+            "n_undefined": 0,
+            "p90": 17.928548279212734,
+            "q1": 3.7368085995921376,
+            "q3": 12.163841556649498,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 14.626232381092716,
+            "n_defined": 26,
+            "n_total": 26,
+            "n_undefined": 0,
+            "p90": 33.989475393753956,
+            "q1": 11.12131164265727,
+            "q3": 22.27775228385877,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 11.236932806213897,
+            "n_defined": 26,
+            "n_total": 26,
+            "n_undefined": 0,
+            "p90": 20.00010939168813,
+            "q1": 6.8018866373616085,
+            "q3": 12.726398518424883,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.5268644266913907,
+            "n_defined": 26,
+            "n_total": 26,
+            "n_undefined": 0,
+            "p90": -0.39340115619859883,
+            "q1": -0.6432605147471491,
+            "q3": -0.4496998372886182,
+            "unit": "ratio"
+          },
+          "n_pairs": 26,
+          "n_videos_with_pairs": 5
+        },
+        "P3": {
+          "abs_length_relative_error": {
+            "median": 0.5485847257628271,
+            "n_defined": 52,
+            "n_total": 52,
+            "n_undefined": 0,
+            "p90": 0.8555923294625934,
+            "q1": 0.42545691588662427,
+            "q3": 0.7784169797353288,
+            "unit": "ratio"
+          },
+          "axis_angle_error_deg": {
+            "median": 11.129559829006496,
+            "n_defined": 52,
+            "n_total": 52,
+            "n_undefined": 0,
+            "p90": 31.59042905080176,
+            "q1": 6.093450020065082,
+            "q3": 17.079018172507844,
+            "unit": "deg"
+          },
+          "center_error": {
+            "median": 7.4384577325502335,
+            "n_defined": 52,
+            "n_total": 52,
+            "n_undefined": 0,
+            "p90": 17.98650578142789,
+            "q1": 2.827283156083154,
+            "q3": 12.599311454578611,
+            "unit": "raw_px"
+          },
+          "denominator": "M3-matched GT/prediction instance pairs (conditional on a match)",
+          "endpoint_error_max": {
+            "median": 17.44275927427499,
+            "n_defined": 52,
+            "n_total": 52,
+            "n_undefined": 0,
+            "p90": 40.51436226516302,
+            "q1": 10.056756874084643,
+            "q3": 27.51712743499123,
+            "unit": "raw_px"
+          },
+          "endpoint_error_mean": {
+            "median": 11.498093521567984,
+            "n_defined": 52,
+            "n_total": 52,
+            "n_undefined": 0,
+            "p90": 28.145568464181387,
+            "q1": 7.610228021268957,
+            "q3": 19.852367284895458,
+            "unit": "raw_px"
+          },
+          "length_relative_error": {
+            "median": -0.5485847257628271,
+            "n_defined": 52,
+            "n_total": 52,
+            "n_undefined": 0,
+            "p90": -0.3073327968760808,
+            "q1": -0.7784169797353288,
+            "q3": -0.42545691588662427,
+            "unit": "ratio"
+          },
+          "n_pairs": 52,
+          "n_videos_with_pairs": 9
+        }
+      }
+    }
+  },
+  "h17_5_multiple_instances": {
+    "denominator": "GT frames with >= 2 instances (train_core, input-evaluable)",
+    "m1_m2_length_diff_over_10pct_frames": 266,
+    "multi_instance_frames": 269,
+    "n_videos": 144,
+    "n_videos_with_multi_instance_frames": 35,
+    "note": "descriptive; M1 vs M2 (b) length difference > 10 %; neither rule is judged correct",
+    "share_of_multi_instance_frames": 0.9888475836431226
+  },
+  "inputs": {
+    "private_record_sha256_16": "93881f0fe6b0fe61",
+    "reads": "private record values only; no H5, NPZ or teacher generation CSV; no recomputation",
+    "shared_run_sha256": "3348f49823967676d2ded96504725b91e4dda8659def089a1094ecbfcfd9035d"
+  },
+  "limits": [
+    "GT-derived quantities only; no clinical reference; not a clinical FL accuracy.",
+    "Lengths are in original-frame pixels assuming isotropic x/y; mm is not established.",
+    "Files are the unit; same-exam sibling files are present, so per-video statistics understate exam-level spread.",
+    "Validation is a development set already used for method choices; the best post-process is chosen on it.",
+    "Old train/validation share 4 exam groups (17 files in total across both); the validation-side count is unconfirmed.",
+    "Single training run and seed.",
+    "The private record's link to the run rests on the operator's attestation of generation and custody with supporting file metadata, not on a generation-time hash."
+  ],
+  "schema": "stage5_s5_17_geometry_supplement_v1",
+  "supplements": "stage5_s5_17_geometry_summary_v1 (S17-5 run)",
+  "verification": {
+    "alias_identity_split": "exact",
+    "recomputed_shared_aggregates": {
+      "fp_totals": 20,
+      "h17_1_holdout": 4,
+      "within_counts": 60
+    }
+  }
+}

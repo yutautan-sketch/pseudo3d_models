@@ -1,0 +1,44 @@
+{
+  "counts": {
+    "datasets": {
+      "train_core:complete": 144,
+      "validation:complete": 18
+    },
+    "input": {
+      "train_core:evaluable": 144,
+      "validation:evaluable": 18
+    },
+    "mode": {
+      "train_core:resize_shorter_then_offset_crop": 144,
+      "validation:resize_shorter_then_offset_crop": 18
+    },
+    "resolution": {
+      "train_core:recorded_source_attr": 144,
+      "validation:recorded_source_attr": 18
+    }
+  },
+  "evaluation_runs": {
+    "best": {
+      "hash_state": {
+        "checkpoint": "unknown",
+        "evaluation_revision": "unknown"
+      },
+      "status": "coverage_ok"
+    },
+    "last": {
+      "hash_state": {
+        "checkpoint": "unknown",
+        "evaluation_revision": "unknown"
+      },
+      "status": "coverage_ok"
+    }
+  },
+  "metadata_only": true,
+  "npz": {
+    "best:train_sanity:keys_complete": 3,
+    "best:validation:keys_complete": 18,
+    "last:train_sanity:keys_complete": 3,
+    "last:validation:keys_complete": 18
+  },
+  "schema": "stage5_s5_17_input_audit_v1"
+}

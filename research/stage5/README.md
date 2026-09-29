@@ -15,3 +15,5 @@
 | [s5-13](s5-13/README.md) | Class weight W-A/W-B/W-C・threshold-free診断 |
 | [s5-14](s5-14/README.md) | frame・XY密度・時間反復・overlap exposure診断 |
 | [s5-15](s5-15/README.md) | R0/R1回転比較・R0長期評価（260917/260919） |
+| [s5-16](s5-16/README.md) | Step 0のFL前提確認用参照コード |
+| [s5-17](s5-17/README.md) | 幾何診断の登録・監査・評価・補完集計の共有JSON |

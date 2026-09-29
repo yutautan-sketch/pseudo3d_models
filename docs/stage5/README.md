@@ -66,12 +66,21 @@ Step 0の担当開始には[実装依頼書](s5-16/stage5_step0_implementation_h
 - [stage5_step0_report_to_policy_chat.md](s5-16/stage5_step0_report_to_policy_chat.md)：S5-16文書同期・Step 0残務と受入記録
 - [stage5_step0_implementation_handoff.md](s5-16/stage5_step0_implementation_handoff.md)：Step 0の分割・封印・train_core専用weight・メタ情報確認の実装依頼
 
+- [stage5_s5_16_step0_2b_confirmation_request.md](s5-16/stage5_s5_16_step0_2b_confirmation_request.md)：S5-16 Step 0: 工程2b（分割確定・封印）実施の確認依頼
+- [stage5_s5_16_step0_acceptance_request.md](s5-16/stage5_s5_16_step0_acceptance_request.md)：S5-16 Step 0: 完了受入の依頼（S0-7）
+- [stage5_s5_16_step0_fl_premise_decision_request.md](s5-16/stage5_s5_16_step0_fl_premise_decision_request.md)：S5-16 Step 0: FL参照値の前提相違と層化変数の判断依頼
+- [stage5_s5_16_step0_stratification_spec_proposal.md](s5-16/stage5_s5_16_step0_stratification_spec_proposal.md)：S5-16 Step 0: 層化専用量の仕様（9.2.8への回答、確定版）
+- [Step 0前提確認の参照資料](../../research/stage5/s5-16/README.md)：FL値の由来確認に使った原本スクリプト
+
 ## S5-17
 
+- [stage5_s5_17_summary_report.md](s5-17/stage5_s5_17_summary_report.md)：S5-17全体報告書。成果・結果・解釈・限界、S5-20で必要となる情報、記録ファイル一覧（クローズ時点のまとめ）。
 - [stage5_s5_17_implementation_management.md](s5-17/stage5_s5_17_implementation_management.md)：現行の実装・検証方針、ステップ、実行条件と状態。
 - [stage5_s5_17_report_to_policy_chat.md](s5-17/stage5_s5_17_report_to_policy_chat.md)：提案・判断・修正・実行結果・依頼の履歴。
 
 - [stage5_s5_17_implementation_handoff.md](s5-17/stage5_s5_17_implementation_handoff.md)：新規実装チャット向け依頼書。Step 0確定事項、H17-1再設計、封印・入力契約、初回報告と実行条件。
+
+- [S5-17共有JSON](../../research/stage5/s5-17/README.md)：監査・登録・幾何診断・補完集計
 
 ## 関連資料
 

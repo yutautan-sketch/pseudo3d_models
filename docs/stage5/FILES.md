@@ -2,6 +2,7 @@
 
 ## 全体管理・共通資料
 
+- `s5-17/stage5_s5_17_summary_report.md`: S5-17 summary report at closure -- deliverables, results, confirmed interpretation, limits, what S5-20 needs, S5-18/19 usage contract and the list of record files (shared JSONs with hashes, private records). Start here for S5-17 outcomes.
 - `s5-17/stage5_s5_17_implementation_management.md`: current S5-17 implementation/validation policy, steps and execution gates; no change log.
 - `s5-17/stage5_s5_17_report_to_policy_chat.md`: S5-17 proposals, decisions, changes, requests and verification history.
 
@@ -83,6 +84,16 @@
 - [stage5_s5_16_to_s5_20_policy_chat_transfer.md](s5-16/stage5_s5_16_to_s5_20_policy_chat_transfer.md)：Stage 5: S5-16〜S5-20 総括管理チャットへの引き継ぎ
 - [stage5_step0_report_to_policy_chat.md](s5-16/stage5_step0_report_to_policy_chat.md)：S5-16文書同期・Step 0残務と受入記録
 - [stage5_step0_implementation_handoff.md](s5-16/stage5_step0_implementation_handoff.md)：Step 0の分割・封印・train_core専用weight・メタ情報確認の実装依頼
+
+- [stage5_s5_16_step0_2b_confirmation_request.md](s5-16/stage5_s5_16_step0_2b_confirmation_request.md)：S5-16 Step 0: 工程2b（分割確定・封印）実施の確認依頼
+- [stage5_s5_16_step0_acceptance_request.md](s5-16/stage5_s5_16_step0_acceptance_request.md)：S5-16 Step 0: 完了受入の依頼（S0-7）
+- [stage5_s5_16_step0_fl_premise_decision_request.md](s5-16/stage5_s5_16_step0_fl_premise_decision_request.md)：S5-16 Step 0: FL参照値の前提相違と層化変数の判断依頼
+- [stage5_s5_16_step0_stratification_spec_proposal.md](s5-16/stage5_s5_16_step0_stratification_spec_proposal.md)：S5-16 Step 0: 層化専用量の仕様（9.2.8への回答、確定版）
+- [Step 0前提確認の参照資料](../../research/stage5/s5-16/README.md)：FL値の由来確認に使った原本スクリプト
+
+## 調査成果物
+
+- [S5-17共有JSON](../../research/stage5/s5-17/README.md)：S17-4/S17-5と補完集計の共有結果6件
 
 ## Core code
 

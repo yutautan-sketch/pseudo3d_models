@@ -1,0 +1,18 @@
+{
+  "checkpoint_name": "last",
+  "evidence": {
+    "checkpoint_name": "last",
+    "contents_parsed_before_registration": false,
+    "directory_named_by_user": true,
+    "prediction_names_match_sanity3_validation18": true,
+    "registered_utc": "2026-09-29T03:46:32+00:00",
+    "validation_list_matches_s5_15_launcher": true
+  },
+  "git_dirty": false,
+  "n_videos_covered": 21,
+  "schema": "stage5_s5_17_coverage_registration_v1",
+  "sha256_16": {
+    "last/h5_metrics.csv": "12f785f24ab9c113",
+    "last/summary.json": "f0a1e2b2adf7b02b"
+  }
+}

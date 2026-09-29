@@ -1518,7 +1518,7 @@ Step 0はS0-1〜S0-7のいずれも未完了である。次は実機で14.4の�
 ## 15. FL参照値の由来に関する前提の訂正（2026-09-26）
 
 担当: Step 0実装チャット。状態: **前提の相違を報告。総括管理の判断待ち。実装・実機実行は行っていない。**
-ユーザー回答（mmスケールの供給元、FL値の由来）と`.tmp/mk_legcase_json.py`の確認結果を記録する。
+ユーザー回答（mmスケールの供給元、FL値の由来）と`research/stage5/s5-16/step0/reference_scripts/mk_legcase_json.py`の確認結果を記録する。
 **S5-16 9.1に記録された前提と相違があり、S5-17の仮説H17-1に影響する。**
 
 ### 15.1 mmスケール（9.7-2・管理判断4への回答）
@@ -1535,14 +1535,14 @@ Step 0はS0-1〜S0-7のいずれも未完了である。次は実機で14.4の�
 ### 15.2 FL値の由来（**前提の相違**）
 
 S5-16 9.1はユーザー回答として「FL参照値: **臨床計測値**が動画ごとに存在する」と記録している。
-今回の回答と`mk_legcase_json.py`の確認により、実際は次のとおりであることが判明した。
+今回の回答と[`mk_legcase_json.py`](../../../research/stage5/s5-16/step0/reference_scripts/mk_legcase_json.py)の確認により、実際は次のとおりであることが判明した。
 
 | 区分 | 実態 |
 | --- | --- |
 | アノテーション済み180動画のFL値 | **BBoxアノテーション由来の導出値**。臨床計測値ではない |
 | 真の実測FL値を持つデータ | 存在するが、**BBoxを含むアノテーションが未付与**。かつ実測は動画取得とは別に行われており、**動画に映る大腿骨長と一致しない可能性がある**（ユーザー申告） |
 
-`mk_legcase_json.py`の`femur_traj_len`が実際に計算している値:
+[`mk_legcase_json.py`](../../../research/stage5/s5-16/step0/reference_scripts/mk_legcase_json.py)の`femur_traj_len`が実際に計算している値:
 
 1. 各frameで`leg` BBoxを切り出し、median blur背景差分＋CLAHE＋Otsu二値化を行い、
    **最大輪郭の重心**を求める（輪郭が取れない場合はBBox中心へフォールバック）。
@@ -1578,7 +1578,7 @@ S5-16 10.1のH17-1は「GTから導くどの幾何表現・代理FL定義が、*
 
 1. **teacher v7 H5に端点情報が無い。** 必須datasetは`point_cloud/frame_order`、`annotation/point_label`、
    `annotation/valid_mask`、`frame_annotation/*`、各invalidation groupであり、
-   `mk_legcase_json.py`が使う`start`/`end`マーカーに相当するものは含まれない（確認済み）。
+   [`mk_legcase_json.py`](../../../research/stage5/s5-16/step0/reference_scripts/mk_legcase_json.py)が使う`start`/`end`マーカーに相当するものは含まれない（確認済み）。
 2. **マスクから端点を定義して代理FLを作る作業は、S5-17そのものである。**
    S5-16 10.1が「(a)〜(e)の幾何表現を比較し、事前規則で1つを選んで固定する」と定めた対象であり、
    Step 0依頼書6章は「ここでは代理FLを計算・選択せず、`T_FL`も推定しない」と明記している。
@@ -1655,7 +1655,7 @@ S5-16 11.5は「A案の準備はS5-17〜S5-20と並行して進めてよい。�
 担当: Step 0実装チャット。状態: **実装完了。本環境で実行できた合成テストは全合格。
 numpy/h5py依存の3本は実機未実行。実機のS0-1・工程2a以降とコミットは未実施。**
 対象: 管理チャットが確定した層化量`gt_positive_frame_count`と中央値の成立条件、
-および軽微な補足・訂正4件（`.tmp/stage5_s5_16_step0_stratification_spec_proposal.md`版3）。
+および軽微な補足・訂正4件（`docs/stage5/s5-16/stage5_s5_16_step0_stratification_spec_proposal.md`版3）。
 
 ### 16.1 進行順の1（管理記録への決定記載）
 
@@ -2600,7 +2600,7 @@ dry runも確定もやり直せない。これは「正常なsplit確定は1回�
 
 担当: Step 0実装チャット（管理回答の同期）。
 状態: **承認の記録である。工程2bは未実施であり、完了・pin登録・Step 0受入の記録ではない。**
-原文: `.tmp/stage5_s5_16_step0_2b_confirmation_request.md`8章。
+原文: `docs/stage5/s5-16/stage5_s5_16_step0_2b_confirmation_request.md`8章。
 
 ### 28.1 承認内容
 

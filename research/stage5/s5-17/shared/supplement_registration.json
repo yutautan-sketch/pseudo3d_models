@@ -1,0 +1,24 @@
+{
+  "evidence": {
+    "contents_parsed_before_registration": false,
+    "elapsed_seconds": 173.03,
+    "link_basis": "operator attestation of generation and custody, supported by file metadata; not a generation-time hash",
+    "mtime_order_private_shared_resource_within_window": true,
+    "operator_attestation": {
+      "attested_full_sha256_matches": true,
+      "reference": "S5-17 report 14.15",
+      "statements": [
+        "written directly by the approved S17-5 run",
+        "not overwritten, edited or replaced since"
+      ]
+    },
+    "private_mode_0600": true,
+    "registered_utc": "2026-09-29T07:32:10+00:00",
+    "resource_exit_status_0_mode_run_pixel": true,
+    "shared_run_sha256": "3348f49823967676d2ded96504725b91e4dda8659def089a1094ecbfcfd9035d"
+  },
+  "git_dirty": false,
+  "n_videos_covered": 162,
+  "private_record_sha256_16": "93881f0fe6b0fe61",
+  "schema": "stage5_s5_17_supplement_registration_v1"
+}

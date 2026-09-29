@@ -1,0 +1,4049 @@
+{
+  "constants_from_train_core": {
+    "p2_definition": "0.5 x median M1 (b) length over train_core frames where it is defined",
+    "p2_distance_raw_px": 15.459296601619856,
+    "p2_frames_length_undefined": 3,
+    "p2_source_frames": 2143,
+    "p3_definition": "median valid GT-positive points per frame with >= 1 valid GT-positive point",
+    "p3_source_frames": 2146,
+    "p3_top_k": 230
+  },
+  "contract": {
+    "manifest": "s5_16_bprime",
+    "train_core_identity16": "fa8429e30b7c8724",
+    "validation_identity16": "de3f3d513fc0bf41"
+  },
+  "coordinate_mode": "pixel",
+  "coordinate_space": "raw_frame_px",
+  "git": {
+    "dirty": false
+  },
+  "h17_1": {
+    "input": {
+      "evaluable": 144,
+      "minimum": 130,
+      "modes_entirely_excluded": 0,
+      "suspended": false
+    },
+    "per_representation": {
+      "a_aabb": {
+        "candidate_rule": {
+          "baseline_failures": 0,
+          "failing_cells": [],
+          "max_p90": 0.09525663932583604,
+          "max_p90_is_worst": false,
+          "status": "pass",
+          "worst_videos_by_cell": {
+            "fp_0.1": 0,
+            "fp_0.3": 0,
+            "jitter_1": 0,
+            "thin_0.5": 0,
+            "thin_0.75": 0
+          }
+        },
+        "denominators": {
+          "evaluable": 144,
+          "input_unevaluable": 0,
+          "input_unevaluable_by_reason": {},
+          "method_failure": 0,
+          "method_failure_by_reason": {},
+          "method_failure_rate_of_evaluable": 0.0,
+          "success": 144,
+          "total": 144
+        },
+        "holdout_coverage_descriptive": {
+          "median": 0.9970579073067738,
+          "n_defined": 140,
+          "n_total": 144,
+          "n_undefined": 4,
+          "p90": 1.0,
+          "q1": 0.9928991683669444,
+          "q3": 1.0
+        },
+        "relative_inflation_descriptive": {
+          "median": 1.423982107713599,
+          "n_defined": 144,
+          "n_total": 144,
+          "n_undefined": 0,
+          "p90": 2.0045865440729873,
+          "q1": 1.3474005416147177,
+          "q3": 1.6206039736416245
+        },
+        "stability_cells": {
+          "fp_0.1": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.012058823529411842,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.01250000000000008,
+              "p90_is_worst": false
+            }
+          },
+          "fp_0.3": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.051150497512438,
+              "q1": 0.0,
+              "q3": 0.024355932203389826
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.05223880597014943,
+              "p90_is_worst": false
+            }
+          },
+          "jitter_1": {
+            "descriptive_success_only": {
+              "median": 0.0487498573332904,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.09521682645287785,
+              "q1": 0.02785544571925141,
+              "q3": 0.07775962618427942
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.048587358189514214,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.09525663932583604,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.5": {
+            "descriptive_success_only": {
+              "median": 0.0032747550300933183,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.027652801358234048,
+              "q1": 0.0,
+              "q3": 0.013249984423999616
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.003257328990227921,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.028225806451612503,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.75": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.006913536877797115,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.007117437722420197,
+              "p90_is_worst": false
+            }
+          }
+        }
+      },
+      "b_obb": {
+        "candidate_rule": {
+          "baseline_failures": 0,
+          "failing_cells": [],
+          "max_p90": 0.027712437980987187,
+          "max_p90_is_worst": false,
+          "status": "pass",
+          "worst_videos_by_cell": {
+            "fp_0.1": 0,
+            "fp_0.3": 0,
+            "jitter_1": 0,
+            "thin_0.5": 0,
+            "thin_0.75": 0
+          }
+        },
+        "denominators": {
+          "evaluable": 144,
+          "input_unevaluable": 0,
+          "input_unevaluable_by_reason": {},
+          "method_failure": 0,
+          "method_failure_by_reason": {},
+          "method_failure_rate_of_evaluable": 0.0,
+          "success": 144,
+          "total": 144
+        },
+        "holdout_coverage_descriptive": {
+          "median": 0.8933725931834889,
+          "n_defined": 140,
+          "n_total": 144,
+          "n_undefined": 4,
+          "p90": 0.9079876921383276,
+          "q1": 0.8810401924497192,
+          "q3": 0.89915208005819
+        },
+        "relative_inflation_descriptive": {
+          "median": 1.0292215571228611,
+          "n_defined": 144,
+          "n_total": 144,
+          "n_undefined": 0,
+          "p90": 1.1125806122524509,
+          "q1": 0.9917606338667282,
+          "q3": 1.070261788263452
+        },
+        "stability_cells": {
+          "fp_0.1": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.0004943142843309553,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.0005062060252521136,
+              "p90_is_worst": false
+            }
+          },
+          "fp_0.3": {
+            "descriptive_success_only": {
+              "median": 9.37074364257073e-06,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.004939652581501051,
+              "q1": 0.0,
+              "q3": 0.0019151591442590418
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 8.341592956431951e-06,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.00495733277672273,
+              "p90_is_worst": false
+            }
+          },
+          "jitter_1": {
+            "descriptive_success_only": {
+              "median": 0.008192294286748648,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.023090120432032964,
+              "q1": 0.004461336784851551,
+              "q3": 0.014780018238961412
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.008152078894568903,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.02322668572345106,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.5": {
+            "descriptive_success_only": {
+              "median": 0.010603221432644801,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.0271436793272569,
+              "q1": 0.005297746349994357,
+              "q3": 0.016904041134151143
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.010518922810580932,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.027712437980987187,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.75": {
+            "descriptive_success_only": {
+              "median": 0.006203643478763964,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.013913079581708834,
+              "q1": 0.0033741708239621295,
+              "q3": 0.010195588359126553
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.006194821667810034,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.013956951218519802,
+              "p90_is_worst": false
+            }
+          }
+        }
+      },
+      "c_axis": {
+        "candidate_rule": {
+          "baseline_failures": 0,
+          "failing_cells": [],
+          "max_p90": 0.027712437980987187,
+          "max_p90_is_worst": false,
+          "status": "pass",
+          "worst_videos_by_cell": {
+            "fp_0.1": 0,
+            "fp_0.3": 0,
+            "jitter_1": 0,
+            "thin_0.5": 0,
+            "thin_0.75": 0
+          }
+        },
+        "denominators": {
+          "evaluable": 144,
+          "input_unevaluable": 0,
+          "input_unevaluable_by_reason": {},
+          "method_failure": 0,
+          "method_failure_by_reason": {},
+          "method_failure_rate_of_evaluable": 0.0,
+          "success": 144,
+          "total": 144
+        },
+        "holdout_coverage_descriptive": {
+          "median": 0.8933725931834889,
+          "n_defined": 140,
+          "n_total": 144,
+          "n_undefined": 4,
+          "p90": 0.9079876921383276,
+          "q1": 0.8810401924497192,
+          "q3": 0.8995204603580563
+        },
+        "relative_inflation_descriptive": null,
+        "stability_cells": {
+          "fp_0.1": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.0004943142843309553,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.0005062060252521136,
+              "p90_is_worst": false
+            }
+          },
+          "fp_0.3": {
+            "descriptive_success_only": {
+              "median": 9.37074364257073e-06,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.004939652581501051,
+              "q1": 0.0,
+              "q3": 0.0019151591442590418
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 8.341592956431951e-06,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.00495733277672273,
+              "p90_is_worst": false
+            }
+          },
+          "jitter_1": {
+            "descriptive_success_only": {
+              "median": 0.008192294286748648,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.023090120432032964,
+              "q1": 0.004461336784851551,
+              "q3": 0.014780018238961412
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.008152078894568903,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.02322668572345106,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.5": {
+            "descriptive_success_only": {
+              "median": 0.010603221432644801,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.0271436793272569,
+              "q1": 0.005297746349994357,
+              "q3": 0.016904041134151143
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.010518922810580932,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.027712437980987187,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.75": {
+            "descriptive_success_only": {
+              "median": 0.006203643478763964,
+              "n_defined": 144,
+              "n_total": 144,
+              "n_undefined": 0,
+              "p90": 0.013913079581708834,
+              "q1": 0.0033741708239621295,
+              "q3": 0.010195588359126553
+            },
+            "n_defined": 144,
+            "selection": {
+              "median": 0.006194821667810034,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 0,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 0,
+              "p90": 0.013956951218519802,
+              "p90_is_worst": false
+            }
+          }
+        }
+      },
+      "d_bestframe": {
+        "candidate_rule": {
+          "baseline_failures": 1,
+          "failing_cells": [],
+          "max_p90": 0.04651766484103972,
+          "max_p90_is_worst": false,
+          "status": "pass",
+          "worst_videos_by_cell": {
+            "fp_0.1": 1,
+            "fp_0.3": 1,
+            "jitter_1": 1,
+            "thin_0.5": 1,
+            "thin_0.75": 1
+          }
+        },
+        "denominators": {
+          "evaluable": 144,
+          "input_unevaluable": 0,
+          "input_unevaluable_by_reason": {},
+          "method_failure": 1,
+          "method_failure_by_reason": {
+            "no_usable_frame": 1
+          },
+          "method_failure_rate_of_evaluable": 0.006944444444444444,
+          "success": 143,
+          "total": 144
+        },
+        "holdout_coverage_descriptive": {
+          "median": 0.9017341040462428,
+          "n_defined": 139,
+          "n_total": 144,
+          "n_undefined": 5,
+          "p90": 0.9285845588235294,
+          "q1": 0.8870830923462503,
+          "q3": 0.9160983765233842
+        },
+        "relative_inflation_descriptive": null,
+        "stability_cells": {
+          "fp_0.1": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 143,
+              "n_total": 144,
+              "n_undefined": 1,
+              "p90": 0.00031257754224558516,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "n_defined": 143,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 1,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 1,
+              "p90": 0.0003828432097762151,
+              "p90_is_worst": false
+            }
+          },
+          "fp_0.3": {
+            "descriptive_success_only": {
+              "median": 0.0,
+              "n_defined": 143,
+              "n_total": 144,
+              "n_undefined": 1,
+              "p90": 0.004356781379116463,
+              "q1": 0.0,
+              "q3": 0.0010743804698429222
+            },
+            "n_defined": 143,
+            "selection": {
+              "median": 0.0,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 1,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 1,
+              "p90": 0.005054811460933725,
+              "p90_is_worst": false
+            }
+          },
+          "jitter_1": {
+            "descriptive_success_only": {
+              "median": 0.007810969056415852,
+              "n_defined": 143,
+              "n_total": 144,
+              "n_undefined": 1,
+              "p90": 0.026694103328613068,
+              "q1": 0.004418004626521378,
+              "q3": 0.017239887575649544
+            },
+            "n_defined": 143,
+            "selection": {
+              "median": 0.007810969056415852,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 1,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 1,
+              "p90": 0.0273124794617258,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.5": {
+            "descriptive_success_only": {
+              "median": 0.01148393603178795,
+              "n_defined": 143,
+              "n_total": 144,
+              "n_undefined": 1,
+              "p90": 0.041786949731874586,
+              "q1": 0.005859412729413437,
+              "q3": 0.02115053615698739
+            },
+            "n_defined": 143,
+            "selection": {
+              "median": 0.01148393603178795,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 1,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 1,
+              "p90": 0.04651766484103972,
+              "p90_is_worst": false
+            }
+          },
+          "thin_0.75": {
+            "descriptive_success_only": {
+              "median": 0.00646358062628595,
+              "n_defined": 143,
+              "n_total": 144,
+              "n_undefined": 1,
+              "p90": 0.020772850706765055,
+              "q1": 0.0039124481808199,
+              "q3": 0.011413623891195983
+            },
+            "n_defined": 143,
+            "selection": {
+              "median": 0.00646358062628595,
+              "median_is_worst": false,
+              "method": "nearest_rank_no_interpolation",
+              "n_all_seeds_undefined": 1,
+              "n_seed_incomplete": 0,
+              "n_videos": 144,
+              "n_worst": 1,
+              "p90": 0.021302151511948954,
+              "p90_is_worst": false
+            }
+          }
+        }
+      }
+    },
+    "selection": {
+      "excluded_representations": {},
+      "failure_policy": "F-A: failures and incomplete seeds count as worst; nearest-rank quantiles",
+      "not_selectable_representations": [],
+      "primary": "c_axis",
+      "secondary": [
+        "b_obb",
+        "d_bestframe"
+      ],
+      "status": "selected",
+      "tied": [
+        "c_axis",
+        "b_obb"
+      ]
+    }
+  },
+  "h17_2_representations": {
+    "basis": "h17_1_selection",
+    "note": null,
+    "representations": [
+      "c_axis",
+      "b_obb",
+      "d_bestframe"
+    ],
+    "role": "h17_1_candidates"
+  },
+  "input_minimums": {
+    "synthetic_override": false,
+    "train_core": 130,
+    "validation": 16
+  },
+  "limits": [
+    "GT-derived quantities only; no clinical reference; not a clinical FL accuracy.",
+    "Lengths are in original-frame pixels assuming isotropic x/y; mm is not established.",
+    "Files are the unit; same-exam sibling files are present, so per-video statistics understate exam-level spread.",
+    "Validation is a development set already used for method choices; the best post-process is chosen on it.",
+    "Old train/validation share 4 exam groups (17 files in total across both); the validation-side count is unconfirmed.",
+    "Single training run and seed."
+  ],
+  "mm_available": false,
+  "notes": {
+    "best_postprocess": "selected on validation (development choice; optimistic)",
+    "metrics": "matching_centroid_distance is the M3 assignment distance between centroids; center_error is the error of the box centre (t_mid, s_mid). They are different quantities.",
+    "p3": "P3 is applied only to frames in which the saved pred_label has at least one positive point; it compares point selection inside candidate-positive frames. It cannot recover FN frames without a predicted positive, and a P3 target frame is not necessarily a geometric present frame (a component of >= 5 points after post-processing)."
+  },
+  "provenance_hash_states": {
+    "best_run": {
+      "checkpoint": "unknown",
+      "evaluation_revision": "unknown"
+    },
+    "last_run": {
+      "checkpoint": "unknown",
+      "evaluation_revision": "unknown"
+    },
+    "teacher_h5": {
+      "unknown": 162
+    }
+  },
+  "schema": "stage5_s5_17_geometry_summary_v1",
+  "tables": {
+    "sanity_in_sample": {
+      "checkpoints": {
+        "best": {
+          "best_postprocess_by_representation": {
+            "b_obb": "P0",
+            "c_axis": "P0",
+            "d_bestframe": "P0"
+          },
+          "hash_state": {
+            "checkpoint": "unknown",
+            "evaluation_revision": "unknown"
+          },
+          "postprocess": {
+            "P0": {
+              "detection_pooled": {
+                "fn": 14,
+                "fp": 369,
+                "precision": 0.02894736842105263,
+                "recall": 0.44,
+                "tp": 11
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.650606614250816,
+                "gt_absent_frame_share_of_pred_valid": 0.5784027448260759,
+                "gt_frame_far_share_of_fp": 0.32748958183647076,
+                "gt_frame_far_share_of_pred_valid": 0.29114501587765085,
+                "gt_near_share_of_fp": 0.021903803912713238,
+                "gt_near_share_of_pred_valid": 0.019472934992882433,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.03161727020483184,
+                "n_fp": 48713,
+                "n_gt_absent_frame": 31693,
+                "n_gt_frame_far": 15953,
+                "n_gt_near": 1067,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 56583,
+                "n_pred_ignore": 1789,
+                "n_pred_valid": 54794
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.10856192859015873,
+                    "q1": 0.09367375225482436,
+                    "q3": 0.10787460184600806
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.0858405692442648,
+                    "q1": -0.10787460184600806,
+                    "q3": -0.09367375225482436
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.10856192859015873,
+                    "q1": 0.09367375225482436,
+                    "q3": 0.10787460184600806
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.0858405692442648,
+                    "q1": -0.10787460184600806,
+                    "q3": -0.09367375225482436
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.19782775987526194,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.33251646786063255,
+                    "q1": 0.13196071335035686,
+                    "q3": 0.28200820236611857
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.2649146659096832,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.15087860791535698,
+                    "q1": -0.43599851938486645,
+                    "q3": -0.19364212966322933
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.06609366682545179,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.2797321825204898,
+                    "q1": -0.13196071335035686,
+                    "q3": 0.1500474890157617
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1": {
+              "detection_pooled": {
+                "fn": 17,
+                "fp": 56,
+                "precision": 0.125,
+                "recall": 0.32,
+                "tp": 8
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6675666449430531,
+                "gt_absent_frame_share_of_pred_valid": 0.5716753481449984,
+                "gt_frame_far_share_of_fp": 0.30170995872513423,
+                "gt_frame_far_share_of_pred_valid": 0.2583714255341767,
+                "gt_near_share_of_fp": 0.03072339633181268,
+                "gt_near_share_of_pred_valid": 0.026310194535983843,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.04448958862366684,
+                "n_fp": 32223,
+                "n_gt_absent_frame": 21511,
+                "n_gt_frame_far": 9722,
+                "n_gt_near": 990,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 39380,
+                "n_pred_ignore": 1752,
+                "n_pred_valid": 37628
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.10856192859015873,
+                    "q1": 0.09367375225482436,
+                    "q3": 0.10787460184600806
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.0858405692442648,
+                    "q1": -0.10787460184600806,
+                    "q3": -0.09367375225482436
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.10856192859015873,
+                    "q1": 0.09367375225482436,
+                    "q3": 0.10787460184600806
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.0858405692442648,
+                    "q1": -0.10787460184600806,
+                    "q3": -0.09367375225482436
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.19782775987526194,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.33251646786063255,
+                    "q1": 0.13196071335035686,
+                    "q3": 0.28200820236611857
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.2649146659096832,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.15087860791535698,
+                    "q1": -0.43599851938486645,
+                    "q3": -0.19364212966322933
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.06609366682545179,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.2797321825204898,
+                    "q1": -0.13196071335035686,
+                    "q3": 0.1500474890157617
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1+P2": {
+              "detection_pooled": {
+                "fn": 17,
+                "fp": 52,
+                "precision": 0.13333333333333333,
+                "recall": 0.32,
+                "tp": 8
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6531425055855973,
+                "gt_absent_frame_share_of_pred_valid": 0.5558586860670194,
+                "gt_frame_far_share_of_fp": 0.31480102321665643,
+                "gt_frame_far_share_of_pred_valid": 0.26791225749559083,
+                "gt_near_share_of_fp": 0.032056471197746336,
+                "gt_near_share_of_pred_valid": 0.027281746031746032,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.04605678233438486,
+                "n_fp": 30883,
+                "n_gt_absent_frame": 20171,
+                "n_gt_frame_far": 9722,
+                "n_gt_near": 990,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 38040,
+                "n_pred_ignore": 1752,
+                "n_pred_valid": 36288
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 37,
+                "precision": 0.38333333333333336,
+                "recall": 1.0,
+                "tn": 4,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.1290328944205242,
+                    "q1": 0.10274245327457368,
+                    "q3": 0.12066895548998648
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.10035049087586374,
+                    "q1": -0.12066895548998648,
+                    "q3": -0.10274245327457368
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.1290328944205242,
+                    "q1": 0.10274245327457368,
+                    "q3": 0.12066895548998648
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.10035049087586374,
+                    "q1": -0.12066895548998648,
+                    "q3": -0.10274245327457368
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.19782775987526194,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.33251646786063255,
+                    "q1": 0.13196071335035686,
+                    "q3": 0.28200820236611857
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.2649146659096832,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.15087860791535698,
+                    "q1": -0.43599851938486645,
+                    "q3": -0.19364212966322933
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.06609366682545179,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.2797321825204898,
+                    "q1": -0.13196071335035686,
+                    "q3": 0.1500474890157617
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P2": {
+              "detection_pooled": {
+                "fn": 14,
+                "fp": 310,
+                "precision": 0.03426791277258567,
+                "recall": 0.44,
+                "tp": 11
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6432383961740468,
+                "gt_absent_frame_share_of_pred_valid": 0.5711794035679755,
+                "gt_frame_far_share_of_fp": 0.3341090567487937,
+                "gt_frame_far_share_of_pred_valid": 0.2966803799268205,
+                "gt_near_share_of_fp": 0.022652547077159572,
+                "gt_near_share_of_pred_valid": 0.020114888050505243,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.032679858423957896,
+                "n_fp": 46838,
+                "n_gt_absent_frame": 30128,
+                "n_gt_frame_far": 15649,
+                "n_gt_near": 1061,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 54529,
+                "n_pred_ignore": 1782,
+                "n_pred_valid": 52747
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.10856192859015873,
+                    "q1": 0.09367375225482436,
+                    "q3": 0.10787460184600806
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.0858405692442648,
+                    "q1": -0.10787460184600806,
+                    "q3": -0.09367375225482436
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.10856192859015873,
+                    "q1": 0.09367375225482436,
+                    "q3": 0.10787460184600806
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.1067290572724236,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.0858405692442648,
+                    "q1": -0.10787460184600806,
+                    "q3": -0.09367375225482436
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.19782775987526194,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.33251646786063255,
+                    "q1": 0.13196071335035686,
+                    "q3": 0.28200820236611857
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.2649146659096832,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.15087860791535698,
+                    "q1": -0.43599851938486645,
+                    "q3": -0.19364212966322933
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.06609366682545179,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.2797321825204898,
+                    "q1": -0.13196071335035686,
+                    "q3": 0.1500474890157617
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P3": {
+              "detection_pooled": {
+                "fn": 8,
+                "fp": 253,
+                "precision": 0.06296296296296296,
+                "recall": 0.68,
+                "tp": 17
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.7521135747328123,
+                "gt_absent_frame_share_of_pred_valid": 0.6575094129131223,
+                "gt_frame_far_share_of_fp": 0.2400701866326368,
+                "gt_frame_far_share_of_pred_valid": 0.20987309998605494,
+                "gt_near_share_of_fp": 0.007816238634550965,
+                "gt_near_share_of_pred_valid": 0.006833077673964579,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.025679347826086957,
+                "n_fp": 12538,
+                "n_gt_absent_frame": 9430,
+                "n_gt_frame_far": 3010,
+                "n_gt_near": 98,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 14720,
+                "n_pred_ignore": 378,
+                "n_pred_valid": 14342
+              },
+              "p3_frames": {
+                "geometric_present_frames": 64,
+                "note": "P3 is applied only to frames in which the saved pred_label has at least one positive point; it compares point selection inside candidate-positive frames. It cannot recover FN frames without a predicted positive, and a P3 target frame is not necessarily a geometric present frame (a component of >= 5 points after post-processing).",
+                "target_frames": 64
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.5937445256864324,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.6389333344981617,
+                    "q1": 0.5155821553333588,
+                    "q3": 0.6219875311937633
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.5937445256864324,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.4686847331215146,
+                    "q1": -0.6219875311937633,
+                    "q3": -0.5155821553333588
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.5937445256864324,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.6389333344981617,
+                    "q1": 0.5155821553333588,
+                    "q3": 0.6219875311937633
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.5937445256864324,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.4686847331215146,
+                    "q1": -0.6219875311937633,
+                    "q3": -0.5155821553333588
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.6574914027504829,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.6913566145222184,
+                    "q1": 0.605229532529331,
+                    "q3": 0.6786571601078175
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.6690212376511812,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.5749488976537386,
+                    "q1": -0.6967724749470505,
+                    "q3": -0.6102260251527796
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.6574914027504829,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.5738724103966398,
+                    "q1": -0.6786571601078175,
+                    "q3": -0.605229532529331
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            }
+          },
+          "role": "main"
+        },
+        "last": {
+          "best_postprocess_by_representation": null,
+          "hash_state": {
+            "checkpoint": "unknown",
+            "evaluation_revision": "unknown"
+          },
+          "postprocess": {
+            "P0": {
+              "detection_pooled": {
+                "fn": 8,
+                "fp": 177,
+                "precision": 0.08762886597938144,
+                "recall": 0.68,
+                "tp": 17
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.7060721497116926,
+                "gt_absent_frame_share_of_pred_valid": 0.5895163112432,
+                "gt_frame_far_share_of_fp": 0.2695518224775703,
+                "gt_frame_far_share_of_pred_valid": 0.22505518188296228,
+                "gt_near_share_of_fp": 0.02437602781073711,
+                "gt_near_share_of_pred_valid": 0.020352121243721433,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.0427093038732863,
+                "n_fp": 48039,
+                "n_gt_absent_frame": 33919,
+                "n_gt_frame_far": 12949,
+                "n_gt_near": 1171,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 60104,
+                "n_pred_ignore": 2567,
+                "n_pred_valid": 57537
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.008859201376470175,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.09866514555565972,
+                    "q1": -0.0037355821262347235,
+                    "q3": 0.06498791648846364
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1": {
+              "detection_pooled": {
+                "fn": 13,
+                "fp": 52,
+                "precision": 0.1875,
+                "recall": 0.48,
+                "tp": 12
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6901761367823716,
+                "gt_absent_frame_share_of_pred_valid": 0.5669687001796057,
+                "gt_frame_far_share_of_fp": 0.28172058859655585,
+                "gt_frame_far_share_of_pred_valid": 0.23142897503682924,
+                "gt_near_share_of_fp": 0.02810327462107254,
+                "gt_near_share_of_pred_valid": 0.023086392347587432,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.04535033810468723,
+                "n_fp": 40707,
+                "n_gt_absent_frame": 28095,
+                "n_gt_frame_far": 11468,
+                "n_gt_near": 1144,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 51907,
+                "n_pred_ignore": 2354,
+                "n_pred_valid": 49553
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.008859201376470175,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.09866514555565972,
+                    "q1": -0.0037355821262347235,
+                    "q3": 0.06498791648846364
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1+P2": {
+              "detection_pooled": {
+                "fn": 16,
+                "fp": 47,
+                "precision": 0.16071428571428573,
+                "recall": 0.36,
+                "tp": 9
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6756156745314678,
+                "gt_absent_frame_share_of_pred_valid": 0.5632141858012869,
+                "gt_frame_far_share_of_fp": 0.2956270328876039,
+                "gt_frame_far_share_of_pred_valid": 0.24644386580300845,
+                "gt_near_share_of_fp": 0.02875729258092829,
+                "gt_near_share_of_pred_valid": 0.023972971228130583,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.04821498064436843,
+                "n_fp": 38738,
+                "n_gt_absent_frame": 26172,
+                "n_gt_frame_far": 11452,
+                "n_gt_near": 1114,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 48823,
+                "n_pred_ignore": 2354,
+                "n_pred_valid": 46469
+              },
+              "presence_pooled": {
+                "fn": 3,
+                "fp": 36,
+                "precision": 0.35714285714285715,
+                "recall": 0.8695652173913043,
+                "tn": 5,
+                "tp": 20
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.4090589360119793,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.46435703488648555,
+                    "q1": 0.22815151178895324,
+                    "q3": 0.4436202478085457
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.4090589360119793,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.46435703488648555,
+                    "q1": 0.22815151178895324,
+                    "q3": 0.4436202478085457
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.4090589360119793,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.46435703488648555,
+                    "q1": 0.22815151178895324,
+                    "q3": 0.4436202478085457
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.4090589360119793,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.46435703488648555,
+                    "q1": 0.22815151178895324,
+                    "q3": 0.4436202478085457
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.0037355821262347235,
+                    "n_defined": 2,
+                    "n_total": 3,
+                    "n_undefined": 1,
+                    "p90": 0.006340244675929196,
+                    "q1": -0.010032973877587174,
+                    "q3": 0.0025618096251177258
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P2": {
+              "detection_pooled": {
+                "fn": 8,
+                "fp": 165,
+                "precision": 0.09340659340659341,
+                "recall": 0.68,
+                "tp": 17
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.7067642296936437,
+                "gt_absent_frame_share_of_pred_valid": 0.5891126417442207,
+                "gt_frame_far_share_of_fp": 0.2686137219033201,
+                "gt_frame_far_share_of_pred_valid": 0.2238989081094344,
+                "gt_near_share_of_fp": 0.02462204840303623,
+                "gt_near_share_of_pred_valid": 0.020523336312809996,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.04303708300488067,
+                "n_fp": 47559,
+                "n_gt_absent_frame": 33613,
+                "n_gt_frame_far": 12775,
+                "n_gt_near": 1171,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 59623,
+                "n_pred_ignore": 2566,
+                "n_pred_valid": 57057
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.39192815644229606,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.457075524987504,
+                    "q1": 0.21958612200411162,
+                    "q3": 0.432645261783051
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.008859201376470175,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.09866514555565972,
+                    "q1": -0.0037355821262347235,
+                    "q3": 0.06498791648846364
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.23231351973907396,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.39059954199894487,
+                    "q1": 0.1383599292808492,
+                    "q3": 0.3312422836514933
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P3": {
+              "detection_pooled": {
+                "fn": 2,
+                "fp": 174,
+                "precision": 0.116751269035533,
+                "recall": 0.92,
+                "tp": 23
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.8736335000926441,
+                "gt_absent_frame_share_of_pred_valid": 0.6460231554428992,
+                "gt_frame_far_share_of_fp": 0.12210487307763572,
+                "gt_frame_far_share_of_pred_valid": 0.09029252586147839,
+                "gt_near_share_of_fp": 0.0042616268297202145,
+                "gt_near_share_of_pred_valid": 0.003151332465575118,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.008355978260869566,
+                "n_fp": 10794,
+                "n_gt_absent_frame": 9430,
+                "n_gt_frame_far": 1318,
+                "n_gt_near": 46,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 14720,
+                "n_pred_ignore": 123,
+                "n_pred_valid": 14597
+              },
+              "p3_frames": {
+                "geometric_present_frames": 64,
+                "note": "P3 is applied only to frames in which the saved pred_label has at least one positive point; it compares point selection inside candidate-positive frames. It cannot recover FN frames without a predicted positive, and a P3 target frame is not necessarily a geometric present frame (a component of >= 5 points after post-processing).",
+                "target_frames": 64
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 41,
+                "precision": 0.359375,
+                "recall": 1.0,
+                "tn": 0,
+                "tp": 23
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.45754406360835553,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.6102120874048044,
+                    "q1": 0.41429630295555514,
+                    "q3": 0.552961578481136
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.45754406360835553,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.3883476465638749,
+                    "q1": -0.552961578481136,
+                    "q3": -0.41429630295555514
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.45754406360835553,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.6102120874048044,
+                    "q1": 0.41429630295555514,
+                    "q3": 0.552961578481136
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.45754406360835553,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.3883476465638749,
+                    "q1": -0.552961578481136,
+                    "q3": -0.41429630295555514
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.4340747039370037,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": 0.6931164262306602,
+                    "q1": 0.39674459385050803,
+                    "q3": 0.595975780370539
+                  },
+                  "denominators": {
+                    "evaluable": 3,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 3,
+                    "total": 3
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.4340747039370037,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.36758631945124376,
+                    "q1": -0.5566543723199464,
+                    "q3": -0.39251946363340373
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.4340747039370037,
+                    "n_defined": 3,
+                    "n_total": 3,
+                    "n_undefined": 0,
+                    "p90": -0.3743465277986106,
+                    "q1": -0.595975780370539,
+                    "q3": -0.39674459385050803
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 3,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            }
+          },
+          "role": "auxiliary"
+        }
+      },
+      "input": {
+        "evaluable": 3,
+        "minimum": 3,
+        "modes_entirely_excluded": 0,
+        "suspended": false
+      },
+      "prior_only": {
+        "a_aabb": {
+          "relative_error": {
+            "median": -0.3155753751861957,
+            "n_defined": 3,
+            "n_total": 3,
+            "n_undefined": 0,
+            "p90": -0.24119052560432672,
+            "q1": -0.44012620524439455,
+            "q3": -0.2690848441975276
+          },
+          "within_tau_rel_diagnostic": 0
+        },
+        "b_obb": {
+          "relative_error": {
+            "median": -0.32842188426057733,
+            "n_defined": 3,
+            "n_total": 3,
+            "n_undefined": 0,
+            "p90": -0.2649406545468524,
+            "q1": -0.43533124938280343,
+            "q3": -0.28874611568949926
+          },
+          "within_tau_rel_diagnostic": 0
+        },
+        "c_axis": {
+          "relative_error": {
+            "median": -0.32842188426057733,
+            "n_defined": 3,
+            "n_total": 3,
+            "n_undefined": 0,
+            "p90": -0.2649406545468524,
+            "q1": -0.43533124938280343,
+            "q3": -0.28874611568949926
+          },
+          "within_tau_rel_diagnostic": 0
+        },
+        "d_bestframe": {
+          "relative_error": {
+            "median": -0.42145351037402823,
+            "n_defined": 3,
+            "n_total": 3,
+            "n_undefined": 0,
+            "p90": -0.30904843151613537,
+            "q1": -0.4827178354575999,
+            "q3": -0.3512003360878452
+          },
+          "within_tau_rel_diagnostic": 0
+        }
+      }
+    },
+    "validation": {
+      "checkpoints": {
+        "best": {
+          "best_postprocess_by_representation": {
+            "b_obb": "P0",
+            "c_axis": "P0",
+            "d_bestframe": "P3"
+          },
+          "hash_state": {
+            "checkpoint": "unknown",
+            "evaluation_revision": "unknown"
+          },
+          "postprocess": {
+            "P0": {
+              "detection_pooled": {
+                "fn": 157,
+                "fp": 4413,
+                "precision": 0.03646288209606987,
+                "recall": 0.5154320987654321,
+                "tp": 167
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.614657664511221,
+                "gt_absent_frame_share_of_pred_valid": 0.5822947877835694,
+                "gt_frame_far_share_of_fp": 0.38266070749334347,
+                "gt_frame_far_share_of_pred_valid": 0.36251290487060894,
+                "gt_near_share_of_fp": 0.0026816279954355268,
+                "gt_near_share_of_pred_valid": 0.0025404352612414262,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.012560422571043778,
+                "n_fp": 525800,
+                "n_gt_absent_frame": 323187,
+                "n_gt_frame_far": 201203,
+                "n_gt_near": 1410,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 562083,
+                "n_pred_ignore": 7060,
+                "n_pred_valid": 555023
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 470,
+                "precision": 0.37912813738441214,
+                "recall": 1.0,
+                "tn": 13,
+                "tp": 287
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.4204062511794935,
+                    "q3": 1.7506666029130586
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.3313676670325185,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.4142228410259707,
+                    "q1": -0.1610116226840716,
+                    "q3": 0.9324458604889068
+                  },
+                  "relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.1764286648078835,
+                    "q3": 1.7506666029130586
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 3,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1": {
+              "detection_pooled": {
+                "fn": 266,
+                "fp": 699,
+                "precision": 0.07661822985468957,
+                "recall": 0.17901234567901234,
+                "tp": 58
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6263751424629597,
+                "gt_absent_frame_share_of_pred_valid": 0.5928224110181639,
+                "gt_frame_far_share_of_fp": 0.3702597324695579,
+                "gt_frame_far_share_of_pred_valid": 0.3504262101501316,
+                "gt_near_share_of_fp": 0.0033651250674824546,
+                "gt_near_share_of_pred_valid": 0.0031848670559281957,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.01641124720453194,
+                "n_fp": 333420,
+                "n_gt_absent_frame": 208846,
+                "n_gt_frame_far": 123452,
+                "n_gt_near": 1122,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 358169,
+                "n_pred_ignore": 5878,
+                "n_pred_valid": 352291
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 470,
+                "precision": 0.37912813738441214,
+                "recall": 1.0,
+                "tn": 13,
+                "tp": 287
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.4204062511794935,
+                    "q3": 1.7506666029130586
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.3313676670325185,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.4142228410259707,
+                    "q1": -0.1610116226840716,
+                    "q3": 0.9324458604889068
+                  },
+                  "relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.1764286648078835,
+                    "q3": 1.7506666029130586
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 3,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1+P2": {
+              "detection_pooled": {
+                "fn": 268,
+                "fp": 633,
+                "precision": 0.08127721335268505,
+                "recall": 0.1728395061728395,
+                "tp": 56
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6121492070130085,
+                "gt_absent_frame_share_of_pred_valid": 0.5786052027154497,
+                "gt_frame_far_share_of_fp": 0.3843436551536234,
+                "gt_frame_far_share_of_pred_valid": 0.36328273557305035,
+                "gt_near_share_of_fp": 0.003507137833368183,
+                "gt_near_share_of_pred_valid": 0.003314956833692179,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.01700528085058784,
+                "n_fp": 315642,
+                "n_gt_absent_frame": 193220,
+                "n_gt_frame_far": 121315,
+                "n_gt_near": 1107,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 339718,
+                "n_pred_ignore": 5777,
+                "n_pred_valid": 333941
+              },
+              "presence_pooled": {
+                "fn": 12,
+                "fp": 414,
+                "precision": 0.3991291727140784,
+                "recall": 0.9581881533101045,
+                "tn": 69,
+                "tp": 275
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4358908346206611,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7017473050901786,
+                    "q1": 0.44894724722689794,
+                    "q3": 2.2194076159953133
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4358908346206611,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7017473050901786,
+                    "q1": 0.44894724722689794,
+                    "q3": 2.2194076159953133
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4358908346206611,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7017473050901786,
+                    "q1": 0.44894724722689794,
+                    "q3": 2.2194076159953133
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4358908346206611,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7017473050901786,
+                    "q1": 0.44894724722689794,
+                    "q3": 2.2194076159953133
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.4204062511794935,
+                    "q3": 1.7506666029130586
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.5417153362710687,
+                    "n_defined": 15,
+                    "n_total": 18,
+                    "n_undefined": 3,
+                    "p90": 1.5486668032521018,
+                    "q1": -0.03676994100261917,
+                    "q3": 1.0750140361631204
+                  },
+                  "relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.1764286648078835,
+                    "q3": 1.7506666029130586
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 3,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P2": {
+              "detection_pooled": {
+                "fn": 159,
+                "fp": 4022,
+                "precision": 0.039407690470503944,
+                "recall": 0.5092592592592593,
+                "tp": 165
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6089550466161247,
+                "gt_absent_frame_share_of_pred_valid": 0.5757798082717884,
+                "gt_frame_far_share_of_fp": 0.3882875749717928,
+                "gt_frame_far_share_of_pred_valid": 0.36713407124862907,
+                "gt_near_share_of_fp": 0.002757378412082583,
+                "gt_near_share_of_pred_valid": 0.0026071593006150124,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.012928231503650498,
+                "n_fp": 505190,
+                "n_gt_absent_frame": 307638,
+                "n_gt_frame_far": 196159,
+                "n_gt_near": 1393,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 541296,
+                "n_pred_ignore": 6998,
+                "n_pred_valid": 534298
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 469,
+                "precision": 0.37962962962962965,
+                "recall": 1.0,
+                "tn": 14,
+                "tp": 287
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 1.4051717450014292,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.7054341092033654,
+                    "q1": 0.440724241054275,
+                    "q3": 2.158920210821006
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.4204062511794935,
+                    "q3": 1.7506666029130586
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": 0.3313676670325185,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.4142228410259707,
+                    "q1": -0.1610116226840716,
+                    "q3": 0.9324458604889068
+                  },
+                  "relative_error_of_successes": {
+                    "median": 1.2633196516685314,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 2.3339865927226926,
+                    "q1": 0.1764286648078835,
+                    "q3": 1.7506666029130586
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 3,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P3": {
+              "detection_pooled": {
+                "fn": 113,
+                "fp": 3141,
+                "precision": 0.06294749403341289,
+                "recall": 0.6512345679012346,
+                "tp": 211
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.68832084786794,
+                "gt_absent_frame_share_of_pred_valid": 0.6299940681810252,
+                "gt_frame_far_share_of_fp": 0.31033847365979805,
+                "gt_frame_far_share_of_pred_valid": 0.2840410807541552,
+                "gt_near_share_of_fp": 0.0013406784722619343,
+                "gt_near_share_of_pred_valid": 0.0012270723565604754,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.013685901112768155,
+                "n_fp": 157383,
+                "n_gt_absent_frame": 108330,
+                "n_gt_frame_far": 48842,
+                "n_gt_near": 211,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 174340,
+                "n_pred_ignore": 2386,
+                "n_pred_valid": 171954
+              },
+              "p3_frames": {
+                "geometric_present_frames": 758,
+                "note": "P3 is applied only to frames in which the saved pred_label has at least one positive point; it compares point selection inside candidate-positive frames. It cannot recover FN frames without a predicted positive, and a P3 target frame is not necessarily a geometric present frame (a component of >= 5 points after post-processing).",
+                "target_frames": 758
+              },
+              "presence_pooled": {
+                "fn": 0,
+                "fp": 471,
+                "precision": 0.3786279683377309,
+                "recall": 1.0,
+                "tn": 12,
+                "tp": 287
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.4545952534680753,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.7129622603932398,
+                    "q1": 0.2570153648415049,
+                    "q3": 0.5746533930061412
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.23672679184454204,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.7129622603932398,
+                    "q1": -0.3228531124444473,
+                    "q3": 0.5600493472005088
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.4545952534680753,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.7129622603932398,
+                    "q1": 0.2570153648415049,
+                    "q3": 0.5746533930061412
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": 0.23672679184454204,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.7129622603932398,
+                    "q1": -0.3228531124444473,
+                    "q3": 0.5600493472005088
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.3510950715535725,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.0644185673099675,
+                    "q1": 0.09248152232936888,
+                    "q3": 0.5224141258165145
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.2180692285504771,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.09559666773889601,
+                    "q1": -0.5266622644175271,
+                    "q3": -0.022258943008693625
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.004103668460109067,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.0644185673099675,
+                    "q1": -0.4286473216348381,
+                    "q3": 0.306982739075001
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 6,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            }
+          },
+          "role": "main"
+        },
+        "last": {
+          "best_postprocess_by_representation": null,
+          "hash_state": {
+            "checkpoint": "unknown",
+            "evaluation_revision": "unknown"
+          },
+          "postprocess": {
+            "P0": {
+              "detection_pooled": {
+                "fn": 295,
+                "fp": 1069,
+                "precision": 0.026411657559198543,
+                "recall": 0.08950617283950617,
+                "tp": 29
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6278027950310558,
+                "gt_absent_frame_share_of_pred_valid": 0.6033007289358432,
+                "gt_frame_far_share_of_fp": 0.37020186335403726,
+                "gt_frame_far_share_of_pred_valid": 0.35575351970812724,
+                "gt_near_share_of_fp": 0.0019953416149068324,
+                "gt_near_share_of_pred_valid": 0.0019174668546828718,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.011599952803752102,
+                "n_fp": 128800,
+                "n_gt_absent_frame": 80861,
+                "n_gt_frame_far": 47682,
+                "n_gt_near": 257,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 135604,
+                "n_pred_ignore": 1573,
+                "n_pred_valid": 134031
+              },
+              "presence_pooled": {
+                "fn": 108,
+                "fp": 272,
+                "precision": 0.3968957871396896,
+                "recall": 0.6236933797909407,
+                "tn": 211,
+                "tp": 179
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7158817941262301,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": 0.3195041582138086,
+                    "q3": 0.9830746968307333
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08895226772102653,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": -0.3865800452642146,
+                    "q3": 0.9830746968307333
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7158817941262301,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": 0.3195041582138086,
+                    "q3": 0.9830746968307333
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08895226772102653,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": -0.3865800452642146,
+                    "q3": 0.9830746968307333
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7021611889484914,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": 0.4409877618746159,
+                    "q3": 0.8833192954512649
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.443724678689566,
+                    "n_defined": 8,
+                    "n_total": 18,
+                    "n_undefined": 10,
+                    "p90": -0.06747240795009651,
+                    "q1": -0.5969433219499374,
+                    "q3": -0.30995151724311903
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.14482546424107523,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": -0.44962989915805984,
+                    "q3": 0.8833192954512649
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1": {
+              "detection_pooled": {
+                "fn": 307,
+                "fp": 434,
+                "precision": 0.037694013303769404,
+                "recall": 0.05246913580246913,
+                "tp": 17
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.5874726875455207,
+                "gt_absent_frame_share_of_pred_valid": 0.5598833865497888,
+                "gt_frame_far_share_of_fp": 0.4099157215690355,
+                "gt_frame_far_share_of_pred_valid": 0.39066497431727587,
+                "gt_near_share_of_fp": 0.002611590885443762,
+                "gt_near_share_of_pred_valid": 0.0024889435376713007,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.014964152454628924,
+                "n_fp": 96110,
+                "n_gt_absent_frame": 56462,
+                "n_gt_frame_far": 39397,
+                "n_gt_near": 251,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 102378,
+                "n_pred_ignore": 1532,
+                "n_pred_valid": 100846
+              },
+              "presence_pooled": {
+                "fn": 108,
+                "fp": 272,
+                "precision": 0.3968957871396896,
+                "recall": 0.6236933797909407,
+                "tn": 211,
+                "tp": 179
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7158817941262301,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": 0.3195041582138086,
+                    "q3": 0.9830746968307333
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08895226772102653,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": -0.3865800452642146,
+                    "q3": 0.9830746968307333
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7158817941262301,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": 0.3195041582138086,
+                    "q3": 0.9830746968307333
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08895226772102653,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": -0.3865800452642146,
+                    "q3": 0.9830746968307333
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7021611889484914,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": 0.4409877618746159,
+                    "q3": 0.8833192954512649
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.443724678689566,
+                    "n_defined": 8,
+                    "n_total": 18,
+                    "n_undefined": 10,
+                    "p90": -0.06747240795009651,
+                    "q1": -0.5969433219499374,
+                    "q3": -0.30995151724311903
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.14482546424107523,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": -0.44962989915805984,
+                    "q3": 0.8833192954512649
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P1+P2": {
+              "detection_pooled": {
+                "fn": 309,
+                "fp": 394,
+                "precision": 0.03667481662591687,
+                "recall": 0.046296296296296294,
+                "tp": 15
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.573447742666115,
+                "gt_absent_frame_share_of_pred_valid": 0.5457937338708841,
+                "gt_frame_far_share_of_fp": 0.4238190648343751,
+                "gt_frame_far_share_of_pred_valid": 0.4033807663208515,
+                "gt_near_share_of_fp": 0.002733192499509985,
+                "gt_near_share_of_pred_valid": 0.002601386715308798,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.015609537121111645,
+                "n_fp": 91834,
+                "n_gt_absent_frame": 52662,
+                "n_gt_frame_far": 38921,
+                "n_gt_near": 251,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 98017,
+                "n_pred_ignore": 1530,
+                "n_pred_valid": 96487
+              },
+              "presence_pooled": {
+                "fn": 117,
+                "fp": 239,
+                "precision": 0.4156479217603912,
+                "recall": 0.5923344947735192,
+                "tn": 244,
+                "tp": 170
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7118686725785291,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.612310851359413,
+                    "q1": 0.31937902114834427,
+                    "q3": 0.9843245365119175
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08497839950562872,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.612310851359413,
+                    "q1": -0.38224309428155157,
+                    "q3": 0.9843245365119175
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7118686725785291,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.612310851359413,
+                    "q1": 0.31937902114834427,
+                    "q3": 0.9843245365119175
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08497839950562872,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.612310851359413,
+                    "q1": -0.38224309428155157,
+                    "q3": 0.9843245365119175
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 1,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7021611889484914,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": 0.4409877618746159,
+                    "q3": 0.8833192954512649
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.443724678689566,
+                    "n_defined": 8,
+                    "n_total": 18,
+                    "n_undefined": 10,
+                    "p90": -0.06747240795009651,
+                    "q1": -0.5969433219499374,
+                    "q3": -0.30995151724311903
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.14482546424107523,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": -0.44962989915805984,
+                    "q3": 0.8833192954512649
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P2": {
+              "detection_pooled": {
+                "fn": 298,
+                "fp": 978,
+                "precision": 0.025896414342629483,
+                "recall": 0.08024691358024691,
+                "tp": 26
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6222400320577038,
+                "gt_absent_frame_share_of_pred_valid": 0.5974007986888576,
+                "gt_frame_far_share_of_fp": 0.3757403325986776,
+                "gt_frame_far_share_of_pred_valid": 0.3607411340150658,
+                "gt_near_share_of_fp": 0.0020196353436185135,
+                "gt_near_share_of_pred_valid": 0.0019390134115094297,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.011958703320763897,
+                "n_fp": 124775,
+                "n_gt_absent_frame": 77640,
+                "n_gt_frame_far": 46883,
+                "n_gt_near": 252,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 131536,
+                "n_pred_ignore": 1573,
+                "n_pred_valid": 129963
+              },
+              "presence_pooled": {
+                "fn": 112,
+                "fp": 264,
+                "precision": 0.39863325740318906,
+                "recall": 0.6097560975609756,
+                "tn": 219,
+                "tp": 175
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7138752333523796,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": 0.3195041582138086,
+                    "q3": 0.9830746968307333
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08895226772102653,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": -0.38377216931941543,
+                    "q3": 0.9830746968307333
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7138752333523796,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": 0.3195041582138086,
+                    "q3": 0.9830746968307333
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.08895226772102653,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.5314025667017817,
+                    "q1": -0.38377216931941543,
+                    "q3": 0.9830746968307333
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 2,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.7021611889484914,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": 0.4409877618746159,
+                    "q3": 0.8833192954512649
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.443724678689566,
+                    "n_defined": 8,
+                    "n_total": 18,
+                    "n_undefined": 10,
+                    "p90": -0.06747240795009651,
+                    "q1": -0.5969433219499374,
+                    "q3": -0.30995151724311903
+                  },
+                  "relative_error_of_successes": {
+                    "median": 0.14482546424107523,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 1.2915298651634004,
+                    "q1": -0.44962989915805984,
+                    "q3": 0.8833192954512649
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 0,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            },
+            "P3": {
+              "detection_pooled": {
+                "fn": 272,
+                "fp": 1621,
+                "precision": 0.031081888822474597,
+                "recall": 0.16049382716049382,
+                "tp": 52
+              },
+              "fp_classes_pooled": {
+                "gt_absent_frame_share_of_fp": 0.6369955964217465,
+                "gt_absent_frame_share_of_pred_valid": 0.6108411016386477,
+                "gt_frame_far_share_of_fp": 0.3612780531937482,
+                "gt_frame_far_share_of_pred_valid": 0.34644428509459185,
+                "gt_near_share_of_fp": 0.001726350384505313,
+                "gt_near_share_of_pred_valid": 0.0016554679131366248,
+                "gt_scale_undefined_share_of_fp": 0.0,
+                "gt_scale_undefined_share_of_pred_valid": 0.0,
+                "ignore_share_of_pred_all": 0.00782608695652174,
+                "n_fp": 108321,
+                "n_gt_absent_frame": 69000,
+                "n_gt_frame_far": 39134,
+                "n_gt_near": 187,
+                "n_gt_scale_undefined": 0,
+                "n_pred_all": 113850,
+                "n_pred_ignore": 891,
+                "n_pred_valid": 112959
+              },
+              "p3_frames": {
+                "geometric_present_frames": 495,
+                "note": "P3 is applied only to frames in which the saved pred_label has at least one positive point; it compares point selection inside candidate-positive frames. It cannot recover FN frames without a predicted positive, and a P3 target frame is not necessarily a geometric present frame (a component of >= 5 points after post-processing).",
+                "target_frames": 495
+              },
+              "presence_pooled": {
+                "fn": 92,
+                "fp": 300,
+                "precision": 0.3939393939393939,
+                "recall": 0.6794425087108014,
+                "tn": 183,
+                "tp": 195
+              },
+              "representations": {
+                "b_obb": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.42323049098849463,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.6219603718774925,
+                    "q1": 0.17205151844797928,
+                    "q3": 0.5234435131821056
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.031103662001684955,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.5491832560359555,
+                    "q1": -0.43125001640552035,
+                    "q3": 0.2701656033531768
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 3,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "c_axis": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.42323049098849463,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.6219603718774925,
+                    "q1": 0.17205151844797928,
+                    "q3": 0.5234435131821056
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": null,
+                  "relative_error_of_successes": {
+                    "median": -0.031103662001684955,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.5491832560359555,
+                    "q1": -0.43125001640552035,
+                    "q3": 0.2701656033531768
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 3,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                },
+                "d_bestframe": {
+                  "abs_relative_error_of_successes": {
+                    "median": 0.4104121915182097,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.6952142702028986,
+                    "q1": 0.09661400250778215,
+                    "q3": 0.6398930194348424
+                  },
+                  "denominators": {
+                    "evaluable": 18,
+                    "input_unevaluable": 0,
+                    "input_unevaluable_by_reason": {},
+                    "method_failure": 0,
+                    "method_failure_by_reason": {},
+                    "method_failure_rate_of_evaluable": 0.0,
+                    "success": 18,
+                    "total": 18
+                  },
+                  "oracle_relative_error": {
+                    "median": -0.41375815064128785,
+                    "n_defined": 10,
+                    "n_total": 18,
+                    "n_undefined": 8,
+                    "p90": -0.09639899867861693,
+                    "q1": -0.5322722719416275,
+                    "q3": -0.16595563389567763
+                  },
+                  "relative_error_of_successes": {
+                    "median": -0.0595356094149068,
+                    "n_defined": 18,
+                    "n_total": 18,
+                    "n_undefined": 0,
+                    "p90": 0.3224898978211458,
+                    "q1": -0.6061815431649556,
+                    "q3": 0.10289964364554308
+                  },
+                  "within_tau_rel_diagnostic": {
+                    "count": 5,
+                    "note": "diagnostic, not T_FL",
+                    "of_evaluable": 18,
+                    "tau_rel": 0.1
+                  }
+                }
+              }
+            }
+          },
+          "role": "auxiliary"
+        }
+      },
+      "input": {
+        "evaluable": 18,
+        "minimum": 16,
+        "modes_entirely_excluded": 0,
+        "suspended": false
+      },
+      "prior_only": {
+        "a_aabb": {
+          "relative_error": {
+            "median": 0.3581256469434043,
+            "n_defined": 18,
+            "n_total": 18,
+            "n_undefined": 0,
+            "p90": 1.0267743523571486,
+            "q1": -0.0721383071447016,
+            "q3": 0.8369988850105003
+          },
+          "within_tau_rel_diagnostic": 2
+        },
+        "b_obb": {
+          "relative_error": {
+            "median": 0.448007032891242,
+            "n_defined": 18,
+            "n_total": 18,
+            "n_undefined": 0,
+            "p90": 1.1615166216075372,
+            "q1": -0.07543259793085252,
+            "q3": 0.9516582272871528
+          },
+          "within_tau_rel_diagnostic": 2
+        },
+        "c_axis": {
+          "relative_error": {
+            "median": 0.448007032891242,
+            "n_defined": 18,
+            "n_total": 18,
+            "n_undefined": 0,
+            "p90": 1.1615166216075372,
+            "q1": -0.07543259793085252,
+            "q3": 0.9516582272871528
+          },
+          "within_tau_rel_diagnostic": 2
+        },
+        "d_bestframe": {
+          "relative_error": {
+            "median": 0.3954787401404393,
+            "n_defined": 18,
+            "n_total": 18,
+            "n_undefined": 0,
+            "p90": 1.191261839639863,
+            "q1": -0.16917123691703997,
+            "q3": 0.6599868363848387
+          },
+          "within_tau_rel_diagnostic": 0
+        }
+      }
+    }
+  }
+}
