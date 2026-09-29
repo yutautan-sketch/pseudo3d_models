@@ -379,3 +379,36 @@ sealed/                                   # 領域C全体
 teacher_preflight_expected_*.json         # 集合依存の期待値・観測値
 stage5_private_work/                      # 領域A全体
 ```
+
+## S5-17: 幾何診断の出力（2026-09-28、未実行）
+
+`evaluate_stage5_geometry.sh`（S5-17）の出力構成。**評価出力ディレクトリ（`stage5_evaluations/...`）は読むだけで、何も書き込まない。**
+実データでの実行（`register-coverage`・`audit`はS17-4、`run`はS17-5）は、S5-17管理書の承認を受けてから行う。
+出力先は実行時に明示する（既定値なし）。private側は領域A（`/mnt/data/3d_projects/stage5_private_work/`）の下に置くことを想定する（未確定）。
+
+```text
+<PRIVATE_OUT_DIR>/                                   # mode 0700。全体がDO_NOT_SHARE
+├── artifact_coverage_DO_NOT_SHARE.json              # summary.json・h5_metrics.csvのhashと対象動画identity（best・last）
+├── input_audit_DO_NOT_SHARE.json                    # audit: 動画別のdataset形状・解決方法・crop mode（0600）
+├── geometry_run_DO_NOT_SHARE.json                   # run: alias対応表（identity・パス）、動画別の幾何・推定値・誤差（0600）
+└── error_traceback_DO_NOT_SHARE.txt                 # 想定外の例外時のみ（0600）
+
+<SHARED_JSON>                                        # 集計のみ。書出し前にprivacy検査
+  coverage_<best|last>.json                          # 登録: 件数・hash先頭16桁・証拠の成否
+  audit.json                                         # audit: 件数（解決方法・crop mode・入力評価不能の理由・NPZキー・hash状態）
+  run.json                                           # run: H17-1〜H17-5の集計・状態・注記・限界
+```
+
+- private側には、実動画ID・実パス・動画別の座標・長さ・端点・誤差が入る。**共有しない。**
+- 共有JSONは、両命名規則（timestamp形式の第4セグメントを含む、case形式）の動画IDと絶対パスが含まれないことを検査してから書く。検査に通らなければ何も書かない。
+- 停止時のメッセージはIDをマスクし、パスを`<path>`へ置き換えて出す。tracebackはprivate側にだけ書く。
+- 共有JSONの値はGT由来量同士の比較であり、臨床FL精度ではない。長さは元frame pixel（x/y等方を仮定）で、mmではない。
+
+### 共有時の境界（S5-17の追加分）
+
+上記の共有禁止リストに次を加える。
+
+```text
+<PRIVATE_OUT_DIR>/                         # S5-17 private出力の全体
+artifact_coverage_*.json                   # 動画identityを含む
+```

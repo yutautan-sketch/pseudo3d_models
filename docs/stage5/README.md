@@ -66,6 +66,13 @@ Step 0の担当開始には[実装依頼書](s5-16/stage5_step0_implementation_h
 - [stage5_step0_report_to_policy_chat.md](s5-16/stage5_step0_report_to_policy_chat.md)：S5-16文書同期・Step 0残務と受入記録
 - [stage5_step0_implementation_handoff.md](s5-16/stage5_step0_implementation_handoff.md)：Step 0の分割・封印・train_core専用weight・メタ情報確認の実装依頼
 
+## S5-17
+
+- [stage5_s5_17_implementation_management.md](s5-17/stage5_s5_17_implementation_management.md)：現行の実装・検証方針、ステップ、実行条件と状態。
+- [stage5_s5_17_report_to_policy_chat.md](s5-17/stage5_s5_17_report_to_policy_chat.md)：提案・判断・修正・実行結果・依頼の履歴。
+
+- [stage5_s5_17_implementation_handoff.md](s5-17/stage5_s5_17_implementation_handoff.md)：新規実装チャット向け依頼書。Step 0確定事項、H17-1再設計、封印・入力契約、初回報告と実行条件。
+
 ## 関連資料
 
 - [Stage4 crop品質調査依頼](../stage2to4/stage4/stage5_s5_12_stage4_crop_quality_investigation_request.md)
